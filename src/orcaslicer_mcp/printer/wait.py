@@ -145,7 +145,8 @@ async def run_wait(target, client, until: str, timeout_s: int, report=None, *,
                            f"ElegooSlicer doesn't keep an Elegoo printer's {what}, so '{until}' can't "
                            "be judged for it.",
                            hint="Wait for 'printing' instead: the printer reports printing once it "
-                                "has heated, homed and leveled.")
+                                "has heated, homed and leveled. For the first layer, wait a few "
+                                "minutes after that and look with get_camera_snapshot.")
     poll_s = POLL_S if poll_s is None else poll_s
     timeout_s = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     start = clock()

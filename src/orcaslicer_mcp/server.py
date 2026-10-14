@@ -32,6 +32,7 @@ from .printer import wait as _pwait
 from .printer import history as _phistory
 from .printer import match as _pmatch
 from .printer import elegoo as _pelegoo
+from .printer import camera as _pcamera
 from .printer.errors import PrinterError
 from .printer.snapshot import take_snapshot
 from .printer.status import _dur as _duration_text
@@ -2966,6 +2967,33 @@ async def stop_print(
     return await _printer_command(str(p.get("id")), "stop")
 
 
+@mcp.tool()
+async def get_camera_snapshot(printer: Annotated[str | None, _PRINTER] = None):
+    """Take a picture with an Elegoo printer's camera and return it as an image: to check the
+    first layer, see how a print is going or whether the bed is clear. Read-only.
+
+    It reads the first complete frame of the printer's camera stream on the local network
+    (Centauri Carbon 2: http://<printer>:8080/, Centauri Carbon: http://<printer>:3031/video),
+    with the printer's address from ElegooSlicer's printer list, and gives up after 10 s or
+    8 MB. Typical use after start_print: wait_for_printer('printing'), wait a few minutes for the
+    first layer, then look. Describe only what the picture shows; a dark or blurry frame proves
+    nothing. A printer reached through Elegoo's cloud, one without an address or another model
+    is unsupported, with the reason. Errors: camera_unreachable, camera_timeout, camera_error,
+    too_large. Needs ElegooSlicer MCP ('printers' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            p = _pelegoo.pick_printer(await c.get_printers(), printer)
+    except PrinterError as e:
+        return e.as_dict()
+    except ApiError as e:
+        return _printer_err(e, "printers")
+    try:
+        jpeg = await _pcamera.read_snapshot(_pcamera.camera_url(p))
+    except _pcamera.CameraError as e:
+        return e.as_dict()
+    return Image(data=jpeg, format="jpeg")
+
+
 # --- Tool annotations (title + read-only/destructive hints) -----------------
 # The Claude connectors directory requires every tool to carry a title and the
 # applicable readOnlyHint / destructiveHint. Kept as one table so completeness
@@ -3063,6 +3091,7 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "resume_print": ("Resume the print", False, False),
     # A stopped print can't be resumed; asks the user first (elicitation) or needs user_confirmed.
     "stop_print": ("Stop the print (asks the user)", False, True),
+    "get_camera_snapshot": ("Take a picture with the printer's camera", True, False),
 }
 
 
@@ -3071,7 +3100,7 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
 _OPEN_WORLD_TOOLS = frozenset({"get_printer_status", "wait_for_printer", "list_print_history", "check_printer_match",
                                "get_canvas", "sync_canvas_to_project", "preview_filament_mapping",
                                "prepare_print", "start_print", "get_upload_status", "cancel_upload",
-                               "pause_print", "resume_print", "stop_print"})
+                               "pause_print", "resume_print", "stop_print", "get_camera_snapshot"})
 _IDEMPOTENT_TOOLS = frozenset({"list_print_history"})
 
 

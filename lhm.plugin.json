@@ -382,6 +382,10 @@
     {
       "name": "stop_print",
       "description": "Stop (cancel) the print running on an Elegoo printer. A stopped print can't be resumed: the part is lost. Returns {\"ok\": true}."
+    },
+    {
+      "name": "get_camera_snapshot",
+      "description": "Take a picture with an Elegoo printer's camera and return it as an image: to check the first layer, see how a print is going or whether the bed is clear. Read-only."
     }
   ],
   "prompts": [
