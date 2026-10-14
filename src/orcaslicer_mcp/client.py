@@ -270,6 +270,31 @@ class OrcaClient:
         return await self._printer_request("GET", self._printer_path(printer_id, "canvas/mapping"),
                                            params=params)
 
+    # Sending and controlling prints (ElegooSlicer MCP, capability "print_control"). The slicer
+    # refuses every one of these (403 print_control_disabled) until the user allows it in its
+    # Preferences, and it only ever sends G-code it sliced itself: no file or path goes from here.
+    async def prepare_print(self, printer_id: str, options: dict) -> dict:
+        return await self._printer_request("POST", self._printer_path(printer_id, "print/prepare"),
+                                           json=options)
+
+    async def start_print(self, printer_id: str, plan_id: str) -> dict:
+        return await self._printer_request("POST", self._printer_path(printer_id, "print"),
+                                           json={"plan_id": plan_id})
+
+    async def get_upload(self, upload_id: str) -> dict:
+        return await self._printer_request("GET", f"/api/v1/uploads/{quote(str(upload_id), safe='')}")
+
+    async def cancel_upload(self, upload_id: str) -> dict:
+        return await self._printer_request("DELETE",
+                                           f"/api/v1/uploads/{quote(str(upload_id), safe='')}")
+
+    async def printer_command(self, printer_id: str, action: str) -> dict:
+        # pause, resume or stop. A printer can take long to confirm these, so wait longer than
+        # usual, but stay under Claude Desktop's ~60 s tool-call limit.
+        body = {"confirm": "stop"} if action == "stop" else None
+        return await self._printer_request("POST", self._printer_path(printer_id, action),
+                                           json=body, timeout=50.0)
+
     # Plates (fork v2.4.2-mcp.13 and later).
     async def get_plates(self) -> dict:
         return await self._request("GET", "/api/v1/plates")
