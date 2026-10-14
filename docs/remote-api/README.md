@@ -553,7 +553,9 @@ requests.
   CANVAS state is not cached by ElegooSlicer: each read is a request to the printer.
 - **Printer ids** are opaque (`"p"` + 16 hex digits) and stay the same for a printer
   across restarts. They are not ElegooSlicer's internal ids, which for a discovered CC2
-  or a cloud printer contain the serial number. Take them from `GET /printers`.
+  or a cloud printer contain the serial number: they are an HMAC-SHA256 of that id with
+  a random key kept in ElegooSlicer's settings (`remote_api_printer_id_key`, not the
+  token), so the serial number cannot be found from them. Take them from `GET /printers`.
 - **No secrets.** Printers are written field by field: access codes, PINs, passwords,
   tokens, user names, serial numbers, mainboard ids and web URLs never appear, and a
   user name/password inside a host URL is cut off.

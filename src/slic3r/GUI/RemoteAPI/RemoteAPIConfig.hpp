@@ -26,6 +26,12 @@ struct Config
     // the API never sends G-code to a printer nor starts, pauses, resumes or stops a
     // print. Read on every such request, so a change applies at once. GUI thread only.
     static bool print_control_allowed();
+
+    // elegoo-mcp: the secret key the API's printer ids are made with
+    // (remote_api_printer_id_key, 32 hex chars), created on first use. It is not the
+    // token, so the ids stay the same when the token changes. "" when no random
+    // bytes could be had. GUI thread only.
+    static std::string printer_id_key();
 };
 
 }}} // namespace

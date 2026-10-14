@@ -51,6 +51,18 @@ bool Config::print_control_allowed()
     return wxGetApp().app_config->get_bool("remote_api_allow_print_control");
 }
 
+std::string Config::printer_id_key()
+{
+    AppConfig  *app_config = wxGetApp().app_config;
+    std::string key        = app_config->get("remote_api_printer_id_key");
+    if (key.empty()) {
+        key = generate_token(); // the same CSPRNG as the token; "" if it failed
+        if (!key.empty())
+            app_config->set("remote_api_printer_id_key", key); // persisted by the idle handler
+    }
+    return key;
+}
+
 std::string Config::generate_token()
 {
     // std::random_device is not required by the standard to be a CSPRNG - on MinGW

@@ -59,6 +59,8 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
 
 #include <algorithm>
 #include <cctype>
@@ -194,18 +196,31 @@ static Response printer_error(PrinterNetworkErrorCode code)
 
 // --- printers -----------------------------------------------------------------------
 
+// The key the printer ids are made with (Config::printer_id_key), read from the GUI thread
+// by route_elegoo before the first printer route runs. API thread only.
+static std::string printer_id_key;
+
 // The id a printer has in the API. PrinterManager's own id is a random uuid for a
 // printer added by hand, but the SDK builds the id of a discovered CC2 ("lan_" + serial
 // number) and of a cloud printer ("cloud_" + serial number) from the serial number,
 // which must not leave the API. So every printer is shown under an opaque id instead:
-// "p" + 16 hex digits of a hash of its PrinterManager id. It stays the same for a printer
-// across restarts. It hides the serial number from clients; it is not meant to resist a
-// brute-force search for it.
+// "p" + 16 hex digits of an HMAC-SHA256 of its PrinterManager id, keyed with a random
+// key kept in ElegooSlicer's settings. It stays the same for a printer across restarts.
+// A plain hash would not do: serial numbers follow a pattern, so anyone could hash every
+// plausible one and find the printer's; without the key that search is impossible.
 static std::string api_printer_id(const std::string &printer_id)
 {
-    char text[24];
-    std::snprintf(text, sizeof(text), "p%016llx", (unsigned long long) std::hash<std::string>{}(printer_id));
-    return text;
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int  length = 0;
+    HMAC(EVP_sha256(), printer_id_key.data(), (int) printer_id_key.size(),
+         reinterpret_cast<const unsigned char *>(printer_id.data()), printer_id.size(), digest, &length);
+    std::string id = "p";
+    char        hex[3];
+    for (int i = 0; i < 8; ++i) { // 8 bytes = 16 hex digits
+        std::snprintf(hex, sizeof(hex), "%02x", digest[i]);
+        id += hex;
+    }
+    return id;
 }
 
 // A host typed as a URL can carry a user name and password ("http://user:pass@host/"):
@@ -2314,6 +2329,12 @@ Response Controller::route_elegoo(const Request &req)
     try {
         if (wxGetApp().is_closing())
             return printers_unavailable();
+        // The key of the printer ids (api_printer_id), from the settings, once.
+        if (printer_id_key.empty()) {
+            printer_id_key = run_on_ui([]() -> nlohmann::json { return Config::printer_id_key(); }).get<std::string>();
+            if (printer_id_key.empty())
+                return { 500, {{"error", "internal"}, {"detail", "could not create the key of the printer ids"}} };
+        }
         const size_t      qpos  = req.target.find('?');
         const std::string path  = req.target.substr(0, qpos);
         const std::string query = qpos == std::string::npos ? std::string() : req.target.substr(qpos + 1);

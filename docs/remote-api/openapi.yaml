@@ -1899,7 +1899,7 @@ components:
       type: object
       description: A printer of the Device tab, written field by field (no secrets).
       properties:
-        id: { type: string, example: p3f9c2a71d04e8b65, description: "Opaque, stable across restarts (not ElegooSlicer's internal id, which can contain the serial number)." }
+        id: { type: string, example: p3f9c2a71d04e8b65, description: "Opaque, stable across restarts: an HMAC-SHA256 of ElegooSlicer's internal id (which can contain the serial number) with a random per-install key, so the serial number cannot be found from it." }
         name: { type: string }
         model: { type: string, example: Elegoo Centauri Carbon 2 }
         vendor: { type: string, example: Elegoo }
