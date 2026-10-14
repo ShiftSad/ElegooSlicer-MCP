@@ -819,7 +819,7 @@ things as they are; the entry then ends with `(answered No)`.
 | `POST /preset/save` of a filament preset | "Temperature Safety Check": the first-layer and other-layer temperatures differ by more than 30 °C (nozzle) or 15 °C (a bed type); "Continue anyway?" | refused, nothing saved: `422 {"error":"temperature_safety_check","detail":"<the question>"}`. Add `"ignore_temperature_check": true` to the body to save anyway (answered Yes) |
 | `GET /plate/render?view=preview` | the G-code preview cannot start its OpenGL renderer (an error box) | notification + `skipped_dialogs`; the render then most likely fails with `500 render_failed` |
 | `POST /arrange`, `POST /orient` (the job ends after the reply) | "Arrange failed. Found some exceptions when processing object geometries.", "An unexpected error occurred: ..." | notification, and the text in `GET /jobs/status` as `last_error` (null when the last job the API started had no error); jobs started in the window keep their dialog |
-| `POST /slice` (the slice ends after the reply) | a critical slicing error in an error box | an error notification like the window's other slicing errors; `GET /slice/status` has `state: "error"` and the message, and WS sends `slice.error`. Slices started in the window keep their dialog |
+| `POST /slice` (the slice ends after the reply), and a slice that an API change starts by itself (the "auto slice after change" preference, or background processing) | a critical slicing error in an error box | an error notification like the window's other slicing errors; `GET /slice/status` has `state: "error"` and the message, and WS sends `slice.error`. Slices started in the window keep their dialog |
 
 ## Notes & limits
 

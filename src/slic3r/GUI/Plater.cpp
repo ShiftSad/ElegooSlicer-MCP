@@ -7906,6 +7906,10 @@ void Plater::priv::scale_selection_to_fit_print_volume()
 void Plater::priv::schedule_background_process()
 {
     delayed_error_message.clear();
+    // elegoo-mcp (D8): with background processing on, a Remote API change starts a slice
+    // after the request returned; see schedule_auto_reslice_if_needed.
+    if (background_processing_enabled() && RemoteAPI::api_skips_dialogs())
+        RemoteAPI::mark_api_slice(true);
     // Trigger the timer event after 0.5s
     this->background_process_timer.Start(500, wxTIMER_ONE_SHOT);
     // Notify the Canvas3D that something has changed, so it may invalidate some of the layer editing stuff.
@@ -7927,6 +7931,12 @@ void Plater::priv::schedule_auto_reslice_if_needed()
     PartPlate* plate = partplate_list.get_curr_plate();
     if (plate == nullptr || !plate->has_printable_instances())
         return;
+
+    // elegoo-mcp (D8): a change made by a Remote API request starts this slice after the
+    // request returned, maybe with nobody at the machine: mark it like POST /slice does,
+    // so that a critical error becomes a notification, not a dialog.
+    if (RemoteAPI::api_skips_dialogs())
+        RemoteAPI::mark_api_slice(true);
 
     if (background_process.running() || m_is_slicing) {
         // Remember to restart once the current slice stops and cancel it now.
@@ -10099,8 +10109,9 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": ignore this event %1%") % evt.status();
         return;
     }
-    // elegoo-mcp (D8): whether POST /slice started this slice (see below).
-    const bool api_slice = RemoteAPI::take_api_slice();
+    // elegoo-mcp (D8): whether the Remote API started this slice (see below). A cancelled
+    // run leaves the mark to the slice that replaces it: a restart cancels first.
+    const bool api_slice = !evt.cancelled() && RemoteAPI::take_api_slice();
 
     //BBS: add project slice logic
     bool is_finished = !m_slice_all || (m_cur_slice_plate == (partplate_list.get_plate_count() - 1));

@@ -40,10 +40,14 @@ bool skip_dialog(const std::string &text, bool error = false);
 bool api_question(const std::string &text);
 
 // Slices: POST /slice marks the slice it starts (mark_api_slice(true); POST
-// /slice/cancel clears the mark). Plater's slice-completed handler takes the mark once
-// per completed slice: true means POST /slice started that slice, so a critical error
-// goes to a notification and GET /slice/status instead of an error dialog that would
-// open after the request returned. A slice started in the window keeps its dialog.
+// /slice/cancel clears the mark), and so does Plater when an API request's change
+// schedules an automatic slice ("auto slice after change" or background processing).
+// Plater's slice-completed handler takes the mark from the next slice that is not
+// cancelled (a restart cancels the old run first): true means the API started that
+// slice, so a critical error goes to a notification and GET /slice/status instead of
+// an error dialog that would open after the request returned. A slice started in the
+// window keeps its dialog. A mark whose slice never starts stays until the next one;
+// that slice's critical error is then a notification too, which still shows it.
 void mark_api_slice(bool started);
 bool take_api_slice();
 
