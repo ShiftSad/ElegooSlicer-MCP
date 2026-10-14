@@ -27,5 +27,12 @@ set(SLIC3R_BUILD_ID "${ELEGOOSLICER_VERSION}")
 # The forked version of Orca, used for some compatibility
 set(ORCA_COMPATIBLE_VERSION "2.4.2")
 
+# elegoo-mcp: release ordinal of this fork (the N in v<elegoo version>-mcp.N release
+# tags on ShiftSad/ElegooSlicer-MCP). The in-app update check compares it against the
+# latest GitHub release tag, so it must stay a bare integer and only ever go up, also
+# across Elegoo base-version bumps. ELEGOOSLICER_VERSION itself is left untouched
+# because Elegoo uses it for 3MF metadata, profile updates and user agents.
+set(ELEGOO_MCP_RELEASE "1")
+
 #Bambu compatible version
 set(BAMBU_COMPATIBLE_VERSION "02.06.00.51")

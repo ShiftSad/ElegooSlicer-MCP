@@ -1,6 +1,13 @@
 #include "ExportPresetBundleDialog.hpp"
 #include "OrcaCloudServiceAgent.hpp"
 #include "libslic3r/Technologies.hpp"
+#include "libslic3r/Platform.hpp"
+// Boost.Asio-based RemoteAPI headers included BEFORE GUI_App.hpp (which pulls in
+// wx/windows.h) to preserve asio-before-windows.h ordering, and to supply the
+// full RemoteAPI::Server/Controller definitions this TU needs (they are only
+// forward-declared in GUI_App.hpp).
+#include "RemoteAPI/RemoteAPIServer.hpp"
+#include "RemoteAPI/RemoteAPIController.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
@@ -1074,6 +1081,7 @@ void GUI_App::post_init()
            }
         }
     }
+    this->start_remote_api();
     BOOST_LOG_TRIVIAL(info) << "finished post_init";
 //BBS: remove the single instance currently
 #ifdef _WIN32
@@ -1103,6 +1111,10 @@ GUI_App::GUI_App()
     , m_downloader(std::make_unique<Downloader>())
 	, m_other_instance_message_handler(std::make_unique<OtherInstanceMessageHandler>())
 {
+    // Owns the RemoteAPI server for the app lifetime (unique_ptr since the type
+    // is only forward-declared in the header). Always constructed; start() is
+    // deferred to start_remote_api() and only runs when the API is enabled.
+    m_remote_api_server = std::make_unique<RemoteAPI::Server>();
 	//app config initializes early becasuse it is used in instance checking in ElegooSlicer.cpp
 	this->init_app_config();
     if (Slic3r::UserNetworkManager::hasPersistedAccount())
@@ -1134,6 +1146,7 @@ void GUI_App::shutdown()
 	if (m_removable_drive_manager) {
 		removable_drive_manager()->shutdown();
 	}
+    if (!m_is_recreating_gui) stop_remote_api();
 
     // destroy login dialog
     if (login_dlg != nullptr) {
@@ -4300,6 +4313,13 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     update_publish_status();
 
+    // Rebind the Remote API's slice-event subscriptions onto the freshly built
+    // plater (the old plater's Bind()s died with it). No-op if the API is off or
+    // already bound to this plater. The server itself keeps running across a
+    // recreate (shutdown() skips stop when m_is_recreating_gui), so WS clients
+    // are preserved.
+    if (m_remote_api_controller) m_remote_api_controller->bind_plater_events();
+
     m_is_recreating_gui = false;
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI exit";
@@ -5874,6 +5894,93 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
     return; // no version check for linux
 #endif
 
+    // elegoo-mcp: never check Elegoo's servers for updates (eu-device.elegoo.com /
+    // device.elegoo.com.cn would offer the stock build, and updating to it removes the
+    // Remote API). Check this fork's own GitHub releases instead, so users hear about
+    // new -mcp builds. Releases are compared by the mcp ordinal (the N in
+    // v<elegoo version>-mcp.N), which is monotonic across Elegoo base-version bumps;
+    // semver alone cannot order two -mcp.N tags (the suffix regex stops at the dot,
+    // so mcp.5 and mcp.6 parse equal).
+    // Scoped: Elegoo's implementation below is left intact (unreachable) to keep the
+    // diff small for future rebases. The braces keep the two sets of locals apart.
+    // Logic ported from MaxEllis/OrcaSlicer@fa3c9ee.
+    {
+    (void)show_tips;
+    // Deliberately NOT gated on stealth_mode: the startup call site already sits
+    // outside the stealth guard (as in Orca), and gating here would mean a
+    // stealth-mode user never learns a newer MCP build exists.
+
+    auto parse_mcp_ordinal = [](const std::string& tag) -> long {
+        static const std::regex mcp_tag("-mcp\\.([0-9]+)$");
+        std::smatch m;
+        if (!std::regex_search(tag, m, mcp_tag))
+            return -1;
+        try { return std::stol(m[1].str()); } catch (...) { return -1; }
+    };
+
+    auto http = Http::get("https://api.github.com/repos/ShiftSad/ElegooSlicer-MCP/releases/latest");
+    http.header("accept", "application/vnd.github.v3+json")
+        .timeout_connect(5)
+        .timeout_max(10)
+        .on_error([](std::string body, std::string error, unsigned http_status) {
+            (void)body;
+            BOOST_LOG_TRIVIAL(error) << format("Error getting: `%1%`: HTTP %2%, %3%",
+                                               "check_new_version_sf (ElegooSlicer-MCP releases)", http_status, error);
+        })
+        .on_complete([this, by_user, parse_mcp_ordinal](std::string body, unsigned http_status) {
+            if (http_status != 200)
+                return;
+            try {
+                boost::trim(body);
+                if (body.empty()) {
+                    if (by_user != 0)
+                        this->no_new_version();
+                    return;
+                }
+
+                boost::property_tree::ptree root;
+                std::stringstream           json_stream(body);
+                boost::property_tree::read_json(json_stream, root);
+
+                const std::string tag            = root.get_optional<std::string>("tag_name").get_value_or("");
+                const long        latest_ordinal = parse_mcp_ordinal(tag);
+                if (latest_ordinal <= ELEGOO_MCP_RELEASE) {
+                    if (by_user != 0)
+                        this->no_new_version();
+                    return;
+                }
+
+                // The EVT_SLIC3R_VERSION_ONLINE handler compares skip_version
+                // LEXICOGRAPHICALLY ("v...mcp.10" <= "v...mcp.9"), so resolve the
+                // skip numerically here and clear a stale skip before posting.
+                const std::string skip_version = this->app_config->get("app", "skip_version");
+                if (!skip_version.empty()) {
+                    if (latest_ordinal <= parse_mcp_ordinal(skip_version)) {
+                        if (by_user != 0)
+                            this->no_new_version();
+                        return;
+                    }
+                    this->app_config->set("skip_version", "");
+                }
+
+                version_info.url           = root.get_optional<std::string>("html_url").get_value_or("");
+                version_info.version_str   = tag;
+                version_info.description   = root.get_optional<std::string>("body").get_value_or("");
+                version_info.force_upgrade = false;
+
+                wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+                evt->SetString(tag);
+                if (by_user != 0)
+                    evt->SetInt(by_user);
+                GUI::wxGetApp().QueueEvent(evt);
+            } catch (...) {}
+        });
+
+    http.perform();
+    return;
+    }
+
+    // ---- Elegoo's stock update check below is intentionally unreachable ----
 #if 1 // Elegoo: use elegoo slicer release
 
     std::string version_check_url;
@@ -6215,7 +6322,8 @@ std::string GUI_App::format_display_version()
 {
     if (!version_display.empty()) return version_display;
 
-    version_display = ELEGOOSLICER_VERSION;
+    // elegoo-mcp: "1.5.3.5-mcp.N", not the bare Elegoo number (splash, About).
+    version_display = ELEGOO_MCP_VERSION;
     return version_display;
 }
 
@@ -7399,6 +7507,26 @@ void GUI_App::stop_sync_user_preset()
     }
 }
 
+RemoteAPI::Server &GUI_App::remote_api_server() { return *m_remote_api_server; }
+
+void GUI_App::start_remote_api()
+{
+    auto cfg = RemoteAPI::Config::load();
+    if (!cfg.enabled) return;
+    if (!m_remote_api_controller)
+        m_remote_api_controller = std::make_unique<RemoteAPI::Controller>();
+    m_remote_api_controller->bind_plater_events();
+    m_remote_api_server->set_handler([this](const RemoteAPI::Request &req) {
+        return m_remote_api_controller->dispatch(req);
+    });
+    m_remote_api_server->start(cfg);
+}
+
+void GUI_App::stop_remote_api()
+{
+    m_remote_api_server->stop();
+}
+
 void GUI_App::restart_sync_user_preset()
 {
 //ELEGOO: ElegooSlicer does not need this feature, temporarily disabled
@@ -8296,6 +8424,10 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
         // so we put it into an inner scope
         PreferencesDialog dlg(mainframe, open_on_tab, highlight_option);
         dlg.ShowModal();
+        // Apply Remote API settings changed in the dialog (Task 7). Cheap and
+        // idempotent even if nothing Remote-API-related changed.
+        stop_remote_api();
+        start_remote_api(); // no-op if remote_api_enabled is false
         need_recreate_gui = dlg.recreate_GUI();
         pending_language = dlg.pending_language();
         if (!need_recreate_gui) {

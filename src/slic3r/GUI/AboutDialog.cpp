@@ -244,7 +244,8 @@ AboutDialog::AboutDialog()
     // version
     {
         vesizer->Add(0, FromDIP(165), 1, wxEXPAND, FromDIP(5));
-        auto version_string = _L("ElegooSlicer ") + " " + std::string(SLIC3R_BUILD_ID);
+        // elegoo-mcp: "1.5.3.5-mcp.N" so the MCP build is never mistaken for stock ElegooSlicer.
+        auto version_string = _L("ElegooSlicer ") + " " + GUI_App::format_display_version();
         #if ELEGOO_INTERNAL_TESTING
         version_string += " (Test)";
         #endif

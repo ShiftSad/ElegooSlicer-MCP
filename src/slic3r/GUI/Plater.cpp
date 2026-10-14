@@ -1,4 +1,5 @@
 #include "Plater.hpp"
+#include "RemoteAPI/RemoteAPIController.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r_version.h"
 
@@ -6888,7 +6889,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 // convert_model_if(model, answer_convert_from_imperial_units == wxID_YES);
             }
 
-             if (!is_project_file && model.looks_like_multipart_object()) {
+             // Remote API loads must not block on a modal; keep the solids as separate
+             // objects (the dialog's No answer) and let the client decide. Kept v2.4.2's
+             // msgid verbatim so the existing translation catalogs still match.
+             if (!is_project_file && model.looks_like_multipart_object()
+                 && !RemoteAPI::Controller::api_ui_task_active()) {
                MessageDialog msg_dlg(q, _L(
                     "This file contains several objects positioned at multiple heights.\n"
                     "Instead of considering them as multiple objects, should \n"
@@ -11003,7 +11008,8 @@ void Plater::priv::set_project_name(const wxString& project_name)
     if (!m_project_name.IsEmpty())
         wxGetApp().mainframe->update_title_colour_after_set_title();
 #else
-    wxGetApp().mainframe->SetTitle(m_project_name + " - " + SLIC3R_APP_NAME);
+    // elegoo-mcp: identify the MCP build in the window title
+    wxGetApp().mainframe->SetTitle(m_project_name + " - " SLIC3R_APP_NAME " MCP");
     wxGetApp().mainframe->topbar()->SetTitle(m_project_name);
 #endif
 }
@@ -11023,7 +11029,8 @@ void Plater::priv::update_title_dirty_status()
     wxGetApp().mainframe->SetTitle(title);
     wxGetApp().mainframe->update_title_colour_after_set_title();
 #else
-    wxGetApp().mainframe->SetTitle(title + " - " + SLIC3R_APP_NAME);
+    // elegoo-mcp: identify the MCP build in the window title
+    wxGetApp().mainframe->SetTitle(title + " - " SLIC3R_APP_NAME " MCP");
     wxGetApp().mainframe->topbar()->SetTitle(title);
 #endif    
 }
@@ -12414,6 +12421,7 @@ void Plater::load_project(wxString const& filename2,
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << " load project done";
     m_loading_project = false;
+    Slic3r::GUI::RemoteAPI::Controller::notify_project_opened();
 }
 
 // BBS: save logic
@@ -18393,6 +18401,14 @@ void Plater::set_bed_position(Vec2d& pos)
 bool Plater::is_background_process_slicing() const
 {
     return p->m_is_slicing;
+}
+
+// Remote API (F2): abort the background slice from the API's cancel route.
+void Plater::stop_background_slicing()
+{
+    if (p->background_process.running())
+        p->background_process.stop();
+    p->m_is_slicing = false;
 }
 
 //BBS: update slicing context

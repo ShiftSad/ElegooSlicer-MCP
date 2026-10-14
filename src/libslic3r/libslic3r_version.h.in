@@ -5,6 +5,12 @@
 #define SLIC3R_APP_KEY "@SLIC3R_APP_KEY@"
 #define SLIC3R_VERSION "@SLIC3R_VERSION@"
 #define ELEGOOSLICER_VERSION "@ELEGOOSLICER_VERSION@"
+// elegoo-mcp: the fork release ordinal as a number (update check) and as a string, and
+// the user-facing version ("1.5.3.5-mcp.N") matching the release tags. Shown on the
+// splash, in About and in /status so an MCP build is never mistaken for stock ElegooSlicer.
+#define ELEGOO_MCP_RELEASE @ELEGOO_MCP_RELEASE@
+#define ELEGOO_MCP_RELEASE_STR "@ELEGOO_MCP_RELEASE@"
+#define ELEGOO_MCP_VERSION ELEGOOSLICER_VERSION "-mcp." ELEGOO_MCP_RELEASE_STR
 #ifndef GIT_COMMIT_HASH
     #define GIT_COMMIT_HASH "0000000" // 0000000 means uninitialized
 #endif
