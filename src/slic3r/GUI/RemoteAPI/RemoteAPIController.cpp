@@ -1,5 +1,6 @@
 // src/slic3r/GUI/RemoteAPI/RemoteAPIController.cpp
 #include "RemoteAPIController.hpp"
+#include "RemoteAPIDialogs.hpp" // elegoo-mcp (D8)
 
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -227,7 +228,13 @@ void UiTask::run()
     // fire between the calls of an API burst.
     Slic3r::backup_defer(3);
     try {
-        promise->set_value(fn());
+        // elegoo-mcp (D8): GUI code skips its dialogs while this log exists; the reply
+        // lists what they would have shown or asked (RemoteAPIDialogs.hpp).
+        DialogLog      dialogs;
+        nlohmann::json result = fn();
+        if (!dialogs.skipped.empty() && result.is_object())
+            result["skipped_dialogs"] = dialogs.skipped;
+        promise->set_value(std::move(result));
     } catch (...) {
         promise->set_exception(std::current_exception());
     }
@@ -312,7 +319,10 @@ Response Controller::handle_status()
                               // elegoo-mcp: routes in RemoteAPIModelOps.cpp
                               "orient_object", "view", "volumes", "project_save", "paint",
                               // elegoo-mcp: routes in RemoteAPIElegoo.cpp
-                              "printers", "canvas", "print_control"}},
+                              "printers", "canvas", "print_control",
+                              // elegoo-mcp: routes in RemoteAPIProject.cpp
+                              "filaments", "split", "undo", "layer_changes", "breakdown_purge",
+                              "calibration"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"print_control_enabled", Config::print_control_allowed()}, // elegoo-mcp: Preferences > Remote API
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -853,6 +863,25 @@ Response Controller::handle_put_config(const std::string &body)
             if (!err.empty()) errors[key] = err;
         }
 
+        // elegoo-mcp (D8): when the Print tab takes changed values it re-checks them, and
+        // some combinations make it ask a Yes/No question (spiral vase needs one wall...).
+        // Ask the same checks about the staged copy now and refuse the batch with the
+        // question, instead of applying it and answering the question No. The Printer
+        // tab's firmware-retraction question is checked the same way.
+        {
+            std::vector<std::string> questions;
+            if (targets[0].touched && !bundle->prints.get_edited_preset().config.diff(targets[0].cfg).empty())
+                questions = print_settings_questions(targets[0].cfg);
+            if (targets[2].touched && !bundle->printers.get_edited_preset().config.diff(targets[2].cfg).empty())
+                for (const std::string &q : printer_settings_questions(targets[2].cfg))
+                    questions.push_back(q);
+            std::string asked;
+            for (const std::string &q : questions)
+                asked += (asked.empty() ? "" : "\n\n") + q;
+            if (!asked.empty())
+                errors["_question"] = asked + "\n\n(The window would ask this. Send settings that agree, in the same request.)";
+        }
+
         // Atomic: if any key failed validation, apply NOTHING and report errors.
         // (Previously, valid keys in a mixed batch applied before the 422.)
         if (!errors.empty()) {
@@ -956,8 +985,13 @@ Response Controller::handle_put_config(const std::string &body)
         return {{"applied", applied}, {"errors", errors}};
     });
 
-    int status = result["errors"].empty() ? 200 : 422;
-    return { status, result };
+    // elegoo-mcp: a 422 carries an "error" token like every other error reply, so a
+    // client can branch on it; "errors" keeps the per-key reasons.
+    if (!result["errors"].empty()) {
+        result["error"] = "config_rejected";
+        return { 422, result };
+    }
+    return { 200, result };
 }
 
 void Controller::set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name)
@@ -1087,7 +1121,8 @@ static void current_plate_slice_stats(nlohmann::json &stats, nlohmann::json &war
             {"total_time_s", total_time},
             {"roles", roles},
             {"metrics", nlohmann::json::object()},
-            {"layers", nlohmann::json::array()}
+            {"layers", nlohmann::json::array()},
+            {"purge", breakdown_purge_json(*res)} // elegoo-mcp: filament changes and flush, see RemoteAPIProject.cpp
         };
     }
 }
@@ -1214,6 +1249,9 @@ Response Controller::handle_slice()
             }, "slice.error");
             return {{"error", "slice_not_started"}};
         }
+        // elegoo-mcp (D8): a critical error of this slice comes after the reply; it goes to
+        // a notification and /slice/status, not a dialog (RemoteAPIDialogs.hpp).
+        mark_api_slice(true);
         return {{"started", true}};
     });
     if (r.contains("error")) {
@@ -1251,6 +1289,7 @@ Response Controller::handle_slice_cancel()
         bool was_slicing = slice_state().state == "slicing";
         if (plater != nullptr)
             plater->stop_background_slicing();
+        mark_api_slice(false); // elegoo-mcp (D8): no API slice is running any more
         set_slice_state([](SliceState &s) {
             s.state = "idle"; s.percent = -1; s.message = "cancelled";
             s.stats = nullptr; s.warnings = nlohmann::json::array();
@@ -1428,6 +1467,10 @@ Response Controller::handle_save_preset(const std::string &body)
                         type_s == "printer"  ? Preset::TYPE_PRINTER : Preset::TYPE_INVALID;
     if (type == Preset::TYPE_INVALID)
         return { 400, {{"error", "unknown_type"}} };
+    // elegoo-mcp (D8): the answer to the window's "Temperature Safety Check" question.
+    if (in.contains("ignore_temperature_check") && !in["ignore_temperature_check"].is_boolean())
+        return { 400, {{"error", "ignore_temperature_check_must_be_boolean"}} };
+    const bool ignore_temperature_check = in.value("ignore_temperature_check", false);
     // SavePresetDialog normally enforces the name rules; mirror them headless.
     while (!name.empty() && (name.front() == ' ' || name.back() == ' ')) {
         if (name.front() == ' ') name.erase(name.begin());
@@ -1440,7 +1483,7 @@ Response Controller::handle_save_preset(const std::string &body)
     if (name.empty() || name == "." || name == ".." || name.size() > 128 || bad_char)
         return { 400, {{"error", "invalid_name"}} };
 
-    nlohmann::json r = run_on_ui([type, name, detach]() -> nlohmann::json {
+    nlohmann::json r = run_on_ui([type, name, detach, ignore_temperature_check]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;
         PresetCollection &presets = type == Preset::TYPE_PRINT    ? bundle->prints :
                                     type == Preset::TYPE_FILAMENT ? bundle->filaments :
@@ -1454,7 +1497,16 @@ Response Controller::handle_save_preset(const std::string &body)
         // elegoo-mcp: saving under a new name renames the selected preset, and the
         // G-code names it (print_settings_id...), so the plates' G-code is stale then.
         const DynamicPrintConfig config_before = bundle->full_config();
+        // elegoo-mcp (D8): a filament preset whose first-layer and other-layer temperatures
+        // differ a lot makes the save ask "Continue anyway?" (Tab::validate_filament_
+        // temperature_pairs). The API answers Yes only when the request said so.
+        DialogLog *dialogs = current_dialog_log();
+        if (dialogs != nullptr && ignore_temperature_check)
+            dialogs->answer_yes = true;
         tab->save_preset(name, detach, /*save_to_project=*/false);
+        if (dialogs != nullptr && !dialogs->refused_question.empty()) // answered No: nothing was saved
+            return {{"error", "temperature_safety_check"}, {"detail", dialogs->refused_question},
+                    {"hint", "fix the temperatures (PUT /config), or pass \"ignore_temperature_check\": true to save anyway"}};
         invalidate_all_plates_if_changed(config_before);
         // save_preset returns void; confirm the preset actually landed.
         const Preset *saved = presets.find_preset(name, false);
@@ -1466,6 +1518,7 @@ Response Controller::handle_save_preset(const std::string &body)
             api_notify("Can't overwrite built-in " + type_s + " preset '" + name + "'", true);
             return { 409, r };
         }
+        if (r["error"] == "temperature_safety_check") return { 422, r }; // elegoo-mcp (D8)
         return { 500, r };
     }
     api_notify((r["created"].get<bool>() ? "Saved new " : "Updated ") + type_s + " preset '" + name + "'");
@@ -2101,7 +2154,11 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         return {{"applied", applied}, {"errors", errors}, {"object", mo->name}};
     });
     if (r.contains("error")) return { 404, r };
-    return { r["errors"].empty() ? 200 : 422, r };
+    if (!r["errors"].empty()) {
+        r["error"] = "config_rejected"; // elegoo-mcp: see handle_put_config
+        return { 422, r };
+    }
+    return { 200, r };
 }
 
 Response Controller::handle_arrange()
@@ -2115,7 +2172,7 @@ Response Controller::handle_arrange()
         // like the GUI's own arrange button does, or this call would quietly
         // only move the objects that are off the bed.
         plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
-        plater->arrange();
+        api_arrange(); // elegoo-mcp (D8): plater->arrange(), with its errors as notifications
         return {{"started", true}};
     });
     if (r.contains("error")) return { 422, r };
@@ -2141,7 +2198,7 @@ Response Controller::handle_orient()
         // elegoo-mcp: the job's finish re-checks only the current plate; the objects on
         // every plate may turn, so mark them all now (see invalidate_object_plates).
         plater->get_partplate_list().invalid_all_slice_result();
-        plater->orient();
+        api_orient(); // elegoo-mcp (D8): plater->orient(), with its errors as notifications
         return {{"started", true}};
     });
     if (r.contains("error")) return { 422, r };
@@ -2153,7 +2210,11 @@ Response Controller::handle_jobs_status()
 {
     nlohmann::json r = run_on_ui([]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
-        return {{"idle", plater->get_ui_job_worker().is_idle()}};
+        // elegoo-mcp (D8): the error of the last arrange/orient job the API started,
+        // which the window would have shown in a dialog.
+        const std::string error = last_api_job_error();
+        return {{"idle", plater->get_ui_job_worker().is_idle()},
+                {"last_error", error.empty() ? nlohmann::json(nullptr) : nlohmann::json(error)}};
     });
     return { 200, r };
 }
@@ -2490,6 +2551,7 @@ Response Controller::dispatch(const Request &req)
             try { return handle_save_project(req.body); }
             catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
         }
+        if (std::optional<Response> r = route_project(req)) return *r; // elegoo-mcp: RemoteAPIProject.cpp
         if (is("GET",  "/api/v1/plates"))       return handle_get_plates();
         if (is("POST", "/api/v1/plates")) {
             try { return handle_create_plate(req.body); }

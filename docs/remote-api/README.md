@@ -57,6 +57,16 @@ Base URL: `http://<host>:13130/api/v1`
 | DELETE | `/objects/{id}/volumes/{vid}` | Remove a volume |
 | POST | `/project/save` | Save the project as a .3mf (current file, or a new path) |
 | POST | `/objects/{id}/paint` | Paint support / seam / color on the triangles inside a box |
+| GET | `/filaments` | List the filament slots: preset, type, colour, used on the current plate |
+| PUT | `/filaments` | Set the number of filament slots (the sidebar's + / - buttons) |
+| PUT | `/filaments/{slot}` | Set one slot's filament preset and/or colour |
+| POST | `/objects/{id}/split` | Split an object into objects, or a part into parts |
+| POST | `/undo` | Undo the last model edit (the window's Ctrl+Z) |
+| POST | `/redo` | Redo the last undone model edit (the window's Ctrl+Y) |
+| GET | `/plates/{i}/layer_changes` | List a plate's changes at a height (filament change, pause, custom G-code) |
+| POST | `/plates/{i}/layer_changes` | Add a filament change or a pause at a height |
+| DELETE | `/plates/{i}/layer_changes?z=<mm>` | Remove the change at a height |
+| POST | `/calibration` | Replace the project with a calibration test (the Calibration menu) |
 
 ### GET /status
 
@@ -104,10 +114,19 @@ curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 ```
 Applied through the GUI's own edit path (dirty markers + live refresh + slice
 invalidation). **All-or-nothing:** if any key is unknown or invalid, nothing is
-applied and you get `422` with per-key reasons:
+applied and you get `422` with the error token `config_rejected` and per-key reasons:
 ```json
-{ "applied": [], "errors": { "layer_height": "value out of range", "nope": "unknown_key" } }
+{ "error": "config_rejected", "applied": [],
+  "errors": { "layer_height": "value out of range", "nope": "unknown_key" } }
 ```
+`PUT /objects/{id}/config` and `PUT /objects/{id}/volumes/{vid}/config` answer a
+refused key the same way.
+On `PUT /config`, print or printer settings the window would question (spiral vase with
+more than one wall, firmware retraction with wipe, ...) are refused the same way, with
+the question under the key `_question`
+(`errors` then holds the window's question, not a key); a value the window
+corrects with a message (a layer height of 0 becomes 0.2) is corrected and the message
+is listed in `skipped_dialogs` (see [Dialogs](#dialogs)).
 Other errors: `400 body_must_be_object`, `400 invalid_json`, `504 ui_timeout`.
 
 #### Per-filament keys
@@ -124,7 +143,7 @@ tab. Those two shapes are not interchangeable, so **writing a merged value back 
 rejected**:
 
 ```json
-{ "applied": [], "errors": { "hot_plate_temp": "per_filament_length_mismatch: the filament preset open in the Filament tab holds 1 value(s), got 5. ..." } }
+{ "error": "config_rejected", "applied": [], "errors": { "hot_plate_temp": "per_filament_length_mismatch: the filament preset open in the Filament tab holds 1 value(s), got 5. ..." } }
 ```
 
 Pass only that preset's own value (`{"hot_plate_temp": 70}`), and change the other
@@ -227,7 +246,10 @@ running the slicer, as an import in the window does. Errors: `400 missing_path`,
 `404 file_not_found` (the file does not exist; the body echoes the path:
 `{"error":"file_not_found","path":"C:/models/part.stl"}`), `422 unsupported_format |
 load_failed`, `400 invalid_json`. A bare `404 not_found` only ever means an unknown
-route, never a missing file.
+route, never a missing file. Where the window would show a message or ask a question
+while loading (an object in meters, too large, without geometry...), the file is
+loaded as it is and the reply lists the message under `skipped_dialogs` (see
+[Dialogs](#dialogs)).
 
 ## Plates
 
@@ -373,7 +395,8 @@ curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 { "started": true, "object_id": 832 }
 ```
 Starts the window's auto-orient job and answers `202` at once; poll
-`GET /jobs/status` until `idle`. With `{"object_id": id}` only that object is turned:
+`GET /jobs/status` until `idle` (`{"idle": true, "last_error": null}`; `last_error` is
+the error of the last arrange/orient job the API started, see [Dialogs](#dialogs)). With `{"object_id": id}` only that object is turned:
 it is selected in the 3D view, as a click on it does, and the job orients the
 selection (the object stays selected afterwards). Without a body, or with `{}`, every
 object is oriented and any selection in the window is cleared first. The plates of
@@ -441,7 +464,7 @@ and adds nothing. Errors: `422 bad_type | bad_shape | bad_size | bad_position`
 ### PUT /objects/{id}/volumes/{vid}/config
 
 Same body, atomic semantics and key policy as `PUT /objects/{id}/config`
-(`422` with `errors` and nothing applied if any key is refused; sensitive keys need
+(`422 config_rejected` with `errors` and nothing applied if any key is refused; sensitive keys need
 the Preferences switch, read-only keys are refused). `"extruder": n` picks the
 volume's filament slot (0 = the object's) and updates the object list's filament
 column. Reply: `{"applied": [...], "errors": {}, "object": "<name>", "volume": {...}}`.
@@ -512,6 +535,293 @@ marked unsliced and the change can be undone in the window. Errors:
 `422 bad_layer | bad_state | bad_slot | bad_box | bad_overhang | clear_takes_no_box`,
 `404 unknown_object | no_instance`, `400 body_must_be_object | clear_must_be_boolean |
 invalid_json`.
+
+## Filament slots
+
+The sidebar's filament list. Slots are numbered from 1, like the object list's filament
+column and the `extruder` setting (`0` there means "the default"). `GET /status` lists
+`filaments` in `capabilities`. While a G-code file or an exported `.gcode.3mf` is open
+the changes are refused with `409 preview_only` (the window would first ask to close
+that file).
+
+### GET /filaments
+
+```json
+{ "count": 2, "max": 32, "slots": [
+  { "slot": 1, "preset": "Elegoo PLA @ECC2", "type": "PLA", "color": "#00c1ae", "used_on_current_plate": true },
+  { "slot": 2, "preset": "Elegoo PLA @ECC2", "type": "PLA", "color": "#ed1c24", "used_on_current_plate": false } ] }
+```
+`color` is the slot's colour as `#rrggbb`; `used_on_current_plate` is true when an
+object, part, height range, colour paint or a layer tool change of the current plate
+prints with that slot.
+
+### PUT /filaments
+
+```bash
+curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"count": 4}' http://localhost:13130/api/v1/filaments
+```
+Adds or removes slots at the end of the list, one at a time, with the sidebar's own
++ and - buttons: a new slot copies the last slot's preset and gets the next colour of
+the window's palette (and its flush volumes are calculated, as the + button does); a
+removed slot is the last one. Every plate is marked unsliced. The reply is the same as
+`GET /filaments`.
+
+Removing a slot that something still prints with answers
+`409 {"error": "slot_in_use", "used_by": [...]}` and removes nothing, unless the body
+has `"force": true`. Each `used_by` entry names the object (`object_id`, `name`), the
+part when it is one (`volume_id`), the `slot` and the `setting` that uses it (`extruder`,
+`support_filament`, `outer_wall_filament_id`... or `color_paint`), plus `height_range`
+for a height-range setting. With `force` the window's delete runs as it is: objects and
+parts on a removed slot move to filament 1, support and per-feature filament settings
+(`support_filament`, `outer_wall_filament_id`...) on it go back to "default", colour
+paint in a removed colour is erased (that area prints with the part's filament) and
+layer tool changes to a removed slot are dropped.
+
+Errors: `422 bad_count` (an integer from 1 to `max`; also when the printer preset has
+one slot per extruder, so the sidebar has no + / - buttons), `409 slot_in_use`,
+`409 unsaved_filament_changes` (the Filament tab has unsaved edits to a preset only a
+removed slot uses: the window would ask what to do with them), `409
+print_settings_question` (the print settings disagree, e.g. spiral vase with several
+walls after a calibration test, and the Print tab's check that every + and - runs would
+ask about it; `detail` has the question: fix the settings with `PUT /config` first),
+`409 preview_only`, `500 filament_change_failed` (the sidebar did not add or remove a
+slot; slots already changed by the request stay changed: `GET /filaments` shows where
+it stopped), `400 body_must_be_object | force_must_be_boolean | invalid_json`.
+
+### PUT /filaments/{slot}
+
+```bash
+curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"preset": "Elegoo PETG @ECC2", "color": "#1e90ff"}' http://localhost:13130/api/v1/filaments/2
+```
+Reply: the slot, as in `GET /filaments`. `preset` goes through the steps of the slot's
+combo box in the sidebar and `color` through its colour picker, without their dialogs:
+- `preset`: a filament preset name (as in `GET /presets`) compatible with the selected
+  printer. A newly picked preset brings its default colour, as in the combo box, unless
+  `color` is given too.
+- `color`: `#rrggbb`.
+
+The flush volumes are recalculated as the window's "Auto flush after changing..."
+preference says: after a colour change unless it is `disabled`, after a preset change
+only when it is `all`. A change marks every plate unsliced. With a single slot the
+combo box also switches the Filament tab, which would ask about unsaved edits there:
+then `409 unsaved_filament_changes`. Errors: `404 unknown_slot` (with `count`),
+`422 unknown_preset | incompatible_preset | bad_color`, `409 preview_only |
+unsaved_filament_changes`, `400 missing_fields | preset_must_be_string |
+bad_slot_index | invalid_json`.
+
+## Split
+
+### POST /objects/{id}/split
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"to": "objects"}' http://localhost:13130/api/v1/objects/832/split
+```
+```json
+{ "ids": [901, 905, 909] }
+```
+Right-click > Split > To objects / To parts, without the dialogs they can open
+(capability `split`). The split can be undone in the window.
+- `"to": "objects"`: an object with several parts becomes one object per solid part
+  (modifiers and other non-solid volumes are left out, as in the window); a single part
+  is cut into its separate shells. `ids` are the new object ids; the original object is
+  gone. When a piece would float, the window asks whether to keep the pieces' heights;
+  the API does not ask: with `"drop_to_bed": true` (default) every piece is put on the
+  bed, with `false` every piece keeps its height and stops auto-dropping (the
+  question's "Yes"). The new objects are left selected, as in the window.
+- `"to": "parts"`: one part is cut into its separate shells, which stay parts of the
+  object. An object with a single part needs nothing else; with several parts, give
+  `"volume_id"` (from `GET /objects/{id}/volumes`). `ids` are the object's volume ids
+  afterwards, and `object_id` is echoed. The part (or object) is left selected.
+
+The plates holding the result are marked unsliced. Errors: `422 not_splittable`
+(a single solid piece; `detail` says why, also when an object with several parts gets
+`"to": "parts"` without `volume_id`) `| bad_to`, `404 unknown_object | unknown_volume
+| no_instance`, `409 job_running` (an arrange/orient job is running) `| gizmo_editing`
+(a paint, cut or other editing tool is open in the 3D view) `| select_failed`,
+`400 body_must_be_object | bad_volume_id | drop_to_bed_must_be_boolean | bad_object_id |
+invalid_json`.
+
+## Undo / redo
+
+### POST /undo, POST /redo
+
+```json
+{ "ok": true, "can_undo": true, "can_redo": true }
+```
+The window's Ctrl+Z / Ctrl+Y on its undo history (capability `undo`): object, part,
+plate and paint edits, whether made in the window or through the API. Presets,
+settings and filament slots are not in that history, as in the window. `ok` is false
+(still `200`) when there was nothing to undo or redo; `can_undo` / `can_redo` say
+whether another call would do something. After a step every plate is marked unsliced
+and `GET /slice/status` follows the current plate (a step can add or remove plates).
+Errors: `409 slicing | job_running` (an arrange/orient job) `| gizmo_editing` (a paint,
+cut or other editing tool is open in the 3D view; the move, rotate and scale tools are
+fine).
+
+## Layer changes
+
+What the preview's layer slider adds at a layer (the "+" on a layer): a filament change,
+a pause or custom G-code. They are stored per plate in the same place the slider keeps
+them, so a change made here shows on the slider and the other way round, and they are
+saved with the project (capability `layer_changes`). `{i}` is the 0-based plate index.
+Every change marks that plate unsliced; a preview on screen reloads.
+
+### GET /plates/{i}/layer_changes
+
+```json
+{ "plate": 0, "items": [
+  { "z": 4.2, "type": "tool_change", "slot": 2 },
+  { "z": 10.0, "type": "pause" },
+  { "z": 15.0, "type": "custom", "gcode": "M117 hello" } ] }
+```
+`type` is `tool_change` (with `slot`, the filament to change to), `pause` (with
+`message` when one was stored), `custom` (custom or template G-code from the window,
+with its `gcode`; read-only here) or `color_change` (with `slot`; only in projects made
+elsewhere). Sorted by `z` (mm). `404 unknown_plate`.
+
+### POST /plates/{i}/layer_changes
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"z": 4.2, "type": "tool_change", "slot": 2}' http://localhost:13130/api/v1/plates/0/layer_changes
+```
+`201` with the plate's whole list, as in GET. A change at the same height (within
+0.001 mm) is replaced.
+- `z`: height in mm, above 0 and below the top of the plate's tallest object. The
+  change applies from the layer at that height.
+- `type`: `tool_change` or `pause`.
+  - `tool_change` needs `slot` (1-based filament slot). As on the slider it needs 2 or
+    more filament slots, a plate whose objects print with a single filament (parts,
+    paint or height ranges in other filaments already change filament), and no spiral
+    vase mode. On the CC2 it becomes a CANVAS filament change (`M6211`).
+  - `pause`: the printer pauses before that layer (`machine_pause_gcode`). `message`
+    (optional) is stored with it in the project; this slicer writes no message into
+    the G-code. A `slot` is ignored.
+  - `color_change` is refused: ElegooSlicer writes no G-code for it (the slider does
+    not offer it either); use `tool_change`. Custom G-code is added in the window.
+
+Errors: `422 bad_z` (out of range, an empty plate, or a custom G-code already at that
+height: remove it first) `| bad_type` (also when the plate prints object by object, or
+the `tool_change` conditions above are not met; `detail` says which) `| bad_slot`,
+`404 unknown_plate`, `409 slicing | preview_only`, `400 body_must_be_object |
+message_must_be_string | bad_plate_index | invalid_json`.
+
+### DELETE /plates/{i}/layer_changes?z=<mm>
+
+Removes the change at that height (within 0.001 mm), whatever its type, custom G-code
+included, as the slider's delete does. Reply: the plate's remaining list. Errors:
+`404 unknown_plate | no_change_at_z`, `409 slicing | preview_only`,
+`400 missing_z | bad_z`.
+
+## Slice breakdown: purge
+
+Once a plate is sliced, `GET /slice/status` reports `stats.breakdown` (also at the top
+level as `breakdown`): the per-feature times and filament of the slice. Builds that
+list `breakdown_purge` in `capabilities` add what changing filament costs:
+
+```json
+"purge": { "filament_changes": 12, "filament_change_time_s": 1043.5,
+           "flush_g": 38.2, "flush_mm": 12804.1 }
+```
+- `filament_changes`: how many times the print changes filament.
+- `filament_change_time_s`: the time those changes take (filament load + unload + tool
+  change), the "Tool changes" time of the preview's legend. It is part of the total
+  time but of no feature in `roles`. On the Centauri Carbon 2 each CANVAS change
+  (`M6211`) is timed by ElegooSlicer's own estimate.
+- `flush_g`, `flush_mm`: filament purged by those changes, all filaments together (the
+  legend's "Flushed" column), from each filament's diameter and density.
+
+All four are 0 when nothing loads or changes filament. On the Centauri Carbon 2 the
+start G-code loads the first filament with an `M6211` that purges about 200 mm, so even
+a single-filament print reports that load's time and purge, with `filament_changes` 0.
+
+## Calibration
+
+### POST /calibration
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"type": "pressure_advance", "params": {"method": "line", "end": 0.08}}' \
+  http://localhost:13130/api/v1/calibration
+```
+```json
+{ "type": "pressure_advance", "objects": [ { "id": 812, "name": "pressure_advance_test.drc" } ] }
+```
+The window's Calibration menu without its dialogs (capability `calibration`): the
+current project is replaced by a new one holding the test model, and the print,
+filament and printer settings are changed the way the test needs (unsaved preset
+edits, as in the window; `GET /status` lists them under `modified`). Nothing is
+sliced: slice it as usual. `objects` are the new project's objects.
+
+Replacing the project would make the window ask about unsaved work. When the project
+has unsaved changes, or the print/filament/printer settings have unsaved edits, the
+reply is `409 {"error":"unsaved_project","project_unsaved":true,"presets_unsaved":["print"]}`
+unless the body has `"discard_project": true`; then those changes are dropped and the
+reply lists them in `discarded_changes` (`"project"`, `"print"`, `"filament"`,
+`"printer"`). A calibration itself leaves the settings edited and the project unsaved,
+so a second calibration in a row needs `discard_project` too. The
+`max_volumetric_speed` and `vfa` tests turn spiral vase on in the print settings;
+`max_volumetric_speed` sets one wall, no top layers and no infill on the test object
+only, and `vfa` leaves supports as they were. So afterwards a `PUT /config` that
+changes print settings can be refused with the window's spiral vase question until the
+print settings agree with it, which is when the window would ask too (see
+[Dialogs](#dialogs)), and `PUT /filaments` answers `409 print_settings_question`.
+
+`params` holds the dialog's fields; everything is optional and defaults to the
+dialog's own default. An unknown name, a wrong type or a value the dialog would refuse
+gives `422 bad_params` with a `detail` that names the parameter.
+
+| `type` | `params` (default) | Checks (as the dialog) |
+|---|---|---|
+| `pressure_advance` | `method`: `tower` \| `line` \| `pattern` (`tower`); `extruder`: `dde` \| `bowden` (`dde`, only picks the defaults below); `start` (0); `end` (tower/line 0.1, pattern 0.08; bowden 1.0); `step` (tower/line 0.002, pattern 0.005; bowden 0.02, pattern 0.05); `print_numbers`: bool, line only (true; pattern always prints numbers, the tower never); `accelerations`, `speeds`: lists of positive whole numbers in mm/s² and mm/s, pattern only (none: the outer wall acceleration and an optimal speed; the pattern prints one test per acceleration × speed) | `start` >= 0, `step` >= 0.001, `end` >= `start` + `step`; every acceleration > every speed |
+| `flow_rate` | `test`: `yolo` \| `yolo_perfectionist` \| `pass1` \| `pass2` (`yolo`); `pattern`: top surface `archimedean_chords` \| `monotonic` (`archimedean_chords`) | — |
+| `temperature` | `start` (230), `end` (190), °C; the tower goes from `start` at the bottom down to `end`, 5 °C per block. The dialog's presets: PLA 230/190, ABS/ASA 270/230, PETG 250/230, PCTG 280/240, TPU 240/210, PA-CF and PET-CF 320/280 | multiples of 5 between 155 and 500, `start` >= `end` + 5 |
+| `max_volumetric_speed` | `start` (5), `end` (20), `step` (0.5), mm³/s | `start` > 0, `step` > 0, `end` >= `start` + `step` |
+| `vfa` | `start` (40), `end` (200), `step` (10), mm/s | `start` > 10, `step` > 0, `end` >= `start` + `step` |
+| `retraction` | `start` (0), `end` (2), `step` (0.1), mm of retraction length | `start` >= 0, `step` > 0, `end` >= `start` + `step` |
+
+Other errors: `422 bad_type`, `409 job_running` (an arrange/orient job is running) `|
+slicing`, `500 calibration_failed` (the test model did not load), `400 body_must_be_object |
+discard_project_must_be_boolean | invalid_json`. Allow up to 60 s: the test model is
+loaded and cut to height.
+
+## Dialogs
+
+An API request never opens a dialog in the window: nobody may be at the machine to
+close it, and a modal dialog would block the window, and every later API call, until
+someone did. Where the window would show a message box (an error, a warning, a note),
+the request shows the same text as a notification in the window, starting with
+"Remote API:", and lists it in its reply under `skipped_dialogs` (only present when
+something was skipped):
+
+```json
+{ "loaded": true, "objects": [ ... ],
+  "skipped_dialogs": [ "The 3mf is not supported by ElegooSlicer, load geometry data only." ] }
+```
+
+Where the window would ask a question, the route either refuses the request with the
+question as the reason (each route below says when), or takes the answer that leaves
+things as they are; the entry then ends with `(answered No)`.
+
+| Where | What the window would show | What the API does |
+|---|---|---|
+| any route | an error box (`show_error`) or an info box (`show_info`), e.g. "Failed loading file" on `POST /model`, the "load geometry data only" note for a PrusaSlicer 3MF | notification + `skipped_dialogs` |
+| `PUT /config` | the Print/Filament tab's check of the new values corrects one and says so ("Too small layer height. Reset to 0.2.", ironing spacing, first layer height, XY compensation, elephant foot, seam slope start height, lock depth, max volumetric speed < 0.5) | the correction is made, notification + `skipped_dialogs` |
+| `PUT /config` | the Print tab's check asks a question: spiral vase needs one wall, no top layers, no infill, no support...; alternate extra wall with "ensure vertical shell thickness: All"; the Extrusion/Combined fuzzy skin modes need the Arachne wall generator | refused before anything is applied: `422 config_rejected` with the question in `errors._question`; send settings that agree, in the same request |
+| `PUT /config` of printer settings | the Printer tab's check, whenever its Extruder page is on screen: "The Retract before wipe option could be only 100% when using the Firmware Retraction mode ..." | refused before anything is applied, whether that page is open or not: `422 config_rejected` with the question in `errors._question`; send `wipe` off or `retract_before_wipe` at 100% with it |
+| `PUT /filaments` (adding or removing slots) | the Print tab's checks run again; settings that disagree make them ask one of the questions above | refused before anything changes: `409 print_settings_question` with the question in `detail` |
+| other routes that reload print or printer settings (`PUT /preset` to a preset saved with such a combination, per-object settings) | the same checks | boxes as above; a question is answered No (the setting that conflicts is turned off: spiral vase, firmware retraction...) |
+| `POST /model` | "Objects with zero volume removed"; "The file does not contain any geometry data." (then `422 load_failed`); an object over 10000 times the bed is scaled down with a note | notification + `skipped_dialogs` |
+| `POST /model` | "The object ... is too small, and maybe in meters or inches. Do you want to scale to millimeters?"; "Your object appears to be too large, do you want to scale it down ...?" | answered No: the file is loaded as it is; scale it with `POST /objects/{id}/transform` |
+| `POST /model` | an OBJ file with colours: the window asks which filament prints each colour | loaded without its colours (the dialog's Cancel), with a `skipped_dialogs` note |
+| `POST /model` | several objects at different heights: "load as a single object with multiple parts?" | loaded as separate objects, the dialog's No (as in MaxEllis/OrcaSlicer; no `skipped_dialogs` entry) |
+| `POST /preset/save` of a filament preset | "Temperature Safety Check": the first-layer and other-layer temperatures differ by more than 30 °C (nozzle) or 15 °C (a bed type); "Continue anyway?" | refused, nothing saved: `422 {"error":"temperature_safety_check","detail":"<the question>"}`. Add `"ignore_temperature_check": true` to the body to save anyway (answered Yes); a value that is not a boolean gives `400 ignore_temperature_check_must_be_boolean` |
+| `GET /plate/render?view=preview` | the G-code preview cannot start its OpenGL renderer (an error box) | notification + `skipped_dialogs`; the render then most likely fails with `500 render_failed` |
+| `POST /arrange`, `POST /orient` (the job ends after the reply) | "Arrange failed. Found some exceptions when processing object geometries.", "An unexpected error occurred: ..." | notification, and the text in `GET /jobs/status` as `last_error` (null when the last job the API started had no error); jobs started in the window keep their dialog |
+| `POST /slice` (the slice ends after the reply), and a slice that an API change starts by itself (the "auto slice after change" preference, or background processing) | a critical slicing error in an error box | an error notification like the window's other slicing errors; `GET /slice/status` has `state: "error"` and the message, and WS sends `slice.error`. Slices started in the window keep their dialog |
 
 ## Notes & limits
 

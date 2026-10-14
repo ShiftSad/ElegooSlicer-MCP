@@ -68,7 +68,7 @@ Response Controller::handle_orient_object(const std::string &body)
         // current plate, so mark the object's plates now, like every per-object edit
         // (see invalidate_object_plates). Harmless if the job ends up turning nothing.
         invalidate_object_plates(idx);
-        plater->orient();
+        api_orient(); // plater->orient(), with its errors as notifications (D8)
         return {{"started", true}, {"object_id", id}};
     });
     if (r.contains("error")) {
@@ -371,7 +371,11 @@ Response Controller::handle_put_volume_config(uint64_t id, uint64_t vid, const s
         return {{"applied", applied}, {"errors", errors}, {"object", mo->name}, {"volume", volume_json(*mo, vi)}};
     });
     if (r.contains("error")) return { 404, r };
-    return { r["errors"].empty() ? 200 : 422, r };
+    if (!r["errors"].empty()) {
+        r["error"] = "config_rejected"; // as PUT /config and PUT /objects/{id}/config
+        return { 422, r };
+    }
+    return { 200, r };
 }
 
 // DELETE /objects/{id}/volumes/{vid} - the object list's own delete

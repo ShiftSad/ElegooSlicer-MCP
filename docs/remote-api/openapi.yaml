@@ -71,7 +71,12 @@ paths:
         live panel refresh + slice invalidation), exactly as if typed in the UI.
 
         **Atomic:** if ANY key is unknown or fails validation, NOTHING is applied
-        and the response is `422` with per-key reasons. On full success the
+        and the response is `422` with `error: config_rejected` and per-key
+        reasons (PUT /objects/{id}/config and PUT /objects/{id}/volumes/{vid}/config
+        answer a refused key the same way). Print or printer settings the window
+        would question (spiral vase with several walls, firmware retraction with
+        wipe...) are refused the same way, with the window's question under
+        `errors._question`. On full success the
         response is `200` with every applied key.
 
         Values may be JSON strings, numbers, or booleans; they are coerced to the
@@ -96,7 +101,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ConfigApplyResult" }
-              example: { applied: [], errors: { layer_height: "value out of range", bogus_key: "unknown_key" } }
+              example: { error: "config_rejected", applied: [], errors: { layer_height: "value out of range", bogus_key: "unknown_key" } }
         "400":
           description: Malformed body.
           content:
@@ -1630,6 +1635,474 @@ paths:
         "502": { $ref: "#/components/responses/PrinterError" }
         "503": { $ref: "#/components/responses/PrintersUnavailable" }
         "504": { $ref: "#/components/responses/PrintCommandTimeout" }
+  /filaments:
+    get:
+      summary: List the filament slots
+      operationId: getFilaments
+      description: |
+        The sidebar's filament list. Slots are 1-based, like the `extruder` setting.
+      responses:
+        "200":
+          description: Filament slots.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FilamentList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+    put:
+      summary: Set the number of filament slots
+      operationId: setFilamentCount
+      description: |
+        Adds or removes slots at the end of the list with the sidebar's + and - buttons,
+        one at a time, and marks every plate unsliced. Removing a slot that an object,
+        part, height range or colour paint prints with is refused (`409 slot_in_use`,
+        with `used_by`) unless `force` is true; then the window's delete runs as it is
+        (those users move to filament 1, paint in a removed colour is erased, layer tool
+        changes to a removed slot are dropped) and per-feature filament settings on a
+        removed slot go back to default.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [count]
+              properties:
+                count: { type: integer, minimum: 1, maximum: 32 }
+                force: { type: boolean, default: false }
+            example: { count: 4 }
+      responses:
+        "200":
+          description: The slots after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FilamentList" }
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: |
+            A removed slot is in use, the Filament tab has unsaved edits to a preset only
+            a removed slot uses, a G-code file is open, or the print settings disagree
+            and the Print tab's check that + and - run would ask a question (`detail`
+            has it; fix the settings with PUT /config first).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                in_use:
+                  value:
+                    error: slot_in_use
+                    used_by: [ { object_id: 832, name: "helmet", volume_id: 833, slot: 3, setting: "extruder" } ]
+                unsaved: { value: { error: "unsaved_filament_changes" } }
+                gcode:   { value: { error: "preview_only" } }
+                question: { value: { error: "print_settings_question", detail: "Spiral mode only works when wall loops is 1, ..." } }
+        "422":
+          description: Count out of range, or the printer preset has one slot per extruder (no + / - buttons).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "bad_count" }
+        "500":
+          description: |
+            The sidebar did not add or remove a slot. Slots already changed by the request
+            stay changed (GET /filaments shows where it stopped).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "filament_change_failed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /filaments/{slot}:
+    put:
+      summary: Set one slot's filament preset and/or colour
+      operationId: setFilamentSlot
+      description: |
+        `preset` goes through the steps of the slot's combo box in the sidebar (a newly
+        picked preset brings its default colour unless `color` is given), `color`
+        through its colour picker, without their dialogs. The flush volumes are
+        recalculated as the "Auto flush after changing..." preference says. A change
+        marks every plate unsliced.
+      parameters:
+        - { name: slot, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preset: { type: string, description: "Filament preset name, compatible with the selected printer." }
+                color: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+            example: { preset: "Elegoo PETG @ECC2", color: "#1e90ff" }
+      responses:
+        "200":
+          description: The slot after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FilamentSlot" }
+        "400":
+          description: Neither field given, or a malformed body or slot index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "missing_fields" }
+        "404":
+          description: No such slot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_slot", count: 2 }
+        "409":
+          description: |
+            A G-code file is open, or (single slot) the Filament tab has unsaved edits the
+            switch would ask about.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                unsaved: { value: { error: "unsaved_filament_changes" } }
+                gcode:   { value: { error: "preview_only" } }
+        "422":
+          description: Unknown or incompatible preset, or a bad colour.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                unknown:      { value: { error: "unknown_preset" } }
+                incompatible: { value: { error: "incompatible_preset" } }
+                color:        { value: { error: "bad_color" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /objects/{id}/split:
+    post:
+      summary: Split an object into objects, or a part into parts
+      operationId: splitObject
+      description: |
+        Right-click > Split > To objects / To parts, without dialogs. `objects`: one
+        object per solid part of a multi-part object, or per shell of a single part;
+        `ids` are the new object ids (the original is gone). The window would ask about
+        floating pieces; instead `drop_to_bed` (default true) puts every piece on the
+        bed, false keeps their heights. `parts`: one part (the only one, or
+        `volume_id`) is cut into its shells; `ids` are the object's volume ids
+        afterwards. Undoable in the window; the plates holding the result are marked
+        unsliced.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, enum: [objects, parts] }
+                volume_id: { type: integer, description: "parts: the part to split, when the object has several." }
+                drop_to_bed: { type: boolean, default: true, description: "objects: put every piece on the bed." }
+            example: { to: objects }
+      responses:
+        "200":
+          description: Split.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ids: { type: array, items: { type: integer } }
+                  object_id: { type: integer, description: "parts only." }
+              example: { ids: [901, 905, 909] }
+        "400":
+          description: Malformed body or id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown object or volume, or an object without a copy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                object: { value: { error: "unknown_object" } }
+                volume: { value: { error: "unknown_volume" } }
+        "409":
+          description: An arrange/orient job is running, an editing tool is open in the 3D view, or the selection failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                job:     { value: { error: "job_running" } }
+                gizmo:   { value: { error: "gizmo_editing" } }
+                select:  { value: { error: "select_failed" } }
+        "422":
+          description: A single solid piece (or several parts and no volume_id), or a bad `to`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                single: { value: { error: "not_splittable", detail: "the object is a single solid piece" } }
+                to:     { value: { error: "bad_to" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /undo:
+    post:
+      summary: Undo the last model edit
+      operationId: undo
+      description: |
+        The window's Ctrl+Z on its undo history (object, part, plate and paint edits;
+        not presets or settings). `ok` is false when there was nothing to undo. A step
+        marks every plate unsliced.
+      responses:
+        "200":
+          description: Done, or nothing to undo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UndoResult" }
+        "409":
+          description: Slicing, an arrange/orient job, or an editing tool open in the 3D view.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                slicing: { value: { error: "slicing" } }
+                job:     { value: { error: "job_running" } }
+                gizmo:   { value: { error: "gizmo_editing" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /redo:
+    post:
+      summary: Redo the last undone model edit
+      operationId: redo
+      description: The window's Ctrl+Y. Same reply and errors as POST /undo.
+      responses:
+        "200":
+          description: Done, or nothing to redo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UndoResult" }
+        "409":
+          description: Slicing, an arrange/orient job, or an editing tool open in the 3D view.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /plates/{index}/layer_changes:
+    parameters:
+      - { name: index, in: path, required: true, schema: { type: integer, minimum: 0 } }
+    get:
+      summary: List a plate's layer changes
+      operationId: getLayerChanges
+      description: |
+        The changes the preview's layer slider keeps for the plate (filament changes,
+        pauses, custom G-code), sorted by height.
+      responses:
+        "200":
+          description: The plate's layer changes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LayerChangeList" }
+        "404":
+          description: No plate with that index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_plate", count: 2 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+    post:
+      summary: Add a filament change or a pause at a height
+      operationId: addLayerChange
+      description: |
+        Same data as the preview's layer slider. `z` must be above 0 and below the top
+        of the plate's tallest object; a change at the same height (0.001 mm) is
+        replaced, unless it is custom G-code. `tool_change` needs `slot`, 2+ filament
+        slots, a plate printed with a single filament and no spiral vase.
+        `color_change` is refused (ElegooSlicer writes no G-code for it). Marks the
+        plate unsliced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [z, type]
+              properties:
+                z: { type: number, description: "mm" }
+                type: { type: string, enum: [tool_change, pause] }
+                slot: { type: integer, minimum: 1, description: "tool_change: the filament to change to." }
+                message: { type: string, description: "pause: stored with the pause." }
+            example: { z: 4.2, type: tool_change, slot: 2 }
+      responses:
+        "201":
+          description: Added; the plate's whole list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LayerChangeList" }
+        "400":
+          description: Malformed body or plate index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No plate with that index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Slicing, or a G-code file is open.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                slicing: { value: { error: "slicing" } }
+                gcode:   { value: { error: "preview_only" } }
+        "422":
+          description: Bad height, type or slot (`detail` says why).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                z:    { value: { error: "bad_z", detail: "0 < z < 20.000000 (the plate's tallest object)" } }
+                type: { value: { error: "bad_type" } }
+                slot: { value: { error: "bad_slot" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+    delete:
+      summary: Remove the change at a height
+      operationId: deleteLayerChange
+      parameters:
+        - { name: z, in: query, required: true, schema: { type: number }, description: "mm, matched within 0.001 mm" }
+      responses:
+        "200":
+          description: Removed; the plate's remaining list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LayerChangeList" }
+        "400":
+          description: Missing or malformed z.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "missing_z" }
+        "404":
+          description: No such plate, or no change at that height.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                plate: { value: { error: "unknown_plate" } }
+                z:     { value: { error: "no_change_at_z" } }
+        "409":
+          description: Slicing, or a G-code file is open.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /calibration:
+    post:
+      summary: Replace the project with a calibration test
+      operationId: runCalibration
+      description: |
+        The window's Calibration menu without its dialogs (capability `calibration`). A
+        new project holds the test model; the print, filament and printer settings are
+        edited for the test (unsaved). Nothing is sliced. `params` are the dialog's
+        fields, all optional with the dialog's defaults (see README.md for each type).
+        A project with unsaved changes, or unsaved preset edits, gives
+        `409 unsaved_project` unless `discard_project` is true. Allow up to 60 s.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [flow_rate, pressure_advance, temperature, retraction, max_volumetric_speed, vfa] }
+                params:
+                  type: object
+                  description: |
+                    pressure_advance: method (tower|line|pattern), extruder (dde|bowden), start, end, step,
+                    print_numbers (line), accelerations and speeds (pattern; positive whole numbers).
+                    flow_rate: test (yolo|yolo_perfectionist|pass1|pass2), pattern (archimedean_chords|monotonic).
+                    temperature: start, end (degrees C, multiples of 5, 155..500, start >= end + 5).
+                    max_volumetric_speed (mm3/s), vfa (mm/s), retraction (mm): start, end, step.
+                discard_project: { type: boolean, default: false, description: "Drop unsaved project changes and preset edits." }
+            example: { type: pressure_advance, params: { method: line, end: 0.08 } }
+      responses:
+        "200":
+          description: The test project was created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type: { type: string }
+                  objects:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                  discarded_changes:
+                    type: array
+                    items: { type: string, enum: [project, print, filament, printer] }
+                    description: Present when discard_project dropped something.
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Unsaved work, an arrange/orient job, or a slice is running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                unsaved: { value: { error: "unsaved_project", project_unsaved: true, presets_unsaved: ["print"] } }
+                job:     { value: { error: "job_running" } }
+                slicing: { value: { error: "slicing" } }
+        "422":
+          description: Unknown type, or a parameter the dialog would refuse (`detail` names it).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                type:   { value: { error: "bad_type" } }
+                params: { value: { error: "bad_params", detail: "end: must be >= start + step (0.002)" } }
+        "500":
+          description: The test model did not load.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "calibration_failed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /jobs/status:
+    get:
+      summary: Whether the arrange/orient job has finished
+      operationId: getJobStatus
+      description: |
+        Poll after POST /arrange or POST /orient until `idle`. `last_error` is the error
+        of the last arrange/orient job the API started (the window would have shown it
+        in a dialog; it is also shown as a notification), or null.
+      responses:
+        "200":
+          description: The UI job worker's state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  idle: { type: boolean }
+                  last_error: { type: string, nullable: true }
+              example: { idle: true, last_error: null }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -1761,6 +2234,39 @@ components:
         size_mm: { $ref: "#/components/schemas/Vec3" }
         position_mm: { $ref: "#/components/schemas/Vec3", description: "World centre of the bounding box, first copy." }
         config: { type: object, additionalProperties: { type: string }, description: "The volume's own overrides." }
+    FilamentSlot:
+      type: object
+      properties:
+        slot: { type: integer, description: "1-based." }
+        preset: { type: string }
+        type: { type: string, example: PLA }
+        color: { type: string, example: "#00c1ae" }
+        used_on_current_plate: { type: boolean }
+    LayerChange:
+      type: object
+      properties:
+        z: { type: number, description: "mm" }
+        type: { type: string, enum: [tool_change, pause, custom, color_change] }
+        slot: { type: integer, description: "tool_change / color_change: 1-based filament slot." }
+        message: { type: string, description: "pause, when one was stored." }
+        gcode: { type: string, description: "custom: the G-code (read-only)." }
+    LayerChangeList:
+      type: object
+      properties:
+        plate: { type: integer }
+        items: { type: array, items: { $ref: "#/components/schemas/LayerChange" } }
+    UndoResult:
+      type: object
+      properties:
+        ok: { type: boolean, description: "False when there was nothing to undo/redo." }
+        can_undo: { type: boolean }
+        can_redo: { type: boolean }
+    FilamentList:
+      type: object
+      properties:
+        count: { type: integer }
+        max: { type: integer, example: 32 }
+        slots: { type: array, items: { $ref: "#/components/schemas/FilamentSlot" } }
     Status:
       type: object
       properties:
@@ -1778,6 +2284,10 @@ components:
             object_id), `view` (POST /view and GET /status view), `volumes`
             (/objects/{id}/volumes), `project_save` (POST /project/save) and `paint`
             (POST /objects/{id}/paint).
+            Also `filaments` (/filaments), `split` (POST /objects/{id}/split), `undo`
+            (POST /undo, /redo), `layer_changes` (/plates/{i}/layer_changes),
+            `breakdown_purge` (stats.breakdown.purge of GET /slice/status).
+            Also `calibration` (POST /calibration).
         plates:
           type: object
           description: How many plates the project has and which one is current.
@@ -1847,6 +2357,7 @@ components:
     ConfigApplyResult:
       type: object
       properties:
+        error: { type: string, enum: [config_rejected], description: "Present on 422 only: a key was refused and nothing was applied." }
         applied: { type: array, items: { type: string } }
         errors:
           type: object
@@ -1861,6 +2372,24 @@ components:
         filament_used_mm: { type: number, example: 1582 }
         filament_used_g: { type: number, example: 4.72 }
         total_cost: { type: number, example: 0.094 }
+        breakdown:
+          type: object
+          description: |
+            Per-feature breakdown (`roles`, ...). With the `breakdown_purge` capability it
+            also has `purge`.
+          properties:
+            purge: { $ref: "#/components/schemas/PurgeStats" }
+    PurgeStats:
+      type: object
+      description: |
+        What changing filament costs, as the preview's legend shows it. On the Centauri
+        Carbon 2 the start G-code's first filament load (M6211) counts in the time and
+        flush too, so a single-filament print reports that load with filament_changes 0.
+      properties:
+        filament_changes: { type: integer }
+        filament_change_time_s: { type: number, description: "Load + unload + tool change time; in the total, in no role." }
+        flush_g: { type: number }
+        flush_mm: { type: number }
     SliceWarning:
       type: object
       properties:
@@ -2097,3 +2626,13 @@ components:
         code: { type: integer, description: "failed only: ElegooSlicer's PrinterNetworkErrorCode." }
         printer_id: { type: string }
         file_name: { type: string }
+    SkippedDialogs:
+      type: array
+      items: { type: string }
+      description: |
+        `skipped_dialogs`, added to any JSON reply when the request's GUI work would have
+        opened a dialog: an API request never opens one (nobody may be there to close it,
+        and it would block the window and every later call). Each entry is the dialog's
+        text; a question answered on the API's behalf ends with "(answered No)" or
+        "(answered Yes)". The same text is shown as a notification in the window. See
+        README.md, "Dialogs".

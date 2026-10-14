@@ -26,6 +26,7 @@
 #include "AboutDialog.hpp"
 #include "MsgDialog.hpp"
 #include "format.hpp"
+#include "RemoteAPI/RemoteAPIDialogs.hpp" // elegoo-mcp (D8)
 
 #include "WebUserLoginDialog.hpp"
 
@@ -248,6 +249,9 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 
 void show_error(wxWindow* parent, const wxString& message, bool monospaced_font)
 {
+    // elegoo-mcp (D8): during a Remote API request a notification, not a dialog.
+    if (RemoteAPI::skip_dialog(into_u8(message), /*error=*/true))
+        return;
     wxGetApp().CallAfter([=] {
         ErrorDialog msg(parent, message, monospaced_font);
         msg.ShowModal();
@@ -268,6 +272,9 @@ void show_error_id(int id, const std::string& message)
 
 void show_info(wxWindow* parent, const wxString& message, const wxString& title)
 {
+    // elegoo-mcp (D8): during a Remote API request a notification, not a dialog.
+    if (RemoteAPI::skip_dialog(into_u8(message)))
+        return;
 	//wxMessageDialog msg_wingow(parent, message, wxString(SLIC3R_APP_NAME " - ") + (title.empty() ? _L("Notice") : title), wxOK | wxICON_INFORMATION);
 	MessageDialog msg_wingow(parent, message, wxString(SLIC3R_APP_FULL_NAME " - ") + (title.empty() ? _L("Notice") : title), wxOK | wxICON_INFORMATION);
 	msg_wingow.ShowModal();

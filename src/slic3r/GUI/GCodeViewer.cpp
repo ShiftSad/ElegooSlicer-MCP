@@ -27,6 +27,7 @@
 #include "libslic3r/Layer.hpp"
 #include "Widgets/ProgressDialog.hpp"
 #include "MsgDialog.hpp"
+#include "RemoteAPI/RemoteAPIDialogs.hpp" // elegoo-mcp (D8)
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 
@@ -1036,8 +1037,12 @@ void GCodeViewer::init(ConfigOptionMode mode, PresetBundle* preset_bundle)
     }
     catch (const std::exception& e)
     {
-        MessageDialog msg_dlg(wxGetApp().plater(), e.what(), _L("Error"), wxICON_ERROR | wxOK);
-        msg_dlg.ShowModal();
+        // elegoo-mcp (D8): during a Remote API request (GET /plate/render) a notification,
+        // not a dialog nobody may be there to close (RemoteAPI/RemoteAPIDialogs.hpp).
+        if (!RemoteAPI::skip_dialog(e.what(), /*error=*/true)) {
+            MessageDialog msg_dlg(wxGetApp().plater(), e.what(), _L("Error"), wxICON_ERROR | wxOK);
+            msg_dlg.ShowModal();
+        }
     }
 
     // Orca:

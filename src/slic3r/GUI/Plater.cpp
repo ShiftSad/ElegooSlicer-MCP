@@ -1,5 +1,6 @@
 #include "Plater.hpp"
 #include "RemoteAPI/RemoteAPIController.hpp"
+#include "RemoteAPI/RemoteAPIDialogs.hpp" // elegoo-mcp (D8)
 #include "libslic3r/Config.hpp"
 #include "libslic3r_version.h"
 
@@ -5955,6 +5956,16 @@ void read_binary_stl(const std::string& filename, std::string& model_id, std::st
     return;
 }
 
+// elegoo-mcp (D8): a Yes/No question while loading a model. During a Remote API request
+// there is no dialog (nobody may be there to answer it): the API answers No, which loads
+// the file as it is, and its reply says what was asked (RemoteAPI/RemoteAPIDialogs.hpp).
+static int ask_unless_api(MessageDialog &dlg, const wxString &question)
+{
+    if (RemoteAPI::api_skips_dialogs())
+        return RemoteAPI::api_question(into_u8(question)) ? wxID_YES : wxID_NO;
+    return dlg.ShowModal();
+}
+
 // BBS: backup & restore
 std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_files, LoadStrategy strategy, bool ask_multi)
 {
@@ -6710,6 +6721,13 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 auto obj_color_fun = [this, &path](ObjDialogInOut &in_out) {
 
                     if (!boost::iends_with(path.string(), ".obj")) { return; }
+                    // elegoo-mcp (D8): a Remote API load cannot pick the filaments; it loads
+                    // the OBJ without its colours, as the dialog's Cancel does.
+                    if (RemoteAPI::skip_dialog("The OBJ file has colours; the window would ask which filament prints each one. "
+                                               "Loaded without them (the colour dialog's Cancel).")) {
+                        in_out.filament_ids.clear();
+                        return;
+                    }
                     const std::vector<std::string> extruder_colours = wxGetApp().plater()->get_extruder_colors_from_plater_config();
                     ObjColorDialog                 color_dlg(nullptr, in_out, extruder_colours);
                     if (color_dlg.ShowModal() != wxID_OK) {
@@ -6843,26 +6861,24 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
             if ((!is_project_file) && (!load_old_project)) {
                 // if (!is_project_file) {
                 if (int deleted_objects = model.removed_objects_with_zero_volume(); deleted_objects > 0) {
-                    MessageDialog(q, _L("Objects with zero volume removed"), _L("The volume of the object is zero"), wxICON_INFORMATION | wxOK).ShowModal();
+                    if (!RemoteAPI::skip_dialog(into_u8(_L("Objects with zero volume removed")))) // elegoo-mcp (D8)
+                        MessageDialog(q, _L("Objects with zero volume removed"), _L("The volume of the object is zero"), wxICON_INFORMATION | wxOK).ShowModal();
                 }
+                // elegoo-mcp (D8): the "too small" question below, also for ask_unless_api.
+                const wxString too_small = format_wxstr(_L("The object from file %s is too small, and maybe in meters or inches.\n Do you want to scale to millimeters?"),
+                                                        from_path(filename));
                 if (imperial_units)
                     // Convert even if the object is big.
                     convert_from_imperial_units(model, false);
                 else if (model.looks_like_saved_in_meters()) {
                     // BBS do not handle look like in meters
-                    MessageDialog dlg(q,
-                                      format_wxstr(_L("The object from file %s is too small, and maybe in meters or inches.\n Do you want to scale to millimeters?"),
-                                                   from_path(filename)),
-                                      _L("Object too small"), wxICON_QUESTION | wxYES_NO);
-                    int           answer = dlg.ShowModal();
+                    MessageDialog dlg(q, too_small, _L("Object too small"), wxICON_QUESTION | wxYES_NO); // elegoo-mcp (D8): text above
+                    int           answer = ask_unless_api(dlg, too_small); // elegoo-mcp (D8)
                     if (answer == wxID_YES) model.convert_from_meters(true);
                 } else if (model.looks_like_imperial_units()) {
                     // BBS do not handle look like in meters
-                    MessageDialog dlg(q,
-                                      format_wxstr(_L("The object from file %s is too small, and maybe in meters or inches.\n Do you want to scale to millimeters?"),
-                                                   from_path(filename)),
-                                      _L("Object too small"), wxICON_QUESTION | wxYES_NO);
-                    int           answer = dlg.ShowModal();
+                    MessageDialog dlg(q, too_small, _L("Object too small"), wxICON_QUESTION | wxYES_NO); // elegoo-mcp (D8): text above
+                    int           answer = ask_unless_api(dlg, too_small); // elegoo-mcp (D8)
                     if (answer == wxID_YES) convert_from_imperial_units(model, true);
                 }
                 // else if (model.looks_like_imperial_units()) {
@@ -7184,7 +7200,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
     if (tolal_model_count <= 0 && !q->m_exported_file) {
         dlg.Hide();
-        if (!is_user_cancel) {
+        if (!is_user_cancel && !RemoteAPI::skip_dialog(into_u8(_L("The file does not contain any geometry data.")))) { // elegoo-mcp (D8)
             MessageDialog msg(wxGetApp().mainframe, _L("The file does not contain any geometry data."), _L("Warning"), wxYES | wxICON_WARNING);
             if (msg.ShowModal() == wxID_YES) {}
         }
@@ -7233,15 +7249,17 @@ std::vector<size_t> Plater::priv::load_model_objects(const ModelObjectPtrs& mode
         }
         
         //BBS: when the object is too large, let the user choose whether to scale it down
+        // elegoo-mcp (D8): the dialogs' text, also for the Remote API.
+        const wxString too_large = _L("Your object appears to be too large, do you want to scale it down to fit the print bed automatically?");
         for (size_t i = 0; i < object->instances.size(); ++i) {
             ModelInstance* instance = object->instances[i];
             const Vec3d size = object->instance_bounding_box(i).size();
             const Vec3d ratio = size.cwiseQuotient(bed_size);
             const double max_ratio = std::max(ratio(0), ratio(1));
             if (max_ratio > 10000) {
-                MessageDialog dlg(q, _L("Your object appears to be too large, do you want to scale it down to fit the print bed automatically?"), _L("Object too large"),
+                MessageDialog dlg(q, too_large, _L("Object too large"), // elegoo-mcp (D8): text above
                                   wxICON_QUESTION | wxYES);
-                int           answer = dlg.ShowModal();
+                int           answer = RemoteAPI::skip_dialog(into_u8(too_large)) ? wxID_YES : dlg.ShowModal(); // elegoo-mcp (D8): it scales anyway
                 // the size of the object is too big -> this could lead to overflow when moving to clipper coordinates,
                 // so scale down the mesh
                 object->scale_mesh_after_creation(1. / max_ratio);
@@ -7251,9 +7269,9 @@ std::vector<size_t> Plater::priv::load_model_objects(const ModelObjectPtrs& mode
                 break;
             }
             else if (max_ratio > 10) {
-                MessageDialog dlg(q, _L("Your object appears to be too large, do you want to scale it down to fit the print bed automatically?"), _L("Object too large"),
+                MessageDialog dlg(q, too_large, _L("Object too large"), // elegoo-mcp (D8): text above
                                   wxICON_QUESTION | wxYES_NO);
-                int           answer = dlg.ShowModal();
+                int           answer = ask_unless_api(dlg, too_large); // elegoo-mcp (D8)
                 if (answer == wxID_YES) {
                     instance->set_scaling_factor(instance->get_scaling_factor() / max_ratio);
                     scaled_down = true;
@@ -7888,6 +7906,10 @@ void Plater::priv::scale_selection_to_fit_print_volume()
 void Plater::priv::schedule_background_process()
 {
     delayed_error_message.clear();
+    // elegoo-mcp (D8): with background processing on, a Remote API change starts a slice
+    // after the request returned; see schedule_auto_reslice_if_needed.
+    if (background_processing_enabled() && RemoteAPI::api_skips_dialogs())
+        RemoteAPI::mark_api_slice(true);
     // Trigger the timer event after 0.5s
     this->background_process_timer.Start(500, wxTIMER_ONE_SHOT);
     // Notify the Canvas3D that something has changed, so it may invalidate some of the layer editing stuff.
@@ -7909,6 +7931,12 @@ void Plater::priv::schedule_auto_reslice_if_needed()
     PartPlate* plate = partplate_list.get_curr_plate();
     if (plate == nullptr || !plate->has_printable_instances())
         return;
+
+    // elegoo-mcp (D8): a change made by a Remote API request starts this slice after the
+    // request returned, maybe with nobody at the machine: mark it like POST /slice does,
+    // so that a critical error becomes a notification, not a dialog.
+    if (RemoteAPI::api_skips_dialogs())
+        RemoteAPI::mark_api_slice(true);
 
     if (background_process.running() || m_is_slicing) {
         // Remember to restart once the current slice stops and cancel it now.
@@ -10081,6 +10109,10 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": ignore this event %1%") % evt.status();
         return;
     }
+    // elegoo-mcp (D8): whether the Remote API started this slice (see below). A cancelled
+    // run leaves the mark to the slice that replaces it: a restart cancels first.
+    const bool api_slice = !evt.cancelled() && RemoteAPI::take_api_slice();
+
     //BBS: add project slice logic
     bool is_finished = !m_slice_all || (m_cur_slice_plate == (partplate_list.get_plate_count() - 1));
 
@@ -10111,7 +10143,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     if (evt.error()) {
         auto message = evt.format_error_message();
         if (evt.critical_error()) {
-            if (q->m_tracking_popup_menu) {
+            if (api_slice) {
+                // elegoo-mcp (D8): started by the Remote API, which returned long ago: nobody may
+                // be there to close an error dialog. Show the error like a non-critical one;
+                // GET /slice/status reports it too.
+                notification_manager->push_slicing_error_notification(message.first, {});
+                notification_manager->set_slicing_progress_hidden();
+            } else if (q->m_tracking_popup_menu) {
                 // We don't want to pop-up a message box when tracking a pop-up menu.
                 // We postpone the error message instead.
                 q->m_tracking_popup_menu_error_message = message.first;

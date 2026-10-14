@@ -8,7 +8,7 @@
 #include <mutex>
 #include <set>
 
-namespace Slic3r { class Model; class DynamicPrintConfig; }
+namespace Slic3r { class Model; class DynamicPrintConfig; struct GCodeProcessorResult; }
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -22,6 +22,19 @@ void invalidate_object_plates(int obj_idx); // mark the plates holding the objec
 // every config write (unknown, sensitive and read-only keys are refused into errors).
 void stage_object_config(DynamicPrintConfig &cfg, const nlohmann::json &in,
                          nlohmann::json &applied, nlohmann::json &errors);
+// elegoo-mcp: stats.breakdown.purge of a slice result (RemoteAPIProject.cpp).
+nlohmann::json breakdown_purge_json(const GCodeProcessorResult &res);
+// elegoo-mcp (D8): the Yes/No questions the Print tab would ask about these print
+// settings, found by running its checks on a copy (RemoteAPIDialogs.cpp).
+std::vector<std::string> print_settings_questions(const DynamicPrintConfig &print_config);
+// elegoo-mcp (D8): the same for the Printer tab's firmware-retraction question.
+std::vector<std::string> printer_settings_questions(const DynamicPrintConfig &printer_config);
+// elegoo-mcp (D8): start the window's arrange / orient job for the API
+// (RemoteAPIDialogs.cpp). If the job fails, the error becomes a notification and
+// last_api_job_error() (GET /jobs/status) instead of an error dialog.
+void        api_arrange();
+void        api_orient();
+std::string last_api_job_error(); // "" when the last job the API started had no error
 
 // Snapshot of the last/current slice, maintained on the GUI thread by wx event
 // subscriptions (Task 10), read by API threads under the mutex.
@@ -125,6 +138,18 @@ private:
     Response handle_cancel_upload(const std::string &upload_id);                   // DELETE /uploads/{id}
     Response handle_print_command(const std::string &id, const std::string &command, // POST /printers/{id}/pause|resume|stop
                                   const std::string &body);
+    // elegoo-mcp: project routes, defined in RemoteAPIProject.cpp. route_project answers
+    // the requests it owns and returns nothing for every other request.
+    std::optional<Response> route_project(const Request &req);
+    Response handle_get_filaments();                                  // GET /filaments
+    Response handle_put_filaments(const std::string &body);           // PUT /filaments {"count"}
+    Response handle_put_filament_slot(int slot, const std::string &body); // PUT /filaments/{slot}
+    Response handle_split_object(uint64_t id, const std::string &body);   // POST /objects/{id}/split
+    Response handle_undo_redo(bool undo);                                 // POST /undo, POST /redo
+    Response handle_get_layer_changes(int plate);                         // GET /plates/{i}/layer_changes
+    Response handle_add_layer_change(int plate, const std::string &body); // POST /plates/{i}/layer_changes
+    Response handle_delete_layer_change(int plate, const std::string &target); // DELETE ...?z=<mm>
+    Response handle_calibration(const std::string &body);                // POST /calibration (RemoteAPICalibration.cpp)
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);
