@@ -607,6 +607,139 @@ async def set_view(
         return _elegoo_err(e, "view")
 
 
+# --- Parts of an object (ElegooSlicer MCP, capability "volumes") ---------------
+# An object is made of volumes: its model part(s) plus any modifiers, negative parts and
+# support enforcers/blockers, the entries under the object in the window's object list.
+# The tools call them parts, as the window does; part_id is the volume's numeric id.
+
+
+def _volumes_err(e: ApiError) -> dict:
+    return _elegoo_err(e, "volumes")
+
+
+_PART_ID = Field(description="Numeric id of the part, from the 'id' field of list_parts "
+                             "(not its index).")
+_OBJECT_ID = Field(description="Integer id of the object, from the 'id' field of list_objects.")
+
+
+@mcp.tool()
+async def list_parts(object_id: Annotated[int, _OBJECT_ID]) -> dict:
+    """List the parts of one object: its model part(s) plus any modifiers, negative parts and
+    support enforcers or blockers, as the object list in the window shows them. Read-only.
+
+    Each part has id (the part_id the other part tools take), index, name, type (part,
+    modifier, negative, support_enforcer or support_blocker), extruder (its filament slot,
+    0 when it uses the object's own), size_mm, position_mm (its centre, in the same world
+    millimetres as list_objects) and config (its own setting overrides). Needs ElegooSlicer
+    MCP ('volumes' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.get_volumes(object_id)
+    except ApiError as e:
+        return _volumes_err(e)
+
+
+@mcp.tool()
+async def add_part(
+    object_id: Annotated[int, _OBJECT_ID],
+    type: Annotated[Literal["modifier", "negative", "support_enforcer", "support_blocker"], Field(
+        description=(
+            "'modifier': settings given in config apply inside its volume (denser infill in one "
+            "spot, say). 'negative': its volume is cut out of the object. 'support_enforcer': "
+            "support is generated inside it. 'support_blocker': no support inside it."))],
+    shape: Annotated[Literal["box", "cylinder", "sphere"], Field(description=(
+        "Shape of the new part, as in the window's right-click menu."))],
+    size_mm: Annotated[list[float], Field(description=(
+        "[x, y, z] size in mm of the shape's bounding box; each must be above 0."))],
+    position_mm: Annotated[list[float], Field(description=(
+        "[x, y, z] in mm where the shape's CENTRE goes, in the same world coordinates as "
+        "list_objects (the bed surface is z = 0). To cover the bottom 5 mm of a part standing "
+        "on the bed, use z = 2.5 with a z size of 5."))],
+    name: Annotated[str | None, Field(description=(
+        "Name shown in the object list. Leave it out for the window's default name."))] = None,
+    config: Annotated[dict | None, Field(description=(
+        "Setting overrides for the new part, e.g. {'sparse_infill_density': '50%'} on a "
+        "modifier. Same keys and rules as set_part_config."))] = None,
+) -> dict:
+    """Add a modifier, negative part, support enforcer or support blocker to an object, made
+    the way the window's right-click menu makes one (Add modifier, Add negative part, Support
+    enforcer or Support blocker, then Box, Cylinder or Sphere), then sized and placed.
+    Returns {"volume": {...}} with the new part's id and the fields list_parts shows.
+
+    Errors: bad_type, bad_shape or bad_size for a value it cannot use, unknown_object for an
+    id list_objects doesn't show. Sensitive keys in config (custom G-code, post-processing,
+    printer connection) are refused, as in set_object_config. The object's plate is left
+    unsliced, so re-slice afterwards; render_plate shows where the part landed. Needs
+    ElegooSlicer MCP ('volumes' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.add_volume(object_id, type, shape, size_mm, position_mm, name, config)
+    except ApiError as e:
+        return _volumes_err(e)
+
+
+@mcp.tool()
+async def remove_part(
+    object_id: Annotated[int, _OBJECT_ID],
+    part_id: Annotated[int, _PART_ID],
+) -> dict:
+    """Remove one part from an object: a modifier, negative part, support enforcer or blocker,
+    or one of several model parts. Cannot be undone through the API; returns {"ok": true}.
+
+    An object's last model part cannot be removed (last_part); use delete_object to remove
+    the whole object. The object's plate is left unsliced, so re-slice afterwards. Needs
+    ElegooSlicer MCP ('volumes' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.delete_volume(object_id, part_id)
+    except ApiError as e:
+        return _volumes_err(e)
+
+
+@mcp.tool()
+async def set_part_config(
+    object_id: Annotated[int, _OBJECT_ID],
+    part_id: Annotated[int, _PART_ID],
+    changes: Annotated[dict, Field(description=(
+        "Map of config key to new value for this part, e.g. {'sparse_infill_density': '50%', "
+        "'wall_loops': 4}."))],
+) -> dict:
+    """Set config overrides on one part of an object, e.g. what a modifier changes inside its
+    volume. Atomic like set_object_config: if any key is invalid nothing is applied.
+
+    A part's override beats its object's, which beats the print preset. Keys that run code or
+    drive the printer (custom G-code, post-processing, printer connection) are refused, as for
+    set_object_config. To give a part another filament, set_part_filament is the shortcut. The
+    object's plate is left unsliced, so re-slice afterwards. Needs ElegooSlicer MCP ('volumes'
+    in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.set_volume_config(object_id, part_id, changes)
+    except ApiError as e:
+        return _volumes_err(e)
+
+
+@mcp.tool()
+async def set_part_filament(
+    object_id: Annotated[int, _OBJECT_ID],
+    part_id: Annotated[int, _PART_ID],
+    slot: Annotated[int, Field(description=(
+        "1-based filament slot, as numbered in the window's filament list. 0 makes the part "
+        "use its object's filament again."))],
+) -> dict:
+    """Print one part with another filament, like picking it in the object list's filament
+    column. Shortcut for set_part_config with {"extruder": slot}.
+
+    Use it for a multi-colour part made of several model parts, or to give a modifier its own
+    filament. list_parts shows each part's current slot (0 = the object's own). Needs
+    ElegooSlicer MCP ('volumes' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.set_volume_config(object_id, part_id, {"extruder": slot})
+    except ApiError as e:
+        return _volumes_err(e)
+
+
 @mcp.tool()
 async def list_plates() -> dict:
     """List the plates in the project: each one's 0-based index, name, whether it is the
@@ -1672,6 +1805,11 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "move_object_to_plate": ("Move object to plate", False, False),
     "auto_orient": ("Auto-orient objects", False, False),
     "set_view": ("Switch the Prepare/Preview tab", False, False),
+    "list_parts": ("List an object's parts", True, False),
+    "add_part": ("Add a modifier, negative part or support enforcer/blocker", False, False),
+    "set_part_config": ("Set per-part config", False, False),
+    "set_part_filament": ("Set a part's filament", False, False),
+    "remove_part": ("Remove a part from an object", False, True),
     "remember": ("Save a note", False, False),
     "load_model": ("Load a model file", False, False),
     "select_preset": ("Select preset", False, False),

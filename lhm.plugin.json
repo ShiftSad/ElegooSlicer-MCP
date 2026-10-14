@@ -142,6 +142,26 @@
       "description": "Switch the slicer window to the Prepare tab (3D editor) or the Preview tab (sliced toolpaths), like clicking the tab at the top. Returns {\"view\": ...}."
     },
     {
+      "name": "list_parts",
+      "description": "List the parts of one object: its model part(s) plus any modifiers, negative parts and support enforcers or blockers, as the object list in the window shows them. Read-only."
+    },
+    {
+      "name": "add_part",
+      "description": "Add a modifier, negative part, support enforcer or support blocker to an object, made the way the window's right-click menu makes one (Add modifier, Add negative part, Support enforcer or Support blocker, then Box, Cylinder or Sphere), then sized and placed."
+    },
+    {
+      "name": "remove_part",
+      "description": "Remove one part from an object: a modifier, negative part, support enforcer or blocker, or one of several model parts. Cannot be undone through the API; returns {\"ok\": true}."
+    },
+    {
+      "name": "set_part_config",
+      "description": "Set config overrides on one part of an object, e.g. what a modifier changes inside its volume. Atomic like set_object_config: if any key is invalid nothing is applied."
+    },
+    {
+      "name": "set_part_filament",
+      "description": "Print one part with another filament, like picking it in the object list's filament column. Shortcut for set_part_config with {\"extruder\": slot}."
+    },
+    {
       "name": "list_plates",
       "description": "List the plates in the project: each one's 0-based index, name, whether it is the current plate (the one slice, get_gcode, render_plate and get_job_status act on), lock state, build volume and the objects it holds."
     },

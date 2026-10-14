@@ -97,12 +97,43 @@ class OrcaClient:
         if changed:
             raise BlockedKey(changed)
 
-    async def set_object_config(self, obj_id: int, changes: dict) -> dict:
+    @staticmethod
+    def _guard_object_config(changes: dict | None) -> None:
+        """Refuse sensitive keys in a per-object or per-part write. There is no current value
+        to compare with here (an override is new by nature), so any sensitive key is refused."""
         check_placeholders(changes)
         hits = sensitive_keys(changes or {})
         if hits:
             raise BlockedKey(hits)
+
+    async def set_object_config(self, obj_id: int, changes: dict) -> dict:
+        self._guard_object_config(changes)
         return await self._request("PUT", f"/api/v1/objects/{obj_id}/config", json=changes)
+
+    # Parts of an object: its model part(s), modifiers, negative parts and support
+    # enforcers/blockers (ElegooSlicer MCP, capability "volumes"). The API calls them volumes.
+    async def get_volumes(self, obj_id: int) -> dict:
+        return await self._request("GET", f"/api/v1/objects/{obj_id}/volumes")
+
+    async def add_volume(self, obj_id: int, vtype: str, shape: str, size_mm: list[float],
+                         position_mm: list[float], name: str | None = None,
+                         config: dict | None = None) -> dict:
+        self._guard_object_config(config)
+        body: dict = {"type": vtype, "shape": shape, "size_mm": size_mm,
+                      "position_mm": position_mm}
+        if name is not None:
+            body["name"] = name
+        if config:
+            body["config"] = config
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/volumes", json=body)
+
+    async def set_volume_config(self, obj_id: int, vol_id: int, changes: dict) -> dict:
+        self._guard_object_config(changes)
+        return await self._request("PUT", f"/api/v1/objects/{obj_id}/volumes/{vol_id}/config",
+                                   json=changes)
+
+    async def delete_volume(self, obj_id: int, vol_id: int) -> dict:
+        return await self._request("DELETE", f"/api/v1/objects/{obj_id}/volumes/{vol_id}")
 
     async def transform_object(self, obj_id: int, translate=None, rotate=None, scale=None) -> dict:
         body = {}
