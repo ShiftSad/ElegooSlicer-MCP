@@ -32,6 +32,42 @@ async def test_get_slice_breakdown_available_with_prediction(monkeypatch):
 
 
 @respx.mock
+async def test_get_slice_breakdown_passes_the_purge_on(monkeypatch):
+    _env(monkeypatch)
+    purge = {"filament_changes": 2, "filament_change_time_s": 95.0, "flush_g": 3.25, "flush_mm": 1080.0}
+    respx.get(url__regex=r"http://x:13130/api/v1/slice/status.*").mock(
+        return_value=httpx.Response(200, json={"state": "done", "breakdown": dict(_BREAKDOWN, purge=purge)}))
+    respx.get(url__regex=r"http://x:13130/api/v1/config.*").mock(
+        return_value=httpx.Response(200, json=_CONFIG))
+    out = await srv.get_slice_breakdown()
+    assert out["purge"] == purge
+    assert out["purge_summary"].startswith("2 filament changes: about 1 min 35 s and 3.2 g")
+
+
+@respx.mock
+async def test_get_slice_breakdown_single_filament_purge(monkeypatch):
+    _env(monkeypatch)
+    purge = {"filament_changes": 0, "filament_change_time_s": 0, "flush_g": 0, "flush_mm": 0}
+    respx.get(url__regex=r"http://x:13130/api/v1/slice/status.*").mock(
+        return_value=httpx.Response(200, json={"state": "done", "breakdown": dict(_BREAKDOWN, purge=purge)}))
+    respx.get(url__regex=r"http://x:13130/api/v1/config.*").mock(
+        return_value=httpx.Response(200, json=_CONFIG))
+    out = await srv.get_slice_breakdown()
+    assert out["purge_summary"] == "No filament changes."
+
+
+@respx.mock
+async def test_get_slice_breakdown_without_purge_from_an_older_build(monkeypatch):
+    _env(monkeypatch)
+    respx.get(url__regex=r"http://x:13130/api/v1/slice/status.*").mock(
+        return_value=httpx.Response(200, json={"state": "done", "breakdown": _BREAKDOWN}))
+    respx.get(url__regex=r"http://x:13130/api/v1/config.*").mock(
+        return_value=httpx.Response(200, json=_CONFIG))
+    out = await srv.get_slice_breakdown()
+    assert "purge" not in out and "purge_summary" not in out
+
+
+@respx.mock
 async def test_get_slice_breakdown_degrades_on_old_fork(monkeypatch):
     _env(monkeypatch)
     respx.get(url__regex=r"http://x:13130/api/v1/slice/status.*").mock(

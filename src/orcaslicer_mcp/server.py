@@ -18,7 +18,7 @@ from . import settings_schema
 from . import placement
 from .knowledge_index import load_knowledge, search_knowledge
 from .physics_check import run_checks, CHECK_LAYERS
-from .breakdown import build_breakdown
+from .breakdown import build_breakdown, purge_summary
 from .compare import compute_comparison
 from .guard import allow_override_warnings
 from . import notes as _notes
@@ -232,6 +232,11 @@ async def get_slice_breakdown() -> dict:
     distributions, per-layer aggregates, and a prediction_check flagging where the profile's
     speed was silently throttled at the flow ceiling ('clamped'). Answers 'which feature is
     the time hog' directly instead of by trial slicing.
+
+    On ElegooSlicer MCP ('breakdown_purge' in get_status capabilities) it also has `purge`:
+    {filament_changes, filament_change_time_s, flush_g, flush_mm} for a multi-filament print
+    (zeros for one filament), and `purge_summary`, a sentence to relay. That time and filament
+    is part of the totals but of no role, so mention it when the roles don't add up.
 
     Degrades to {"available": false, "reason": ...} on fork builds that don't emit the
     breakdown, or when there is no valid slice."""
@@ -1506,6 +1511,28 @@ def _gcode_cache_key(data: bytes) -> str:
     return f"{len(data)}:{h.hexdigest()}"
 
 
+async def _slice_purge(c) -> dict | None:
+    """The filament-change totals of the current plate's slice (ElegooSlicer MCP, capability
+    breakdown_purge), or None when the build does not report them."""
+    try:
+        breakdown = (await c.slice_status()).get("breakdown") or {}
+    except ApiError:
+        return None
+    purge = breakdown.get("purge")
+    return purge if isinstance(purge, dict) else None
+
+
+def _with_purge(out: dict, purge: dict | None) -> dict:
+    """describe_plate's reply with the plate's filament changes added: plate.purge always (when
+    the build reports it), and a sentence in the summary when there is at least one change."""
+    if purge is None:
+        return out
+    out = {**out, "plate": {**out["plate"], "purge": purge}}
+    if int(purge.get("filament_changes") or 0) > 0:
+        out["summary"] = (out["summary"] + "\n" + purge_summary(purge)).strip()
+    return out
+
+
 @mcp.tool()
 async def describe_plate() -> dict:
     """Machine-readable plate facts from the last slice's G-code, per object, so you can answer
@@ -1518,7 +1545,9 @@ async def describe_plate() -> dict:
     slice; returns {"error": "not_sliced"} otherwise. Copies of one object are aggregated (Orca
     labels every copy 0); footprint islands still show per-copy contact. The parsed result is
     cached per slice (the G-code itself is still downloaded each call to detect a new slice).
-    All bboxes are [x0, y0, x1, y1] in plate millimetres."""
+    All bboxes are [x0, y0, x1, y1] in plate millimetres. On ElegooSlicer MCP ('breakdown_purge'
+    in get_status capabilities) plate.purge has the filament changes, their time and the flushed
+    filament, and the summary names them when the plate changes filament."""
     try:
         async with _client() as c:
             data = await c.get_gcode()
@@ -1526,6 +1555,7 @@ async def describe_plate() -> dict:
                 objs = (await c.get_objects()).get("objects", [])
             except ApiError:
                 objs = []
+            purge = await _slice_purge(c)
     except Conflict:
         return {"error": "not_sliced"}
     except ApiError as e:
@@ -1533,7 +1563,7 @@ async def describe_plate() -> dict:
     key = _gcode_cache_key(data)
     hit = _DESCRIBE_CACHE.get(key)
     if hit is not None:
-        return {**hit, "cached": True}
+        return _with_purge({**hit, "cached": True}, purge)
     text = data.decode("utf-8", errors="replace")
     try:
         t0 = time.perf_counter()
@@ -1544,7 +1574,7 @@ async def describe_plate() -> dict:
         return {"error": "parse_failed", "detail": str(e)[:200]}
     _DESCRIBE_CACHE.clear()
     _DESCRIBE_CACHE[key] = out
-    return {**out, "cached": False}
+    return _with_purge({**out, "cached": False}, purge)
 
 
 def _safe_gcode_name(name: str) -> str:

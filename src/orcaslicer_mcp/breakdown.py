@@ -36,16 +36,49 @@ def prediction_check(cfg: dict, breakdown: dict) -> list[dict]:
     return out
 
 
+def _duration(seconds: float) -> str:
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s} s"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m} min {s} s" if s else f"{m} min"
+    h, m = divmod(m, 60)
+    return f"{h} h {m} min" if m else f"{h} h"
+
+
+def purge_summary(purge: dict) -> str:
+    """One sentence on the filament changes of a slice, from the breakdown's "purge" block
+    (ElegooSlicer MCP, capability breakdown_purge): {filament_changes, filament_change_time_s,
+    flush_g, flush_mm}. The time and flushed filament are already part of the slice's total time
+    and filament, but no feature role carries them, so the roles do not add up to the total
+    without them."""
+    n = int(purge.get("filament_changes") or 0)
+    if n <= 0:
+        return "No filament changes."
+    time_s = float(purge.get("filament_change_time_s") or 0)
+    flush_g = float(purge.get("flush_g") or 0)
+    changes = f"{n} filament change" + ("" if n == 1 else "s")
+    return (f"{changes}: about {_duration(time_s)} and {flush_g:.1f} g of flushed filament, "
+            "already included in the total time and filament (no feature role carries them).")
+
+
 def build_breakdown(status: dict, cfg: dict) -> dict:
     bd = status.get("breakdown")
     if not bd:
         return {"available": False,
                 "reason": "no breakdown in slice status (fork build predates this feature, "
                           "or no valid slice yet)"}
-    return {"available": True,
-            "mode": bd.get("mode"),
-            "total_time_s": bd.get("total_time_s"),
-            "roles": bd.get("roles", []),
-            "metrics": bd.get("metrics", {}),
-            "layers": bd.get("layers", []),
-            "prediction_check": prediction_check(cfg, bd)}
+    out = {"available": True,
+           "mode": bd.get("mode"),
+           "total_time_s": bd.get("total_time_s"),
+           "roles": bd.get("roles", []),
+           "metrics": bd.get("metrics", {}),
+           "layers": bd.get("layers", []),
+           "prediction_check": prediction_check(cfg, bd)}
+    # Filament changes and flushing (ElegooSlicer MCP): only builds that measure them send it.
+    purge = bd.get("purge")
+    if isinstance(purge, dict):
+        out["purge"] = purge
+        out["purge_summary"] = purge_summary(purge)
+    return out

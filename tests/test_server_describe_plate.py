@@ -12,6 +12,13 @@ OBJECTS = {"objects": [{"id": 61, "name": "cube.stl", "instances": 1, "size_mm":
 def _env(m):
     m.setenv("ORCA_API_TOKEN", "tok"); m.setenv("ORCA_API_URL", B)
     srv._DESCRIBE_CACHE.clear()
+    # describe_plate also reads the slice's purge totals; a build without them sends none.
+    respx.get(f"{B}/api/v1/slice/status").mock(return_value=httpx.Response(200, json={"state": "done"}))
+
+
+def _purge(changes):
+    return {"filament_changes": changes, "filament_change_time_s": 150.0 * changes,
+            "flush_g": 1.5 * changes, "flush_mm": 500.0 * changes}
 
 
 @respx.mock
@@ -45,6 +52,43 @@ async def test_describe_plate_objects_endpoint_missing_still_describes(monkeypat
     respx.get(url__regex=rf"{B}/api/v1/objects.*").mock(return_value=httpx.Response(404, json={"error": "not found"}))
     out = await srv.describe_plate()
     assert out["objects"][0]["copies"] == 1 and out["not_in_gcode"] == []
+
+
+@respx.mock
+async def test_describe_plate_names_the_filament_changes(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{B}/api/v1/gcode").mock(return_value=httpx.Response(200, content=CUBE))
+    respx.get(url__regex=rf"{B}/api/v1/objects.*").mock(return_value=httpx.Response(200, json=OBJECTS))
+    respx.get(f"{B}/api/v1/slice/status").mock(return_value=httpx.Response(200, json={
+        "state": "done", "breakdown": {"roles": [], "purge": _purge(3)}}))
+    out = await srv.describe_plate()
+    assert out["plate"]["purge"] == _purge(3)
+    assert out["summary"].startswith("cube.stl lies flat")
+    assert "3 filament changes: about 7 min 30 s and 4.5 g of flushed filament" in out["summary"]
+    again = await srv.describe_plate()  # a cache hit gets the purge too
+    assert again["cached"] is True and again["plate"]["purge"] == _purge(3)
+    assert again["summary"] == out["summary"]
+
+
+@respx.mock
+async def test_describe_plate_single_filament_keeps_the_summary_short(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{B}/api/v1/gcode").mock(return_value=httpx.Response(200, content=CUBE))
+    respx.get(url__regex=rf"{B}/api/v1/objects.*").mock(return_value=httpx.Response(200, json=OBJECTS))
+    respx.get(f"{B}/api/v1/slice/status").mock(return_value=httpx.Response(200, json={
+        "state": "done", "breakdown": {"roles": [], "purge": _purge(0)}}))
+    out = await srv.describe_plate()
+    assert out["plate"]["purge"]["filament_changes"] == 0
+    assert "filament change" not in out["summary"]
+
+
+@respx.mock
+async def test_describe_plate_without_purge_has_no_purge_entry(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{B}/api/v1/gcode").mock(return_value=httpx.Response(200, content=CUBE))
+    respx.get(url__regex=rf"{B}/api/v1/objects.*").mock(return_value=httpx.Response(200, json=OBJECTS))
+    out = await srv.describe_plate()
+    assert "purge" not in out["plate"]
 
 
 def test_gcode_cache_key_is_stable_and_length_sensitive():

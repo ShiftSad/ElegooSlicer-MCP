@@ -83,6 +83,7 @@ These tools need the ElegooSlicer MCP build, a port of the same API to ElegooSli
 - `list_parts`, `add_part`, `set_part_config`, `set_part_filament` and `remove_part` work on an object's parts: its model parts plus box, cylinder or sphere modifiers, negative parts and support enforcers or blockers, placed by their centre in world millimetres (`volumes`). Part settings get the same refusal of custom G-code, post-processing and printer connection keys as `set_object_config`.
 - `save_project` saves the project as a `.3mf` without a dialog, to its current file or a new path; an existing file is replaced only with `overwrite=True` (`project_save`).
 - `paint_region` paints support, seam or a filament color onto the faces whose centre lies in a box, or on the whole object, optionally only faces pointing down at least `max_overhang_deg` below horizontal (`paint`).
+- `get_slice_breakdown` and `describe_plate` report a multi-filament print's filament changes, their time and the flushed filament, which are in the totals but in no feature role (`breakdown_purge`).
 
 ### Plate renders
 
