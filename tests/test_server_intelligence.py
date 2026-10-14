@@ -21,9 +21,25 @@ async def test_check_profile_physics_overlays_changes(monkeypatch):
         "inner_wall_speed": "45", "inner_wall_line_width": "0.88",
         "filament_max_volumetric_speed": "16", "filament_type": "PLA",
         "nozzle_temperature": "215"}}))
-    r = await server.check_profile_physics({"nozzle_temperature": "205"})
+    r = await server.check_profile_physics({"nozzle_temperature": "205",
+                                            "filament_max_volumetric_speed": "12"})
     assert r["verdict"] == "blocked"
     assert any("sustains" in f["detail"] for f in r["fail"])
+
+
+@respx.mock
+async def test_check_profile_physics_trusts_the_filament_preset_limit(monkeypatch):
+    # Stock Elegoo Centauri Carbon 2: generic PLA@210C estimate 12.5 mm3/s, demand 18.9,
+    # Elegoo filament preset limit 21. Not blocked; the estimate is only a warning.
+    _env(monkeypatch)
+    respx.get("http://x:13130/api/v1/config").mock(return_value=httpx.Response(200, json={"config": {
+        "layer_height": "0.2", "line_width": "0.45", "nozzle_diameter": "0.4",
+        "outer_wall_speed": "232", "filament_max_volumetric_speed": "21",
+        "filament_type": "PLA", "nozzle_temperature": "210"}}))
+    r = await server.check_profile_physics()
+    assert r["verdict"] != "blocked"
+    warn = [w for w in r["warn"] if w["name"] == "temp_vs_flow"]
+    assert warn and "authority" in warn[0]["detail"]
 
 
 async def test_remember_saves_note(tmp_path, monkeypatch):

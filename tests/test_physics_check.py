@@ -21,9 +21,31 @@ def test_tuned_sidewinder_profile_passes():
     assert all(r.status != "fail" for r in rs), [r.detail for r in rs if r.status == "fail"]
 
 def test_cold_pla_at_high_flow_fails_temp_adequacy():
-    cfg = BASE | {"nozzle_temperature": "205"}
+    # demand 14.3 is above both the estimate and the preset's own (lowered) limit
+    cfg = BASE | {"nozzle_temperature": "205", "filament_max_volumetric_speed": "12"}
     r = _by(run_checks(cfg), "temp_vs_flow")
     assert r.status == "fail" and "8.3" in r.detail  # (205-195)/1.2 sustainable
+
+
+def test_cold_pla_within_the_preset_limit_only_warns():
+    # demand 14.3 is above the generic estimate (8.3) but within the preset's declared 16:
+    # the preset limit is the authority, so the estimate can only warn.
+    cfg = BASE | {"nozzle_temperature": "205"}
+    r = _by(run_checks(cfg), "temp_vs_flow")
+    assert r.status == "warn"
+    assert "8.3" in r.detail and "authority" in r.detail and "16" in r.detail
+
+
+def test_stock_elegoo_cc2_pla_is_not_blocked():
+    # Elegoo Centauri Carbon 2 stock profile: PLA at 210C (generic estimate 12.5 mm3/s),
+    # outer wall 232 mm/s x 0.45 x 0.2 = 18.9 mm3/s, Elegoo filament preset limit 21.
+    cfg = {"layer_height": "0.2", "nozzle_diameter": "0.4", "line_width": "0.45",
+           "outer_wall_speed": "232", "filament_max_volumetric_speed": "21",
+           "filament_type": "PLA", "nozzle_temperature": "210"}
+    rs = run_checks(cfg)
+    assert not [r for r in rs if r.status == "fail"], [r.detail for r in rs if r.status == "fail"]
+    assert _by(rs, "flow_ceiling").status == "pass"
+    assert _by(rs, "temp_vs_flow").status == "warn"
 
 def test_flow_ceiling_violation_fails():
     cfg = BASE | {"inner_wall_speed": "80"}  # 80*0.3169=25.4 > 16
@@ -89,8 +111,9 @@ def test_zero_flow_demand_passes_temp_check():
     assert r.status == "pass"
 
 def test_subbase_temp_reports_zero_not_negative():
+    # limit 12 < demand 14.3, so the estimate is reported as a failure (within it, a warning)
     cfg = {"layer_height": "0.4", "line_width": "0.85", "nozzle_diameter": "0.8",
-           "filament_max_volumetric_speed": "16", "filament_type": "PLA",
+           "filament_max_volumetric_speed": "12", "filament_type": "PLA",
            "nozzle_temperature": "180", "inner_wall_speed": "45",
            "inner_wall_line_width": "0.88"}
     r = _by(run_checks(cfg), "temp_vs_flow")

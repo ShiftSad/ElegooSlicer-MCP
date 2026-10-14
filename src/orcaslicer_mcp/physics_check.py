@@ -128,9 +128,24 @@ def run_checks(cfg: dict[str, str]) -> list[CheckResult]:
     if mat in _TEMP_RULES and temp is not None and max_flow is not None:
         base, slope = _TEMP_RULES[mat]
         sustainable = max(0.0, (temp - base) / slope)
-        status = "fail" if max_flow > sustainable else "pass"
-        out.append(CheckResult("temp_vs_flow", status,
-            f"{mat}@{temp:g}C sustains ~{sustainable:.1f}mm3/s; profile demands {max_flow:.1f}mm3/s"))
+        if max_flow <= sustainable:
+            out.append(CheckResult("temp_vs_flow", "pass",
+                f"{mat}@{temp:g}C sustains ~{sustainable:.1f}mm3/s; profile demands {max_flow:.1f}mm3/s"))
+        elif max_flow <= ceil:
+            # The melt estimate is a generic rule of thumb for the material, while the
+            # filament preset's own filament_max_volumetric_speed is set for that filament
+            # (vendor presets calibrate it for their hotend). The demand is within that
+            # declared limit, so the preset is the authority: warn, never block. Blocking
+            # here stopped the stock Elegoo Centauri Carbon 2 profile (PLA 210C: estimate
+            # 12.5, demand 18.9, preset limit 21).
+            out.append(CheckResult("temp_vs_flow", "warn",
+                f"generic {mat}@{temp:g}C estimate sustains ~{sustainable:.1f}mm3/s, below the "
+                f"profile's {max_flow:.1f}mm3/s; the filament preset's own limit "
+                f"(filament_max_volumetric_speed {ceil:g}mm3/s) is the authority and the demand "
+                f"is within it"))
+        else:
+            out.append(CheckResult("temp_vs_flow", "fail",
+                f"{mat}@{temp:g}C sustains ~{sustainable:.1f}mm3/s; profile demands {max_flow:.1f}mm3/s"))
     else:
         out.append(CheckResult("temp_vs_flow", "warn", "insufficient data (filament_type/temp/flow)"))
 

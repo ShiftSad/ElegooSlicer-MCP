@@ -131,13 +131,31 @@ def _mock_preset_roundtrip(cfg, applied):
 @respx.mock
 async def test_edit_preset_filament_temp_is_not_blocked_by_active_print_speeds(monkeypatch):
     _env(monkeypatch)
-    put_cfg, save = _mock_preset_roundtrip(_FAST_PLA, ["nozzle_temperature"])
-    out = await srv.edit_preset("filament", "PLA Basic", {"nozzle_temperature": 205})
+    # Lowering the temperature and the filament's own limit below the print preset's demand
+    # (16.3 mm3/s) fails both flow checks, but they depend on the print preset: warn only.
+    put_cfg, save = _mock_preset_roundtrip(
+        _FAST_PLA, ["nozzle_temperature", "filament_max_volumetric_speed"])
+    out = await srv.edit_preset("filament", "PLA Basic",
+                                {"nozzle_temperature": 205, "filament_max_volumetric_speed": 15})
     assert out.get("error") is None, out
     assert out["saved"] == {"saved": True} and put_cfg.call_count == 1
     warn = out["cross_layer_warnings"]
-    assert [w["name"] for w in warn] == ["temp_vs_flow"]
+    assert [w["name"] for w in warn] == ["flow_ceiling", "temp_vs_flow"]
     assert "print" in warn[0]["hint"]
+
+@respx.mock
+async def test_edit_preset_print_speed_within_the_filament_limit_is_saved(monkeypatch):
+    # Official-profile case (Elegoo CC2-like): raising a print speed so the demand (18.9 mm3/s)
+    # is above the generic PLA@210C estimate (12.5) but within the filament preset's own
+    # limit (21) must not be blocked.
+    _env(monkeypatch)
+    cc2 = {"layer_height": "0.2", "nozzle_diameter": "0.4", "line_width": "0.45",
+           "outer_wall_speed": "150", "filament_max_volumetric_speed": "21",
+           "filament_type": "PLA", "nozzle_temperature": "210"}
+    put_cfg, save = _mock_preset_roundtrip(cc2, ["outer_wall_speed"])
+    out = await srv.edit_preset("print", "My CC2 print", {"outer_wall_speed": 232})
+    assert out.get("error") is None, out
+    assert out["saved"] == {"saved": True} and save.call_count == 1
 
 @respx.mock
 async def test_edit_preset_print_speed_is_still_blocked_by_filament_ceiling(monkeypatch):

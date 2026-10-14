@@ -753,7 +753,11 @@ async def consult(query: str) -> dict:
 async def check_profile_physics(changes: dict | None = None) -> dict:
     """Deterministic pre-save gate: fetches the live config, overlays optional
     proposed `changes`, and runs flow/temperature/geometry/cooling math.
-    RUN THIS BEFORE save_preset. verdict=blocked means DO NOT SAVE."""
+    RUN THIS BEFORE save_preset. verdict=blocked means DO NOT SAVE.
+
+    The filament preset's own filament_max_volumetric_speed is the flow authority: when the
+    demand is within it, the generic melt-rate-vs-temperature estimate (temp_vs_flow) only
+    warns, so a vendor profile tuned above that estimate is not blocked."""
     try:
         async with _client() as c:
             cfg = await c.get_config(None)

@@ -17,8 +17,18 @@ POST_TUNE = PRE_TUNE | {
 }
 
 def test_pre_tune_profile_is_caught():
-    fails = [r for r in run_checks(PRE_TUNE) if r.status == "fail"]
-    assert any(r.name == "temp_vs_flow" for r in fails), "205C@high-flow must be blocked"
+    # The profile declares filament_max_volumetric_speed 25 and its demand (16.3) is within
+    # it, so the declared limit is the authority and the cold-temperature estimate (8.3)
+    # warns instead of blocking. It must still be reported, never pass silently.
+    r = next(r for r in run_checks(PRE_TUNE) if r.name == "temp_vs_flow")
+    assert r.status == "warn", "205C@high-flow must be flagged"
+    assert "8.3" in r.detail
+
+
+def test_pre_tune_profile_is_blocked_when_the_demand_exceeds_the_preset_limit():
+    fails = [r for r in run_checks(PRE_TUNE | {"filament_max_volumetric_speed": "12"})
+             if r.status == "fail"]
+    assert {"flow_ceiling", "temp_vs_flow"} <= {r.name for r in fails}
 
 def test_post_tune_profile_is_clean():
     rs = run_checks(POST_TUNE)
