@@ -299,10 +299,13 @@ target or the plate it sits on is locked; `plate` names which) `| move_failed`,
 - **Single-client oriented.** The server uses one I/O thread and marshals most
   calls onto the GUI thread with a 10s timeout (`504 ui_timeout`). Heavy or
   concurrent calls serialize; a stuck GUI stalls the API for up to 10s.
-- **Token strength.** 32 hex chars (128 bits) from `std::random_device` — fine for
+- **Token strength.** 32 hex chars (128 bits) from OpenSSL `RAND_bytes` — fine for
   a LAN token, not intended as a cryptographic secret store.
 - **Survives GUI recreate.** Changing language/skin rebuilds the GUI; the server
   keeps running and slice-event subscriptions rebind onto the new window, so WS
   clients stay connected.
-- **No SO_REUSEADDR pitfalls.** The listener sets `SO_REUSEADDR`, so restarting
-  the app rebinds the port cleanly even if a prior socket is in `TIME_WAIT`.
+- **One instance owns the port.** On Windows the listener uses `SO_EXCLUSIVEADDRUSE`,
+  so only one ElegooSlicer window can hold it; another window logs the failure and
+  shows "Remote API could not listen on port ..." (rebinding right after a restart
+  still works). On Linux/macOS it sets `SO_REUSEADDR`, so a quick restart rebinds even
+  if a prior socket is in `TIME_WAIT`.
