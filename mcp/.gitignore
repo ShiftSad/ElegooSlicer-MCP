@@ -31,3 +31,7 @@ node_modules/
 
 # raw G-code never enters the repo (rule 4); fixtures are stored as .gcode.xz
 tests/fixtures/*.gcode
+
+# When this folder is vendored as mcp/ in ElegooSlicer-MCP, ElegooSlicer's root .gitignore
+# ignores every docs/ folder; keep this one, it holds the server's own docs.
+!docs/
