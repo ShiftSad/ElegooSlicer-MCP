@@ -20,6 +20,17 @@ def gcode_fixture():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_home(monkeypatch, tmp_path_factory):
+    """No test may write into the real home folder (~/.orcaslicer-mcp/gcode, notes, ...): every
+    test starts with Path.home() pointing at an empty temp folder. POSIX reads HOME, Windows reads
+    USERPROFILE (HOME alone is ignored there, which once let save_gcode tests write into the real
+    home), so both are set."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_outcome_store(monkeypatch, tmp_path_factory):
     """No test may touch a real outcome store: both fallback locations point at temp dirs.
     Tests that want a store set PRINT_OUTCOMES_DIR themselves."""

@@ -127,7 +127,8 @@ def test_ended_at_names_its_utc_offset():
     shaped = h.shape_job(JOB_OK, None, None)
     parsed = datetime.datetime.fromisoformat(shaped["ended_at"])
     assert parsed.utcoffset() is not None  # a zone-less time cannot be told apart from another zone's
-    assert parsed == datetime.datetime.fromtimestamp(JOB_OK["end_time"]).astimezone().replace(second=0, microsecond=0)
+    expected = datetime.datetime.fromtimestamp(JOB_OK["end_time"], datetime.timezone.utc).astimezone()
+    assert parsed == expected.replace(second=0, microsecond=0)
 
 
 @pytest.mark.skipif(not hasattr(time, "tzset"), reason="needs POSIX tzset")

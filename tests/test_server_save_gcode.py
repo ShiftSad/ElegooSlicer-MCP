@@ -21,6 +21,13 @@ def _routes(slice_resp=None):
     respx.get(f"{B}/api/v1/status").mock(return_value=httpx.Response(200, json=STATUS))
 
 
+def _set_home(m, path):
+    # Path.home() reads HOME on POSIX but USERPROFILE on Windows: set both, or on Windows the
+    # file lands in the real home folder and the test fails.
+    m.setenv("HOME", str(path))
+    m.setenv("USERPROFILE", str(path))
+
+
 def _env(m, tmp_path, slice_resp=None):
     m.setenv("ORCA_API_TOKEN", "tok"); m.setenv("ORCA_API_URL", B)
     m.setenv("PRINT_OUTCOMES_DIR", str(tmp_path))
@@ -196,7 +203,7 @@ async def test_save_gcode_falls_back_to_home_dotfolder_when_no_shared_store(monk
     fake_shared = tmp_path / "would_be_shared" / "print-outcomes"
     monkeypatch.setattr(oc, "LEGACY_DIR", fake_shared)
     monkeypatch.setattr(oc, "DEFAULT_DIR", tmp_path / ".orcaslicer-mcp" / "outcomes")
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _set_home(monkeypatch, tmp_path)
     monkeypatch.setenv("ORCA_API_TOKEN", "tok"); monkeypatch.setenv("ORCA_API_URL", B)
     _routes()
 
@@ -226,7 +233,7 @@ async def test_whitespace_only_outcomes_dir_counts_as_unset(monkeypatch, tmp_pat
     fake_shared = tmp_path / "would_be_shared" / "print-outcomes"
     monkeypatch.setattr(oc, "LEGACY_DIR", fake_shared)
     monkeypatch.setattr(oc, "DEFAULT_DIR", tmp_path / ".orcaslicer-mcp" / "outcomes")
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _set_home(monkeypatch, tmp_path)
     monkeypatch.setenv("ORCA_API_TOKEN", "tok"); monkeypatch.setenv("ORCA_API_URL", B)
     _routes()
 
@@ -235,7 +242,9 @@ async def test_whitespace_only_outcomes_dir_counts_as_unset(monkeypatch, tmp_pat
     assert out["outcome_recorded"] is True
     assert (tmp_path / ".orcaslicer-mcp" / "gcode" / "w.gcode").exists()
     assert (tmp_path / ".orcaslicer-mcp" / "outcomes" / "outcomes.db").exists()
-    assert not (tmp_path / "   ").exists()
+    # Nothing else appeared in the working folder. (Not `(tmp_path / "   ").exists()`: Windows drops
+    # trailing spaces from a path, so that names tmp_path itself and always exists.)
+    assert [p.name for p in tmp_path.iterdir()] == [".orcaslicer-mcp"]
 
 
 @respx.mock
@@ -244,7 +253,7 @@ async def test_save_gcode_uses_shared_store_when_it_already_exists(monkeypatch, 
     fake_shared = tmp_path / "would_be_shared" / "print-outcomes"
     fake_shared.mkdir(parents=True)
     monkeypatch.setattr(oc, "LEGACY_DIR", fake_shared)
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _set_home(monkeypatch, tmp_path)
     monkeypatch.setenv("ORCA_API_TOKEN", "tok"); monkeypatch.setenv("ORCA_API_URL", B)
     _routes()
 

@@ -52,10 +52,14 @@ def shape_job(job: dict, reason: str | None, row: dict | None) -> dict:
     result = _outcomes.result_for_status(job.get("status"))
     # Only a finished print says anything about the estimate: a cancelled 60 s run is not "98% faster".
     vs_pct = int(round((actual / est_time - 1) * 100)) if result == "success" and actual and est_time else None
+    # Read the time as UTC first, then convert to local: on Windows a naive fromtimestamp() raises
+    # OSError for times within a day of 1970 (it probes the local time a day earlier, before 1970).
+    ended_at = (datetime.datetime.fromtimestamp(end, datetime.timezone.utc).astimezone()
+                .isoformat(timespec="minutes") if end else None)
     return {
         "file": job.get("filename"),
         "job_id": job.get("job_id"),
-        "ended_at": datetime.datetime.fromtimestamp(end).astimezone().isoformat(timespec="minutes") if end else None,
+        "ended_at": ended_at,
         "result": result,
         "status": job.get("status"),
         "print_duration_s": None if actual is None else int(round(actual)),
