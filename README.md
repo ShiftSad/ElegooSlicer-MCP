@@ -74,6 +74,16 @@ It only crowns a winner when one variant genuinely beats the rest on time, filam
 
 `list_plates`, `add_plate`, `select_plate`, `delete_plate` and `move_object_to_plate` build a multi-plate project the way the toolbar does: one part per plate, each sliced on its own. Slicing, G-code, renders and job status always act on the current plate, so select a plate before you slice it. `list_objects` reports the plate each object sits on. Keep `arrange_plate` away from a layout like this: OrcaSlicer's arrange packs every unlocked plate together again. These need fork v2.4.2-mcp.13 or later.
 
+### Parts, painting and saving (ElegooSlicer MCP)
+
+These tools need the ElegooSlicer MCP build, a port of the same API to ElegooSlicer. Each one checks for a capability that `get_status` lists, and on a build without it says which capability is missing.
+
+- `auto_orient(object_id=...)` turns only that object, as selecting it and pressing Auto orient does (`orient_object`). Without `object_id` it orients every object, as before.
+- `set_view` switches the window to the Prepare or the Preview tab (`view`). `get_status` reports the open tab.
+- `list_parts`, `add_part`, `set_part_config`, `set_part_filament` and `remove_part` work on an object's parts: its model parts plus box, cylinder or sphere modifiers, negative parts and support enforcers or blockers, placed by their centre in world millimetres (`volumes`). Part settings get the same refusal of custom G-code, post-processing and printer connection keys as `set_object_config`.
+- `save_project` saves the project as a `.3mf` without a dialog, to its current file or a new path; an existing file is replaced only with `overwrite=True` (`project_save`).
+- `paint_region` paints support, seam or a filament color onto the faces whose centre lies in a box, or on the whole object, optionally only faces pointing down at least `max_overhang_deg` below horizontal (`paint`).
+
 ### Plate renders
 
 `render_plate` hands back a PNG, so the assistant can look instead of inferring from coordinates. A rotation reads instantly as a picture and barely at all as three Euler angles. Seven camera angles cover `iso`, `top`, `front`, `left`, `right`, `rear`, and `bottom`. Use `frame="plate"` to stand back for the whole bed, or `frame="object"` to lean in on the part. Requires fork v2.3.2-mcp.4 or later.
