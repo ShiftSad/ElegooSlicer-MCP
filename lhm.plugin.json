@@ -338,6 +338,22 @@
     {
       "name": "check_printer_match",
       "description": "Does the active OrcaSlicer profile match the printer it will print on? Compares nozzle size, bed size and height, the highest speeds and accelerations, nozzle and bed temperatures, and firmware retraction against the printer's own Klipper settings."
+    },
+    {
+      "name": "list_printers",
+      "description": "List the printers in ElegooSlicer's Device tab and what each is doing. Returns {\"printers\": [...], \"selected_id\", \"summary\"}. Read-only; it reads ElegooSlicer's own printer list and does not contact the printers."
+    },
+    {
+      "name": "get_canvas",
+      "description": "Read the printer's CANVAS multi-material unit: each tray's filament and whether it is ready, as ElegooSlicer's CANVAS sync and Print dialogs see them. Read-only (asks the printer)."
+    },
+    {
+      "name": "sync_canvas_to_project",
+      "description": "Make the CANVAS trays the project's filaments, as the window's 'Sync filaments with MMS' button does, without its dialogs. Returns {synced, slots: [{slot, preset, type, color, tray}], unknown: [{tray, type, reason, detail?}], summary}."
+    },
+    {
+      "name": "preview_filament_mapping",
+      "description": "Show which CANVAS tray each filament of a plate would print from, decided exactly as the Print dialog decides it, with any problem. Read-only: nothing is saved or sent."
     }
   ],
   "prompts": [

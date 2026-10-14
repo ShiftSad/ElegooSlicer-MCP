@@ -2293,6 +2293,268 @@ async def check_printer_match() -> dict:
     return await _with_printer(run)
 
 
+# --- Elegoo printers and the CANVAS (ElegooSlicer MCP, "printers" and "canvas") ---
+# ElegooSlicer talks to its printers itself (its Device tab), so these tools ask the slicer's
+# /printers routes and never contact a printer directly. The client scrubs every printer reply
+# of secrets (guard.scrub_printer_secrets) before it gets here.
+
+_PRINTER = Field(description=(
+    "The printer: its id from list_printers, or its name as ElegooSlicer's Device tab shows it. "
+    "Leave it out for the printer ElegooSlicer's Print dialog would pick (selected_id in "
+    "list_printers)."))
+
+# What the printer layer's error tokens mean, and what to do about them. The slicer's token stays
+# the "error"; its own details (and its hint, when it sends one) are kept.
+_PRINTER_ERRORS = {
+    "printer_not_found": ("ElegooSlicer has no printer with that id.",
+                          "Take the id from list_printers."),
+    "printer_offline": ("ElegooSlicer isn't connected to the printer.",
+                        "Check that the printer is on and on the same network; ElegooSlicer's "
+                        "Device tab shows the connection."),
+    "printer_timeout": ("The printer did not answer in time.",
+                        "Wait a few seconds and try once more: the Centauri Carbon 2 ignores "
+                        "requests for a while after several in a row."),
+    "printers_unavailable": ("ElegooSlicer's printer link isn't available right now (it is closing, "
+                             "rebuilding its window, or a second ElegooSlicer window lost its link "
+                             "to the first).", "Try again in a few seconds."),
+    "printer_error": ("ElegooSlicer's printer layer reported an error (code is its error number).",
+                      "Check the printer in ElegooSlicer's Device tab."),
+    "canvas_unsupported": ("This printer reports no multi-filament support (no CANVAS).", None),
+    "canvas_disconnected": ("The printer reports no connected CANVAS unit.",
+                            "Check that the CANVAS is attached and switched on, then try again."),
+    "no_compatible_filaments": ("No CANVAS tray can be synced: each is empty, reports an unknown "
+                                "filament or matches no filament preset. Nothing was changed.",
+                                "get_canvas shows each tray's state and matched preset."),
+    "unsaved_filament_changes": ("The Filament tab's preset has unsaved edits, which the sync would "
+                                 "replace (the window would ask about them). Nothing was changed.",
+                                 "Save them with save_preset, or, only if the user agrees to drop "
+                                 "them, call again with discard_changes=True."),
+}
+
+
+def _printer_err(e: ApiError, capability: str) -> dict:
+    """The reply for a failed printer route: the slicer's error token with its details, plus what
+    the token means. A missing route (an older build) names the capability it needs."""
+    token = e.body.get("error") if isinstance(e.body, dict) else None
+    if not token or (isinstance(e, NotFound) and e.route_missing):
+        return _elegoo_err(e, capability)
+    out = {"error": token, **{k: v for k, v in e.body.items() if k != "error"}}
+    message, hint = _PRINTER_ERRORS.get(token, (None, None))
+    if message:
+        out.setdefault("message", message)
+    if hint:
+        out.setdefault("hint", hint)
+    return out
+
+
+async def _printer_id(c, printer: str | None) -> str:
+    """The id of the printer a tool acts on: the one named, else the Print dialog's pick.
+    Raises PrinterError when there is none."""
+    return str(_pelegoo.pick_printer(await c.get_printers(), printer)["id"])
+
+
+def _printer_line(p: dict) -> str:
+    where = ", ".join(str(x) for x in (p.get("model"), p.get("host"), (p.get("network") or "").upper())
+                      if x)
+    line = f"{p.get('name')} ({where}): {str(p.get('status') or 'unknown').replace('_', ' ')}"
+    task = p.get("task") if isinstance(p.get("task"), dict) else None
+    if task and task.get("file"):
+        line += f" {task['file']}"
+        if task.get("progress") is not None:
+            line += f" {task['progress']}%"
+    return line
+
+
+@mcp.tool()
+async def list_printers() -> dict:
+    """List the printers in ElegooSlicer's Device tab and what each is doing. Returns
+    {"printers": [...], "selected_id", "summary"}. Read-only; it reads ElegooSlicer's own printer
+    list and does not contact the printers.
+
+    Each printer has id (what the other printer tools take as `printer`), name, model, host,
+    network ('lan', or 'wan' for a cloud printer), firmware, connected, status ('offline', 'idle',
+    'printing', 'paused', 'preheating', 'auto_leveling', 'filament_operating', 'print_completed',
+    'error' and more), task (the print in progress: file, progress 0-100, current_s, total_s,
+    estimated_s = time left; null when not printing) and supports (canvas, timelapse,
+    auto_leveling, bed_switching, auto_refill, filament_mapping). selected_id is the printer
+    ElegooSlicer's Print dialog would preselect, which every printer tool uses when no printer
+    is given. Access codes, passwords and serial numbers are never included. Needs ElegooSlicer
+    MCP ('printers' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            listing = await c.get_printers()
+    except ApiError as e:
+        return _printer_err(e, "printers")
+    printers = [p for p in listing.get("printers") or [] if isinstance(p, dict)]
+    if not printers:
+        summary = ("ElegooSlicer has no printers. Add one in its Device tab (by IP address and the "
+                   "access code shown on the printer's screen).")
+    else:
+        summary = "; ".join(_printer_line(p) for p in printers) + "."
+        chosen = next((p for p in printers if p.get("id") == listing.get("selected_id")), None)
+        if chosen and len(printers) > 1:
+            summary += f" The Print dialog would pick {chosen.get('name')}."
+    return {**listing, "summary": summary}
+
+
+_TRAY_READY = ("loaded", "preloaded")
+
+
+def _tray_text(t: dict) -> str:
+    return " ".join(str(x) for x in (t.get("id"), t.get("type"), t.get("color")) if x)
+
+
+def _canvas_overview(canvas: dict) -> dict:
+    """What a model should notice first: the trays that are not ready, the ready ones no filament
+    preset matches (a sync leaves them out), and one sentence over all of it."""
+    trays = [t for u in canvas.get("units") or [] if isinstance(u, dict)
+             for t in u.get("trays") or [] if isinstance(t, dict)]
+    not_ready = [{"tray": t.get("id"), "status": t.get("status")} for t in trays
+                 if t.get("status") not in _TRAY_READY]
+    unmatched = [t.get("id") for t in trays
+                 if t.get("status") in _TRAY_READY and not t.get("matched_preset")]
+    if not canvas.get("connected"):
+        summary = "The CANVAS is not connected."
+    else:
+        active = canvas.get("active") or {}
+        summary = (f"CANVAS connected, auto refill {'on' if canvas.get('auto_refill') else 'off'}"
+                   + (f", feeding from {active.get('tray')}." if active.get("tray") else "."))
+        ready = [t for t in trays if t.get("status") in _TRAY_READY]
+        if ready:
+            summary += " Ready: " + "; ".join(
+                f"{_tray_text(t)} ({t.get('matched_preset') or 'no matching preset'})"
+                for t in ready) + "."
+        if not_ready:
+            summary += " Not ready: " + "; ".join(
+                f"{n['tray']} {str(n['status']).replace('_', ' ')}" for n in not_ready) + "."
+    return {**canvas, "not_ready": not_ready, "unmatched": unmatched, "summary": summary}
+
+
+@mcp.tool()
+async def get_canvas(printer: Annotated[str | None, _PRINTER] = None) -> dict:
+    """Read the printer's CANVAS multi-material unit: each tray's filament and whether it is ready,
+    as ElegooSlicer's CANVAS sync and Print dialogs see them. Read-only (asks the printer).
+
+    Returns the slicer's reply ({connected, auto_refill, active: {unit, tray}, units: [{id, trays:
+    [{id 'A1'..'A4' ('B1'.. for a second unit), status, type, name, vendor, color '#rrggbb',
+    nozzle_temp [min, max], matched_preset, matched_alias}]}], age_s}) plus not_ready (trays
+    whose status is empty, unknown_filament, error or unknown: nothing can print from them),
+    unmatched (ready trays no filament preset matches, which a sync leaves out) and summary, a
+    sentence to relay. matched_preset is the filament preset ElegooSlicer picked for a tray. A
+    reply is reused for 5 s, and asking more often does not help: the Centauri Carbon 2 ignores
+    requests for a while after several in a row. Errors: canvas_unsupported, printer_offline
+    (409), printer_timeout (504). Needs ElegooSlicer MCP ('canvas' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            canvas = await c.get_canvas(await _printer_id(c, printer))
+    except PrinterError as e:
+        return e.as_dict()
+    except ApiError as e:
+        return _printer_err(e, "canvas")
+    return _canvas_overview(canvas)
+
+
+@mcp.tool()
+async def sync_canvas_to_project(
+    printer: Annotated[str | None, _PRINTER] = None,
+    mode: Annotated[Literal["filament_and_color", "color_only"] | None, Field(description=(
+        "'filament_and_color' (the default, as the window's Sync button): the project's filament "
+        "slots become the ready CANVAS trays in tray order, each with the preset matched to it "
+        "and its colour. 'color_only': the slots keep their presets and take the trays' colours."
+        ))] = None,
+    discard_changes: Annotated[bool, Field(description=(
+        "True drops unsaved edits of the Filament tab's preset, which the sync would otherwise "
+        "refuse to replace (unsaved_filament_changes). Pass it only after the user agreed to lose "
+        "them."))] = False,
+) -> dict:
+    """Make the CANVAS trays the project's filaments, as the window's 'Sync filaments with MMS'
+    button does, without its dialogs. Returns {synced, slots: [{slot, preset, type, color, tray}],
+    unknown: [{tray, type, reason, detail?}], summary}.
+
+    slots is every filament slot after the sync, with the tray it came from. unknown lists the
+    trays not taken as they are: empty and not_matched trays are left out, fallback_preset trays
+    were synced with a generic or other preset (detail is the window's warning). Use it before
+    assigning filaments to parts (set_part_filament) for a multi-colour print, then check
+    preview_filament_mapping after slicing. It replaces the filament list (presets and colours;
+    not undoable), leaves every plate unsliced and makes this printer the Print dialog's choice.
+    Errors: unsaved_filament_changes, no_compatible_filaments, canvas_disconnected,
+    canvas_unsupported, printer_offline (409), printer_timeout (504). Needs ElegooSlicer MCP
+    ('canvas' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            out = await c.sync_canvas(await _printer_id(c, printer), mode, discard_changes)
+    except PrinterError as e:
+        return e.as_dict()
+    except ApiError as e:
+        return _printer_err(e, "canvas")
+    slots = []
+    for s in out.get("slots") or []:
+        if isinstance(s, dict):
+            text = f"slot {s.get('slot')} {s.get('preset')} {s.get('color')}"
+            slots.append(f"{text} (from {s.get('tray')})" if s.get("tray") else text)
+    summary = f"Synced {out.get('synced', 0)} tray(s): " + "; ".join(slots) + "."
+    left = [f"{u.get('tray')} ({u.get('reason')})" for u in out.get("unknown") or []
+            if isinstance(u, dict)]
+    if left:
+        summary += " Not taken as they are: " + ", ".join(left) + "."
+    summary += " Every plate is unsliced now: re-slice before printing."
+    return {**out, "summary": summary}
+
+
+_MAPPING_ISSUES = {
+    "no_tray": "no ready tray holds this filament, so the Print dialog would refuse to start",
+    "type_mismatch": "the tray holds another filament type",
+    "color_mismatch": "the tray's colour differs from the slot's",
+    "tray_not_ready": "the tray is not loaded",
+}
+
+
+@mcp.tool()
+async def preview_filament_mapping(
+    printer: Annotated[str | None, _PRINTER] = None,
+    plate: Annotated[int | None, _PLATE_OR_CURRENT] = None,
+) -> dict:
+    """Show which CANVAS tray each filament of a plate would print from, decided exactly as the
+    Print dialog decides it, with any problem. Read-only: nothing is saved or sent.
+
+    Returns the slicer's reply ({plate, sliced, ok, filaments: [{slot, preset, type, color,
+    weight_g, tray: {unit, tray, type, color} or null, issues}]}) plus table_markdown (slot ->
+    tray, one row each) and summary, to relay as given. issues: no_tray (the print could not
+    start), type_mismatch, color_mismatch, tray_not_ready. ok is true when no filament has an
+    issue. The filaments come from the slice when the plate is sliced (weight_g then set), else
+    from what the plate's objects use. Fix problems by loading the right filament on the
+    printer, then get_canvas, or by changing slots (set_filament_slot, sync_canvas_to_project).
+    Errors: canvas_disconnected, canvas_unsupported, printer_offline (409), printer_timeout
+    (504), unknown_plate (404). Needs ElegooSlicer MCP ('canvas' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            out = await c.get_canvas_mapping(await _printer_id(c, printer), plate)
+    except PrinterError as e:
+        return e.as_dict()
+    except ApiError as e:
+        return _printer_err(e, "canvas")
+    rows = ["| slot | filament | colour | tray | problems |", "|---|---|---|---|---|"]
+    problems = []
+    for f in out.get("filaments") or []:
+        if not isinstance(f, dict):
+            continue
+        tray = f.get("tray") if isinstance(f.get("tray"), dict) else None
+        tray_text = (" ".join(str(x) for x in (tray.get("tray"), tray.get("type"), tray.get("color"))
+                              if x) if tray else "none")
+        issues = list(f.get("issues") or [])
+        rows.append(f"| {f.get('slot')} | {f.get('preset')} ({f.get('type')}) | {f.get('color')} | "
+                    f"{tray_text} | {', '.join(issues) or 'ok'} |")
+        problems += [f"slot {f.get('slot')}: {_MAPPING_ISSUES.get(i, i)}" for i in issues]
+    count = len(rows) - 2
+    if out.get("ok"):
+        summary = f"All {count} filament(s) of plate {out.get('plate')} have a ready matching tray."
+    else:
+        summary = f"Plate {out.get('plate')}: " + "; ".join(problems) + "."
+    if not out.get("sliced"):
+        summary += " The plate is not sliced yet, so this is from what its objects use."
+    return {**out, "table_markdown": "\n".join(rows), "summary": summary}
+
+
 # --- Tool annotations (title + read-only/destructive hints) -----------------
 # The Claude connectors directory requires every tool to carry a title and the
 # applicable readOnlyHint / destructiveHint. Kept as one table so completeness
@@ -2375,12 +2637,18 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "wait_for_printer": ("Wait for the printer", True, False),
     "list_print_history": ("List print history", False, False),
     "check_printer_match": ("Check the profile against the printer", True, False),
+    "list_printers": ("List ElegooSlicer's printers", True, False),
+    "get_canvas": ("Read the CANVAS trays", True, False),
+    # Replaces the project's filament slots (presets and colours), which undo does not restore.
+    "sync_canvas_to_project": ("Load the CANVAS trays into the filament slots", False, True),
+    "preview_filament_mapping": ("Preview which tray each filament prints from", True, False),
 }
 
 
 # Tools that reach outside OrcaSlicer (the printer on the network), and tools that are safe to repeat
 # although they write local state.
-_OPEN_WORLD_TOOLS = frozenset({"get_printer_status", "wait_for_printer", "list_print_history", "check_printer_match"})
+_OPEN_WORLD_TOOLS = frozenset({"get_printer_status", "wait_for_printer", "list_print_history", "check_printer_match",
+                               "get_canvas", "sync_canvas_to_project", "preview_filament_mapping"})
 _IDEMPOTENT_TOOLS = frozenset({"list_print_history"})
 
 
