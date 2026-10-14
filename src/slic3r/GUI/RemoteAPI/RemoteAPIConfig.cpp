@@ -45,6 +45,12 @@ void Config::save() const
     app_config->save();
 }
 
+bool Config::print_control_allowed()
+{
+    // An absent key reads as false: off by default.
+    return wxGetApp().app_config->get_bool("remote_api_allow_print_control");
+}
+
 std::string Config::generate_token()
 {
     // std::random_device is not required by the standard to be a CSPRNG - on MinGW

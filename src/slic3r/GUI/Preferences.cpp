@@ -2277,6 +2277,19 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
         "remote_api_allow_sensitive");
     g_sizer->Add(item_sensitive);
 
+    // elegoo-mcp: read by the print-control routes (RemoteAPI::Config::print_control_allowed)
+    // on every request. Absent = off.
+    auto item_print_control = create_item_checkbox(
+        _L("Allow sending and controlling prints"),
+        _L("Off (recommended): the API cannot send anything to a printer, nor start, pause, resume or "
+           "stop a print. On: an external tool, such as an AI agent, can send the plate ElegooSlicer "
+           "sliced to an Elegoo printer and start it, and pause, resume or stop prints. A print started "
+           "at the wrong time can damage the printer or the part, and an AI agent can be steered by text "
+           "it reads, so turn this on only when you can watch the printer. ElegooSlicer shows a "
+           "notification for every such request."),
+        "remote_api_allow_print_control");
+    g_sizer->Add(item_print_control);
+
     // Port row (bespoke). The stock create_item_input() unconditionally writes the
     // field's raw text back to AppConfig on every Enter/focus-loss (see the
     // handlers in create_item_input) with no empty/range guard, and shows a blank

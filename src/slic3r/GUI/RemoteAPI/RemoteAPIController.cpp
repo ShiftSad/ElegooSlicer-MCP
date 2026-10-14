@@ -314,6 +314,7 @@ Response Controller::handle_status()
                               // elegoo-mcp: routes in RemoteAPIElegoo.cpp
                               "printers", "canvas"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
+            {"print_control_enabled", Config::print_control_allowed()}, // elegoo-mcp: Preferences > Remote API
             {"project", plater->get_project_filename().ToUTF8().data()},
             {"objects", objects},
             {"presets", {
