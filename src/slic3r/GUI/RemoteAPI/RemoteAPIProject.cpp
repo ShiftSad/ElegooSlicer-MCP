@@ -54,7 +54,7 @@ static bool editing_gizmo_open()
            type != GLGizmosManager::Scale;
 }
 
-// Parses a 1-based index from a path segment ("3"); -1 when it is not a plain number.
+// Parses an index from a path segment ("3"); -1 when it is not a number >= 0.
 static int parse_index(const std::string &s)
 {
     try {
@@ -400,6 +400,16 @@ Response Controller::handle_put_filament_slot(int slot, const std::string &body)
                         {"hint", "save or discard the Filament tab's changes in the window, or use PUT /preset"}};
         }
 
+        // A newly picked preset brings its default colour, as update_ams_color does in
+        // the combo box; an explicit "color" wins, and naming the slot's current preset
+        // again keeps its colour. (Read now: the preset switch below may move presets.)
+        std::string new_colour = colour;
+        if (new_colour.empty() && preset_changed) {
+            const auto *defaults = preset->config.option<ConfigOptionStrings>("default_filament_colour");
+            if (defaults != nullptr && !defaults->values.empty())
+                new_colour = defaults->values.front();
+        }
+
         if (preset_changed) {
             // Plater::priv::on_select_preset, filament branch.
             bundle->set_filament_preset(idx, preset_name);
@@ -412,15 +422,6 @@ Response Controller::handle_put_filament_slot(int slot, const std::string &body)
             plater->on_config_change(bundle->full_config());
         }
 
-        // A newly picked preset brings its default colour, as update_ams_color does in
-        // the combo box; an explicit "color" wins, and naming the slot's current preset
-        // again keeps its colour.
-        std::string new_colour = colour;
-        if (new_colour.empty() && preset_changed) {
-            const auto *defaults = preset->config.option<ConfigOptionStrings>("default_filament_colour");
-            if (defaults != nullptr && !defaults->values.empty())
-                new_colour = defaults->values.front();
-        }
         bool colour_changed = false;
         if (!new_colour.empty() && to_lower(new_colour) != slot_colour(idx)) {
             combo->sync_colour_config({new_colour}, false);
