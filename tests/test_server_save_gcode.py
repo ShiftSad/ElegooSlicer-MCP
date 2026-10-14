@@ -8,11 +8,14 @@ OBJS = {"count": 1, "objects": [{"id": 1, "index": 0, "name": "cube", "size_mm":
 CFG = {"config": {"layer_height": "0.5", "fan_max_speed": "60", "unrelated": "x"}}
 STATUS = {"presets": {"printer": "Test Printer", "print": "p", "filaments": ["f"]}}
 SLICE = {"state": "done", "percent": 100, "stats": {"estimated_time_seconds": 1234.0, "filament_used_g": 5.6}}
+PLATES = {"current": 0, "plates": [{"index": 0, "name": "", "current": True,
+                                    "objects": [{"id": 1, "instance": 0, "name": "cube"}]}]}
 
 
 def _routes(slice_resp=None):
     respx.get(f"{B}/api/v1/gcode").mock(return_value=httpx.Response(200, content=b"G28\nG1 X1\n"))
     respx.get(f"{B}/api/v1/objects").mock(return_value=httpx.Response(200, json=OBJS))
+    respx.get(f"{B}/api/v1/plates").mock(return_value=httpx.Response(200, json=PLATES))
     respx.get(url__regex=rf"{B}/api/v1/config.*").mock(return_value=httpx.Response(200, json=CFG))
     respx.get(f"{B}/api/v1/slice/status").mock(return_value=slice_resp or httpx.Response(200, json=SLICE))
     respx.get(f"{B}/api/v1/status").mock(return_value=httpx.Response(200, json=STATUS))
@@ -119,7 +122,7 @@ async def test_save_gcode_still_records_without_an_estimate(monkeypatch, tmp_pat
 async def test_save_gcode_default_name_and_sanitising(monkeypatch, tmp_path):
     _env(monkeypatch, tmp_path)
     out = await srv.save_gcode()
-    assert out["filename"].startswith("cube_") and out["filename"].endswith(".gcode")
+    assert out["filename"].startswith("plate1_cube_") and out["filename"].endswith(".gcode")
     out2 = await srv.save_gcode("../evil name?.gcode")
     assert "/" not in out2["filename"] and ".." not in out2["filename"] and " " not in out2["filename"]
 
@@ -265,3 +268,63 @@ async def test_save_gcode_never_overwrites_existing_file(monkeypatch, tmp_path):
     gdir = tmp_path / "gcode"
     assert (gdir / "dup.gcode").read_bytes() == b"G28\nG1 X1\n"
     assert (gdir / "dup-2.gcode").read_bytes() == b"G28\nG1 X2\n"
+
+
+# --- default name follows the plate that was saved, not the project's first object ---
+
+def _two_plates(second_name="", second_objects=None):
+    second_objects = second_objects if second_objects is not None else [
+        {"id": 2, "instance": 0, "name": "visor.stl"}, {"id": 3, "instance": 0, "name": "strap.stl"},
+        {"id": 3, "instance": 1, "name": "strap.stl"}]
+    return {"current": 1, "plates": [
+        {"index": 0, "name": "", "current": False, "objects": [{"id": 1, "instance": 0, "name": "cube"}]},
+        {"index": 1, "name": second_name, "current": True, "objects": second_objects}]}
+
+
+@respx.mock
+async def test_save_gcode_default_name_is_the_current_plate_and_its_objects(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    respx.get(f"{B}/api/v1/plates").mock(return_value=httpx.Response(200, json=_two_plates()))
+    out = await srv.save_gcode()
+    # plate 2 in the window; each object once, model extension dropped; not "cube" (plate 1)
+    assert out["filename"].startswith("plate2_visor_strap_") and out["filename"].endswith(".gcode")
+    assert out["model_name"] == "visor.stl"
+
+
+@respx.mock
+async def test_save_gcode_default_name_uses_the_plate_name_when_set(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    respx.get(f"{B}/api/v1/plates").mock(
+        return_value=httpx.Response(200, json=_two_plates(second_name="helmet visor")))
+    out = await srv.save_gcode()
+    assert out["filename"].startswith("helmet_visor_") and out["filename"].endswith(".gcode")
+
+
+@respx.mock
+async def test_save_gcode_default_name_counts_objects_past_three(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    many = [{"id": i, "instance": 0, "name": f"p{i}"} for i in range(1, 6)]
+    respx.get(f"{B}/api/v1/plates").mock(
+        return_value=httpx.Response(200, json=_two_plates(second_objects=many)))
+    out = await srv.save_gcode()
+    assert out["filename"].startswith("plate2_p1_p2_p3_2more_")
+
+
+@respx.mock
+async def test_save_gcode_default_name_collision_gets_a_suffix(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    respx.get(f"{B}/api/v1/plates").mock(return_value=httpx.Response(200, json=_two_plates()))
+    monkeypatch.setattr(srv, "_safe_gcode_name", lambda name: "plate2_fixed.gcode")
+    first = await srv.save_gcode()
+    second = await srv.save_gcode()
+    assert first["filename"] == "plate2_fixed.gcode"
+    assert second["filename"] == "plate2_fixed-2.gcode"
+    assert (tmp_path / "gcode" / "plate2_fixed-2.gcode").exists()
+
+
+@respx.mock
+async def test_save_gcode_without_plates_api_names_after_the_first_object(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    respx.get(f"{B}/api/v1/plates").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
+    out = await srv.save_gcode()
+    assert out["filename"].startswith("cube_") and out["model_name"] == "cube"

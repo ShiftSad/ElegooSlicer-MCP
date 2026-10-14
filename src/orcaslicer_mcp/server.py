@@ -1182,6 +1182,49 @@ def _safe_gcode_name(name: str) -> str:
     return base if base.lower().endswith(".gcode") else base + ".gcode"
 
 
+# Model-file extensions dropped from object names in a default G-code file name
+# ("visor.stl" -> "visor"), so the name stays short.
+_MODEL_EXTS = (".stl", ".obj", ".3mf", ".step", ".stp", ".amf", ".drc")
+
+
+def _short_object_name(name: str) -> str:
+    for ext in _MODEL_EXTS:
+        if name.lower().endswith(ext):
+            return name[: -len(ext)]
+    return name
+
+
+def _plate_gcode_name(plates: dict | None, objs: list[dict]) -> tuple[str, str]:
+    """(base of the default file name, model name to record) for save_gcode.
+
+    The G-code is that of the CURRENT plate, so name it after that plate: its own name if
+    the user gave it one, else "plate<N>" (1-based, as the window numbers plates) followed by
+    the objects on it. Builds without the plates API fall back to the project's first object."""
+    fallback = objs[0]["name"] if objs else "plate"
+    current = next((p for p in (plates or {}).get("plates") or [] if p.get("current")), None)
+    if current is None:
+        return fallback, fallback
+    # A plate lists one entry per instance; keep each object name once, in plate order.
+    names: list[str] = []
+    for o in current.get("objects") or []:
+        n = _short_object_name(str(o.get("name") or ""))
+        if n and n not in names:
+            names.append(n)
+    # The recorded model name keeps the object's full name ("visor.stl"), as before, so
+    # recall_prints' name match still finds it; only the file name is shortened.
+    plate_objs = current.get("objects") or []
+    model_name = str(plate_objs[0].get("name") or fallback) if plate_objs else fallback
+    plate_name = str(current.get("name") or "").strip()
+    if plate_name:
+        base = plate_name
+    else:
+        # Up to three object names keep the file name readable; the rest are counted.
+        shown = names[:3] + ([f"{len(names) - 3}more"] if len(names) > 3 else [])
+        base = "_".join([f"plate{int(current.get('index', 0)) + 1}"] + shown)
+    # The name becomes a file name: a slash in a plate or object name must not act as a folder.
+    return base.replace("/", "_").replace("\\", "_"), model_name
+
+
 def _unique_gcode_path(out_dir: Path, fname: str) -> tuple[Path, str]:
     """Never overwrite an existing file: append -2, -3, ... (then a uuid4 suffix as a last resort)."""
     path = out_dir / fname
@@ -1213,7 +1256,9 @@ async def save_gcode(filename: str | None = None) -> dict:
     objects' names and sizes, full settings snapshot, and OrcaSlicer's time and filament estimates)
     in the local outcome store under that filename. When that file is printed, list_print_history (or klipper-mcp's recorder) matches the
     finished job by filename, so the real result joins back to these settings. Returns the saved
-    path; hand it to klipper-mcp's start_print. Default filename: <object>_<timestamp>.gcode. Never
+    path; hand it to klipper-mcp's start_print. Default filename: <plate>_<timestamp>.gcode, named
+    after the current plate (the one sliced): its name if set, else plate<N> plus the objects on
+    it. Never
     overwrites an existing file: a name collision gets a -2, -3, ... suffix. Writes into a gcode
     folder under PRINT_OUTCOMES_DIR if set, else under the shared print-outcomes folder
     (~/projects/_shared/print-outcomes) if it already exists, else under ~/.orcaslicer-mcp; the folder
@@ -1223,6 +1268,10 @@ async def save_gcode(filename: str | None = None) -> dict:
         async with _client() as c:
             data = await c.get_gcode()
             objs = (await c.get_objects()).get("objects") or []
+            try:
+                plates = await c.get_plates()
+            except NotFound:
+                plates = None  # build without the plates API: named after the first object
             cfg = await c.get_config(None)
             stats: dict = {}
             printer_name = None
@@ -1238,8 +1287,8 @@ async def save_gcode(filename: str | None = None) -> dict:
         return {"error": "not_sliced"}
     except ApiError as e:
         return _m4a_err(e)
-    model_name = objs[0]["name"] if objs else "plate"
-    fname = _safe_gcode_name(filename or f"{model_name}_{datetime.datetime.now():%Y%m%d-%H%M%S}")
+    base, model_name = _plate_gcode_name(plates, objs)
+    fname = _safe_gcode_name(filename or f"{base}_{datetime.datetime.now():%Y%m%d-%H%M%S}")
     out_dir = _gcode_base_dir() / "gcode"
     out_dir.mkdir(parents=True, exist_ok=True)
     path, fname = _unique_gcode_path(out_dir, fname)
