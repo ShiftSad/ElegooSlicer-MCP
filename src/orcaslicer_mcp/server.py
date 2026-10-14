@@ -998,12 +998,13 @@ async def undo() -> dict:
     "can_undo", "can_redo"}; ok is false when there was nothing to undo.
 
     The history is the window's own, shared with the user: it holds their edits as well as
-    changes made through these tools, so a step may be something the user did by hand. Moves,
-    rotations, added or removed objects and parts, painting and splits are recorded as in the
-    window; setting changes (set_config, select_preset) are not. Check the result with
-    list_objects or render_plate. Refused while slicing (slicing, 409) or while a gizmo is open
-    in the window (gizmo_editing, 409). Needs ElegooSlicer MCP ('undo' in get_status
-    capabilities)."""
+    changes made through these tools, so a step may be something the user did by hand. Object,
+    part, plate and paint edits are recorded (moves, rotations, added or removed objects and
+    parts, splits, painting); settings, presets and filament slots are not, as in the window. A
+    step can add or remove plates and leaves every plate unsliced. Check the result with
+    list_objects or render_plate. Refused while slicing (slicing, 409), during an arrange or
+    orient job (job_running, 409) or while a paint, cut or other editing tool is open in the
+    window (gizmo_editing, 409). Needs ElegooSlicer MCP ('undo' in get_status capabilities)."""
     try:
         async with _client() as c:
             return await c.undo()
@@ -1017,9 +1018,10 @@ async def redo() -> dict:
     "can_redo"}; ok is false when there was nothing to redo (a new change after an undo clears
     what could be redone).
 
-    Uses the window's own history, shared with the user, as undo does. Check the result with
-    list_objects or render_plate. Refused while slicing (slicing, 409) or while a gizmo is open
-    in the window (gizmo_editing, 409). Needs ElegooSlicer MCP ('undo' in get_status
+    Uses the window's own history, shared with the user, as undo does, and leaves every plate
+    unsliced. Check the result with list_objects or render_plate. Refused while slicing
+    (slicing, 409), during an arrange or orient job (job_running, 409) or while an editing tool
+    is open in the window (gizmo_editing, 409). Needs ElegooSlicer MCP ('undo' in get_status
     capabilities)."""
     try:
         async with _client() as c:
