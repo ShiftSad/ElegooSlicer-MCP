@@ -1341,7 +1341,8 @@ static void forget_old_plans_and_uploads()
 
 // Whether the printer can take a new print now, from ElegooSlicer's cache: connected, and idle or
 // showing its last print as completed (the Print dialog's printerBusy test), and not receiving a
-// print the API is still sending. False, with the answer in `error`, when not. API thread.
+// print the API is still sending (or cancelled less than CANCEL_SETTLE_S ago). False, with the
+// answer in `error`, when not. API thread.
 static bool printer_free(const PrinterNetworkInfo &p, Response &error)
 {
     if (p.connectStatus != PRINTER_CONNECT_STATUS_CONNECTED) {
@@ -1354,9 +1355,15 @@ static bool printer_free(const PrinterNetworkInfo &p, Response &error)
     }
     for (const auto &[upload_id, job] : upload_jobs()) {
         std::lock_guard<std::mutex> lock(job->mutex);
-        // A cancelled upload sends nothing more (its thread may still be cleaning up).
-        if (job->printer_id == p.printerId && !job->done && !job->cancel_requested) {
+        // A cancelled upload counts too until its job is done: a transfer whose last bytes had
+        // already gone out when the cancel came still starts its print (see refresh_job), and
+        // the job waits up to CANCEL_SETTLE_S for that. A new print sent meanwhile would find
+        // the printer busy, or the cancelled file would print instead of it.
+        if (job->printer_id == p.printerId && !job->done) {
             error = { 409, {{"error", "upload_in_progress"}, {"upload_id", upload_id}} };
+            if (job->cancel_requested)
+                error.body["hint"] = "the transfer was cancelled but may still start its print for up to a "
+                                     "minute; wait, then check GET /uploads/{id} and the printer's status";
             return false;
         }
     }

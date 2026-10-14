@@ -1528,7 +1528,8 @@ paths:
         whole file reached the printer it is too late (409 too_late): stop the print with
         POST /printers/{id}/stop. If the last bytes went out just as the cancel arrived, the
         printer still starts the print: GET /uploads/{id} keeps watching for a minute after a
-        cancel and then shows `success`.
+        cancel and then shows `success`. Until then prepare and print on that printer answer
+        409 upload_in_progress.
       responses:
         "200":
           description: Cancelled (also when it already was).

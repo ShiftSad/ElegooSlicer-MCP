@@ -906,7 +906,8 @@ changed, another plate was selected, or a setting changed: prepare again),
 the printer it is too late: `409 {"error": "too_late", "status", "hint"}`; stop the print
 with `POST .../stop` instead. If the last bytes went out just as the cancel arrived, the
 printer still starts the print: `GET /uploads/{id}` keeps watching for a minute after a
-cancel and then shows `success`.
+cancel and then shows `success`. Until then the printer counts as receiving a print:
+`print/prepare` and `print` answer `409 upload_in_progress` + `upload_id` + `hint`.
 
 ### POST /printers/{id}/pause, /resume, /stop
 
