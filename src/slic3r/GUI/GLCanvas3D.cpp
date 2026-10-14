@@ -6196,6 +6196,11 @@ static void debug_output_thumbnail(const ThumbnailData& thumbnail_data)
 bool GLCanvas3D::render_plate_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h,
                                         Camera::ViewAngleType camera_view_angle_type, bool frame_object)
 {
+    // elegoo-mcp: make this canvas' GL context current (and GL loaded) first, like
+    // ElegooSlicer's own render_thumbnail() does. An API render can come before any 3D
+    // view was painted, and the preview path below initialises the G-code viewer.
+    if (!_set_current() || !wxGetApp().init_opengl())
+        return false;
     // Remote API: offscreen render of the current plate. Unlike render_thumbnail()
     // (which frames the objects and deliberately skips the bed - see
     // "don't render plate in thumbnail" in render_thumbnail_internal), this frames
@@ -6324,6 +6329,11 @@ bool GLCanvas3D::render_plate_thumbnail(ThumbnailData& thumbnail_data, unsigned 
 bool GLCanvas3D::render_gcode_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h,
                                         Camera::ViewAngleType camera_view_angle_type, bool frame_object)
 {
+    // elegoo-mcp: make this canvas' GL context current (and GL loaded) first, like
+    // ElegooSlicer's own render_thumbnail() does. An API render can come before any 3D
+    // view was painted, and the preview path below initialises the G-code viewer.
+    if (!_set_current() || !wxGetApp().init_opengl())
+        return false;
     // Remote API: offscreen render of the gcode preview (toolpaths incl. support).
     // FBO scaffold mirrors render_thumbnail_framebuffer(); camera setup mirrors
     // render_thumbnail_internal(). No legend/sliders/ImGui by construction.
