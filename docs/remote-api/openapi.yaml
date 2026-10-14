@@ -478,7 +478,11 @@ paths:
         the current orientation, as the rotate gizmo does: X first, then Y, then Z,
         around the object's origin, so `offset` does not change; successive calls add
         up like gizmo drags), then `scale` (absolute factor along the object's own
-        axes). Re-checks which plate the object sits on afterwards.
+        axes). Afterwards the object is put back on the bed as a drag in the window
+        does: a floating object drops onto the bed (a pure upward `translate` does not
+        lift it); one below the bed is lifted back up unless the request was a pure
+        `translate` or it was already below the bed before the `rotate`/`scale`. Then
+        the plate it sits on is re-checked.
       parameters:
         - name: id
           in: path

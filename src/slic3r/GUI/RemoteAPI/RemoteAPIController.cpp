@@ -1902,6 +1902,8 @@ Response Controller::handle_transform_object(uint64_t id, const std::string &bod
         ModelObject *mo = plater->model().objects[idx];
         if (mo->instances.empty()) return {{"error", "no_instance"}};
         ModelInstance *mi = mo->instances.front();
+        // elegoo-mcp: lowest point of the copy before this request, for the drop below.
+        const double min_z_before = mo->instance_bounding_box(0).min.z();
         if (has_t) mi->set_offset(mi->get_offset() + tr);
         // elegoo-mcp: turn the object from its current orientation about the world axes,
         // as the rotate gizmo does (Selection::rotate -> transform_instance_relative puts
@@ -1917,6 +1919,17 @@ Response Controller::handle_transform_object(uint64_t id, const std::string &bod
                 old_trafo.get_offset_matrix() * world_rotation * old_trafo.get_matrix_no_offset()));
         }
         if (has_s) mi->set_scaling_factor(sc);
+        // elegoo-mcp: put the copy back on the bed with the rule the window applies after
+        // a drag (GLCanvas3D::do_move / do_rotate / do_scale). The fork never did, so a
+        // rotation could leave a part floating or, in a real test, 4 mm below the bed.
+        // A copy left floating always drops onto the bed. One left below the bed stays
+        // there only when that looks deliberate: a pure move pushed it down, or it was
+        // already below the bed before the rotate/scale.
+        const double min_z_after = mo->get_instance_min_z(0);
+        const bool sunk_on_purpose = min_z_after <= SINKING_Z_THRESHOLD &&
+                                     (!(has_r || has_s) || min_z_before < SINKING_Z_THRESHOLD);
+        if (mi->auto_drop && !sunk_on_purpose && min_z_after != 0.0)
+            mo->translate_instance(0, Vec3d(0.0, 0.0, -min_z_after));
         mo->invalidate_bounding_box();
         // plates: re-check which plate the instance sits on, as a drag in the window
         // does (GLCanvas3D::do_move/do_rotate/do_scale). Without it an object moved

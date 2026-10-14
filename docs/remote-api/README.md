@@ -330,6 +330,11 @@ applied to the object's first copy in this order:
   `[0,-90,0]` followed by `[0,90,0]` puts the object back the way it started.
 - `scale` (factor) is absolute, along the object's own axes (`[1,1,1]` = original size).
 
+Then the object is put back on the bed as a drag in the window does: if it ends up
+floating it drops onto the bed (so a pure upward `translate` does not lift it); if it
+ends up below the bed it is lifted back up, unless the request was a pure `translate`
+(sinking it on purpose) or it was already below the bed before the `rotate`/`scale`.
+
 The response gives the resulting `offset` (mm), `rotation` (radians: the X, Y, Z
 angles of the new orientation, in the order above) and `scale`. Errors:
 `400 no_transform | body_must_be_object | invalid_json | bad_object_id`,
