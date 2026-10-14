@@ -819,6 +819,66 @@ paths:
               schema: { $ref: "#/components/schemas/ConfigApplyResult" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /project/save:
+    post:
+      summary: Save the project as a .3mf
+      operationId: saveProject
+      description: |
+        Uses the window's Save code without its dialogs. Without `path` it saves over
+        the current project file. With `path` (absolute, existing folder, `.3mf`) it
+        saves there like Save As and the project takes that name; an existing file is
+        replaced only with `overwrite: true`. Waits up to 120 s.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path: { type: string }
+                overwrite: { type: boolean, default: false }
+            example: { path: "C:/Users/me/Documents/helmet.3mf", overwrite: false }
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema: { type: object, properties: { path: { type: string } } }
+              example: { path: "C:/Users/me/Documents/helmet.3mf" }
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                not_object: { value: { error: "body_must_be_object" } }
+                path:       { value: { error: "path_must_be_string" } }
+                overwrite:  { value: { error: "overwrite_must_be_boolean" } }
+                bad_json:   { value: { error: "invalid_json" } }
+        "409":
+          description: No current project file to save over, or the target exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                unnamed: { value: { error: "project_unnamed" } }
+                exists:  { value: { error: "file_exists" } }
+        "422":
+          description: Not a .3mf path, or not an absolute path in an existing folder.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                ext:  { value: { error: "not_3mf" } }
+                path: { value: { error: "bad_path" } }
+        "500":
+          description: Writing the file failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "save_failed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:

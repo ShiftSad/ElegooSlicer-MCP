@@ -2478,6 +2478,10 @@ Response Controller::dispatch(const Request &req)
             try { return handle_set_view(req.body); }
             catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
         }
+        if (is("POST", "/api/v1/project/save")) { // elegoo-mcp
+            try { return handle_save_project(req.body); }
+            catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
+        }
         if (is("GET",  "/api/v1/plates"))       return handle_get_plates();
         if (is("POST", "/api/v1/plates")) {
             try { return handle_create_plate(req.body); }

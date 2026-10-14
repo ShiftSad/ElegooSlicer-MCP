@@ -21,6 +21,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include <boost/algorithm/string/predicate.hpp>
+#include <boost/filesystem.hpp>
+
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
 // --- POST /orient {"object_id": id} ------------------------------------------
@@ -397,6 +400,76 @@ Response Controller::handle_delete_volume(uint64_t id, uint64_t vid)
         if (e == "unknown_object" || e == "unknown_volume") return { 404, r };
         if (e == "list_item_missing") return { 500, r };
         return { 409, r }; // last_part, cut_object
+    }
+    return { 200, r };
+}
+
+// --- POST /project/save {"path"?: "...", "overwrite"?: bool} ----------------
+// Plater::save_project without its two dialogs: the Save As file picker (the path
+// comes from the body instead) and the message box when writing fails.
+Response Controller::handle_save_project(const std::string &body)
+{
+    std::string path;
+    bool        overwrite = false;
+    if (body.find_first_not_of(" \t\r\n") != std::string::npos) { // the body is optional
+        nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in dispatch
+        if (!in.is_object())
+            return { 400, {{"error", "body_must_be_object"}} };
+        if (in.contains("path")) {
+            if (!in["path"].is_string()) return { 400, {{"error", "path_must_be_string"}} };
+            path = in["path"].get<std::string>();
+        }
+        if (in.contains("overwrite")) {
+            if (!in["overwrite"].is_boolean()) return { 400, {{"error", "overwrite_must_be_boolean"}} };
+            overwrite = in["overwrite"].get<bool>();
+        }
+    }
+
+    // Big projects take a while to write (thumbnails + meshes): allow 120 s, not 10.
+    nlohmann::json r = run_on_ui([path, overwrite]() -> nlohmann::json {
+        Plater  *plater = wxGetApp().plater();
+        wxString filename;
+        if (path.empty()) {
+            // The project's own file: saving over it is what "Save" means.
+            filename = plater->get_project_filename(".3mf");
+            if (filename.IsEmpty()) return {{"error", "project_unnamed"}};
+        } else {
+            filename = wxString::FromUTF8(path);
+            const boost::filesystem::path target = into_path(filename);
+            if (!boost::iequals(target.extension().string(), ".3mf"))
+                return {{"error", "not_3mf"}};
+            if (!target.is_absolute() || !boost::filesystem::is_directory(target.parent_path()))
+                return {{"error", "bad_path"}, {"detail", "an absolute path in an existing folder"}};
+            if (boost::filesystem::exists(target) && !overwrite)
+                return {{"error", "file_exists"}, {"detail", "pass \"overwrite\": true to replace it"}};
+        }
+
+        // Same strategy as Plater::save_project.
+        SaveStrategy strategy = SaveStrategy::SplitModel | SaveStrategy::ShareMesh;
+        if (wxGetApp().app_config->get_bool("export_sources_full_pathnames"))
+            strategy = strategy | SaveStrategy::FullPathSources;
+        if (plater->export_3mf(into_path(filename), strategy) < 0)
+            return {{"error", "save_failed"}};
+
+        // The rest of Plater::save_project: drop the crash-recovery backup, adopt the
+        // file name, mark the project and its presets saved and refresh the title.
+        Slic3r::remove_backup(plater->model(), false);
+        plater->set_project_filename(filename);
+        plater->up_to_date(true, false);
+        plater->up_to_date(true, true);
+        wxGetApp().update_saved_preset_from_current_preset();
+        plater->reset_project_dirty_after_save();
+        plater->update_title_dirty_status();
+
+        const std::string saved = filename.ToUTF8().data();
+        api_notify("Saved project " + saved);
+        return {{"path", saved}};
+    }, 120);
+    if (r.contains("error")) {
+        const std::string e = r["error"].get<std::string>();
+        if (e == "not_3mf" || e == "bad_path") return { 422, r };
+        if (e == "save_failed")                return { 500, r };
+        return { 409, r }; // project_unnamed, file_exists
     }
     return { 200, r };
 }

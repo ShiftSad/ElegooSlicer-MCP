@@ -102,6 +102,7 @@ private:
     Response handle_add_volume(uint64_t id, const std::string &body);
     Response handle_put_volume_config(uint64_t id, uint64_t vid, const std::string &body);
     Response handle_delete_volume(uint64_t id, uint64_t vid);
+    Response handle_save_project(const std::string &body);   // POST /project/save
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);

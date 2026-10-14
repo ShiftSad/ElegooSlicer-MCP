@@ -55,6 +55,7 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/objects/{id}/volumes` | Add a box/cylinder/sphere modifier, negative volume or support enforcer/blocker |
 | PUT | `/objects/{id}/volumes/{vid}/config` | Set one volume's own settings (atomic) |
 | DELETE | `/objects/{id}/volumes/{vid}` | Remove a volume |
+| POST | `/project/save` | Save the project as a .3mf (current file, or a new path) |
 
 ### GET /status
 
@@ -436,6 +437,26 @@ column. Reply: `{"applied": [...], "errors": {}, "object": "<name>", "volume": {
 would open a dialog: `409 last_part` (the object's last solid part) and
 `409 cut_object` (a part or negative volume of a cut object). `404 unknown_object |
 unknown_volume`.
+
+### POST /project/save
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"path": "C:/Users/me/Documents/helmet.3mf", "overwrite": false}' \
+  http://localhost:13130/api/v1/project/save
+```
+```json
+{ "path": "C:/Users/me/Documents/helmet.3mf" }
+```
+Saves the project with the window's own Save code, without its dialogs. With no body
+(or no `path`) it saves over the current project file (`409 project_unnamed` when the
+project was never saved). With `path` it saves there, like Save As, and the project
+takes that name: the path must be absolute, in an existing folder, and end in `.3mf`
+(`422 not_3mf | bad_path`); an existing file is replaced only with `"overwrite": true`
+(`409 file_exists`). The project is marked saved and its crash-recovery backup is
+dropped, as in the window. Waits up to 120 s for big projects. Errors also:
+`500 save_failed`, `400 body_must_be_object | path_must_be_string |
+overwrite_must_be_boolean | invalid_json`.
 
 ## Notes & limits
 
