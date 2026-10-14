@@ -63,6 +63,9 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/objects/{id}/split` | Split an object into objects, or a part into parts |
 | POST | `/undo` | Undo the last model edit (the window's Ctrl+Z) |
 | POST | `/redo` | Redo the last undone model edit (the window's Ctrl+Y) |
+| GET | `/plates/{i}/layer_changes` | List a plate's changes at a height (filament change, pause, custom G-code) |
+| POST | `/plates/{i}/layer_changes` | Add a filament change or a pause at a height |
+| DELETE | `/plates/{i}/layer_changes?z=<mm>` | Remove the change at a height |
 
 ### GET /status
 
@@ -641,6 +644,61 @@ and `GET /slice/status` follows the current plate (a step can add or remove plat
 Errors: `409 slicing | job_running` (an arrange/orient job) `| gizmo_editing` (a paint,
 cut or other editing tool is open in the 3D view; the move, rotate and scale tools are
 fine).
+
+## Layer changes
+
+What the preview's layer slider adds at a layer (the "+" on a layer): a filament change,
+a pause or custom G-code. They are stored per plate in the same place the slider keeps
+them, so a change made here shows on the slider and the other way round, and they are
+saved with the project (capability `layer_changes`). `{i}` is the 0-based plate index.
+Every change marks that plate unsliced; a preview on screen reloads.
+
+### GET /plates/{i}/layer_changes
+
+```json
+{ "plate": 0, "items": [
+  { "z": 4.2, "type": "tool_change", "slot": 2 },
+  { "z": 10.0, "type": "pause" },
+  { "z": 15.0, "type": "custom", "gcode": "M117 hello" } ] }
+```
+`type` is `tool_change` (with `slot`, the filament to change to), `pause` (with
+`message` when one was stored), `custom` (custom or template G-code from the window,
+with its `gcode`; read-only here) or `color_change` (with `slot`; only in projects made
+elsewhere). Sorted by `z` (mm). `404 unknown_plate`.
+
+### POST /plates/{i}/layer_changes
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"z": 4.2, "type": "tool_change", "slot": 2}' http://localhost:13130/api/v1/plates/0/layer_changes
+```
+`201` with the plate's whole list, as in GET. A change at the same height (within
+0.001 mm) is replaced.
+- `z`: height in mm, above 0 and below the top of the plate's tallest object. The
+  change applies from the layer at that height.
+- `type`: `tool_change` or `pause`.
+  - `tool_change` needs `slot` (1-based filament slot). As on the slider it needs 2 or
+    more filament slots, a plate whose objects print with a single filament (parts,
+    paint or height ranges in other filaments already change filament), and no spiral
+    vase mode. On the CC2 it becomes a CANVAS filament change (`M6211`).
+  - `pause`: the printer pauses before that layer (`machine_pause_gcode`). `message`
+    (optional) is stored with it in the project; this slicer writes no message into
+    the G-code. A `slot` is ignored.
+  - `color_change` is refused: ElegooSlicer writes no G-code for it (the slider does
+    not offer it either); use `tool_change`. Custom G-code is added in the window.
+
+Errors: `422 bad_z` (out of range, an empty plate, or a custom G-code already at that
+height: remove it first) `| bad_type` (also when the plate prints object by object, or
+the `tool_change` conditions above are not met; `detail` says which) `| bad_slot`,
+`404 unknown_plate`, `409 slicing | preview_only`, `400 body_must_be_object |
+message_must_be_string | bad_plate_index | invalid_json`.
+
+### DELETE /plates/{i}/layer_changes?z=<mm>
+
+Removes the change at that height (within 0.001 mm), whatever its type, custom G-code
+included, as the slider's delete does. Reply: the plate's remaining list. Errors:
+`404 unknown_plate | no_change_at_z`, `409 slicing | preview_only`,
+`400 missing_z | bad_z`.
 
 ## Notes & limits
 

@@ -1209,6 +1209,119 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /plates/{index}/layer_changes:
+    parameters:
+      - { name: index, in: path, required: true, schema: { type: integer, minimum: 0 } }
+    get:
+      summary: List a plate's layer changes
+      operationId: getLayerChanges
+      description: |
+        The changes the preview's layer slider keeps for the plate (filament changes,
+        pauses, custom G-code), sorted by height.
+      responses:
+        "200":
+          description: The plate's layer changes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LayerChangeList" }
+        "404":
+          description: No plate with that index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_plate", count: 2 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+    post:
+      summary: Add a filament change or a pause at a height
+      operationId: addLayerChange
+      description: |
+        Same data as the preview's layer slider. `z` must be above 0 and below the top
+        of the plate's tallest object; a change at the same height (0.001 mm) is
+        replaced, unless it is custom G-code. `tool_change` needs `slot`, 2+ filament
+        slots, a plate printed with a single filament and no spiral vase.
+        `color_change` is refused (ElegooSlicer writes no G-code for it). Marks the
+        plate unsliced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [z, type]
+              properties:
+                z: { type: number, description: "mm" }
+                type: { type: string, enum: [tool_change, pause] }
+                slot: { type: integer, minimum: 1, description: "tool_change: the filament to change to." }
+                message: { type: string, description: "pause: stored with the pause." }
+            example: { z: 4.2, type: tool_change, slot: 2 }
+      responses:
+        "201":
+          description: Added; the plate's whole list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LayerChangeList" }
+        "400":
+          description: Malformed body or plate index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: No plate with that index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Slicing, or a G-code file is open.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                slicing: { value: { error: "slicing" } }
+                gcode:   { value: { error: "preview_only" } }
+        "422":
+          description: Bad height, type or slot (`detail` says why).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                z:    { value: { error: "bad_z", detail: "0 < z < 20.000000 (the plate's tallest object)" } }
+                type: { value: { error: "bad_type" } }
+                slot: { value: { error: "bad_slot" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+    delete:
+      summary: Remove the change at a height
+      operationId: deleteLayerChange
+      parameters:
+        - { name: z, in: query, required: true, schema: { type: number }, description: "mm, matched within 0.001 mm" }
+      responses:
+        "200":
+          description: Removed; the plate's remaining list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LayerChangeList" }
+        "400":
+          description: Missing or malformed z.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "missing_z" }
+        "404":
+          description: No such plate, or no change at that height.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                plate: { value: { error: "unknown_plate" } }
+                z:     { value: { error: "no_change_at_z" } }
+        "409":
+          description: Slicing, or a G-code file is open.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -1259,6 +1372,19 @@ components:
         type: { type: string, example: PLA }
         color: { type: string, example: "#00c1ae" }
         used_on_current_plate: { type: boolean }
+    LayerChange:
+      type: object
+      properties:
+        z: { type: number, description: "mm" }
+        type: { type: string, enum: [tool_change, pause, custom, color_change] }
+        slot: { type: integer, description: "tool_change / color_change: 1-based filament slot." }
+        message: { type: string, description: "pause, when one was stored." }
+        gcode: { type: string, description: "custom: the G-code (read-only)." }
+    LayerChangeList:
+      type: object
+      properties:
+        plate: { type: integer }
+        items: { type: array, items: { $ref: "#/components/schemas/LayerChange" } }
     UndoResult:
       type: object
       properties:
@@ -1289,7 +1415,7 @@ components:
             (/objects/{id}/volumes), `project_save` (POST /project/save) and `paint`
             (POST /objects/{id}/paint).
             Also `filaments` (/filaments), `split` (POST /objects/{id}/split), `undo`
-            (POST /undo, /redo).
+            (POST /undo, /redo), `layer_changes` (/plates/{i}/layer_changes).
         plates:
           type: object
           description: How many plates the project has and which one is current.

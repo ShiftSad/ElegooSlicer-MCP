@@ -113,6 +113,9 @@ private:
     Response handle_put_filament_slot(int slot, const std::string &body); // PUT /filaments/{slot}
     Response handle_split_object(uint64_t id, const std::string &body);   // POST /objects/{id}/split
     Response handle_undo_redo(bool undo);                                 // POST /undo, POST /redo
+    Response handle_get_layer_changes(int plate);                         // GET /plates/{i}/layer_changes
+    Response handle_add_layer_change(int plate, const std::string &body); // POST /plates/{i}/layer_changes
+    Response handle_delete_layer_change(int plate, const std::string &target); // DELETE ...?z=<mm>
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);

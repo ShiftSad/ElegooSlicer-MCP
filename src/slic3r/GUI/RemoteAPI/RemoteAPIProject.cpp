@@ -1,10 +1,10 @@
 // src/slic3r/GUI/RemoteAPI/RemoteAPIProject.cpp
 //
-// elegoo-mcp: project routes ElegooSlicer MCP adds to the Remote API (filament slots,
-// and more below). Like RemoteAPIModelOps.cpp, every handler runs its GUI work inside
-// run_on_ui and repeats the steps of the matching GUI action, leaving out that action's
-// dialogs: an API call must never open a modal window, because nobody may be at the
-// machine to close it.
+// elegoo-mcp: project routes ElegooSlicer MCP adds to the Remote API: filament slots,
+// split, undo/redo and layer changes. Like
+// RemoteAPIModelOps.cpp, every handler runs its GUI work inside run_on_ui and repeats
+// the steps of the matching GUI action, leaving out that action's dialogs: an API call
+// must never open a modal window, because nobody may be at the machine to close it.
 #include "RemoteAPIController.hpp"
 
 #include "libslic3r/AppConfig.hpp"
@@ -16,6 +16,7 @@
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/ObjectDataViewModel.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -26,6 +27,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -99,6 +101,19 @@ std::optional<Response> Controller::route_project(const Request &req)
         }
         if (path == "/api/v1/undo" && req.method == "POST") return handle_undo_redo(true);
         if (path == "/api/v1/redo" && req.method == "POST") return handle_undo_redo(false);
+        // /api/v1/plates/<i>/layer_changes; the other plate routes stay in dispatch.
+        static const std::string plates        = "/api/v1/plates/";
+        static const std::string layer_changes = "/layer_changes";
+        if (path.size() > plates.size() + layer_changes.size() && path.rfind(plates, 0) == 0 &&
+            path.compare(path.size() - layer_changes.size(), layer_changes.size(), layer_changes) == 0 &&
+            path.find('/', plates.size()) == path.size() - layer_changes.size()) {
+            const int plate = parse_index(path.substr(plates.size(), path.size() - plates.size() - layer_changes.size()));
+            if (plate < 0) return Response{ 400, {{"error", "bad_plate_index"}} };
+            if (req.method == "GET")    return handle_get_layer_changes(plate);
+            if (req.method == "POST")   return handle_add_layer_change(plate, req.body);
+            if (req.method == "DELETE") return handle_delete_layer_change(plate, req.target);
+            return Response{ 404, {{"error", "not_found"}} };
+        }
     } catch (const nlohmann::json::parse_error &) {
         return Response{ 400, {{"error", "invalid_json"}} };
     }
@@ -615,6 +630,246 @@ Response Controller::handle_undo_redo(bool undo)
         return {{"ok", ok}, {"can_undo", stack.has_undo_snapshot()}, {"can_redo", stack.has_redo_snapshot()}};
     });
     if (r.contains("error")) return { 409, r }; // slicing, job_running, gizmo_editing
+    return { 200, r };
+}
+
+// --- /plates/{i}/layer_changes -----------------------------------------------------
+// What the preview's layer slider adds at a layer (right-click a layer's "+"): a
+// filament change, a pause or custom G-code. They live in
+// Model::plates_custom_gcodes[i] as CustomGCode::Item, the slider's own storage, so a
+// change made here shows on the slider and one made there shows here.
+
+static const double k_same_z = 1e-3; // mm: two changes this close are at the same height
+
+static const char *layer_change_type_name(CustomGCode::Type type)
+{
+    switch (type) {
+    case CustomGCode::ToolChange:  return "tool_change";
+    case CustomGCode::ColorChange: return "color_change";
+    case CustomGCode::PausePrint:  return "pause";
+    default:                       return "custom"; // Custom, Template (and Unknown)
+    }
+}
+
+static nlohmann::json layer_change_json(const CustomGCode::Item &item)
+{
+    nlohmann::json j = {{"z", item.print_z}, {"type", layer_change_type_name(item.type)}};
+    if (item.type == CustomGCode::ToolChange || item.type == CustomGCode::ColorChange)
+        j["slot"] = item.extruder;
+    if (item.type == CustomGCode::PausePrint && !item.extra.empty())
+        j["message"] = item.extra;
+    if (item.type == CustomGCode::Custom && !item.extra.empty())
+        j["gcode"] = item.extra; // read-only here: set in the window
+    return j;
+}
+
+static nlohmann::json layer_changes_json(const Model &model, int plate)
+{
+    nlohmann::json items = nlohmann::json::array();
+    const auto it = model.plates_custom_gcodes.find(plate);
+    if (it != model.plates_custom_gcodes.end())
+        for (const CustomGCode::Item &item : it->second.gcodes)
+            items.push_back(layer_change_json(item));
+    return {{"plate", plate}, {"items", items}};
+}
+
+// Top of the highest object copy on the plate; 0 when the plate is empty.
+static double plate_top_z(PartPlate &plate, const Model &model)
+{
+    double top = 0.;
+    for (size_t oi = 0; oi < model.objects.size(); ++oi)
+        for (size_t ii = 0; ii < model.objects[oi]->instances.size(); ++ii)
+            if (plate.contain_instance((int) oi, (int) ii))
+                top = std::max(top, model.objects[oi]->instance_bounding_box(ii).max.z());
+    return top;
+}
+
+// What the window does after the slider's ticks change (the EVT_CUSTOMEVT_TICKSCHANGED
+// handler in Plater.cpp): the plate's G-code is stale, the project is modified, the
+// slice button wakes up, and a preview on screen reloads its slider. GUI thread only.
+static void layer_changes_changed(int plate_idx)
+{
+    Plater    *plater = wxGetApp().plater();
+    PartPlate *plate  = plater->get_partplate_list().get_plate(plate_idx);
+    plate->update_slice_result_valid_state(false);
+    plater->set_plater_dirty(true);
+    wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventSliceUpdate, true, false);
+    if (plate_idx == plater->get_partplate_list().get_curr_plate_index() && plater->is_preview_shown())
+        plater->reload_print();
+}
+
+Response Controller::handle_get_layer_changes(int plate)
+{
+    nlohmann::json r = run_on_ui([plate]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        const int count = plater->get_partplate_list().get_plate_count();
+        if (plate >= count) return {{"error", "unknown_plate"}, {"count", count}};
+        return layer_changes_json(plater->model(), plate);
+    });
+    if (r.contains("error")) return { 404, r };
+    return { 200, r };
+}
+
+// POST /plates/{i}/layer_changes {"z": mm, "type": "tool_change" | "pause", "slot"?, "message"?}
+Response Controller::handle_add_layer_change(int plate, const std::string &body)
+{
+    nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in route_project
+    if (!in.is_object())
+        return { 400, {{"error", "body_must_be_object"}} };
+    if (!in.contains("z") || !in["z"].is_number() || !std::isfinite(in["z"].get<double>()))
+        return { 422, {{"error", "bad_z"}, {"detail", "z: the height in mm where the change happens"}} };
+    const double      z    = in["z"].get<double>();
+    const std::string type = in.contains("type") && in["type"].is_string() ? in["type"].get<std::string>() : "";
+    if (type == "color_change")
+        // This slicer writes no G-code for a color change (GCode.cpp keeps only pauses and
+        // custom G-code at a layer, and the slider no longer offers color changes); a
+        // filament change is tool_change.
+        return { 422, {{"error", "bad_type"},
+                       {"detail", "color_change writes no G-code in ElegooSlicer; use tool_change (a filament slot) or pause"}} };
+    if (type != "tool_change" && type != "pause")
+        return { 422, {{"error", "bad_type"}, {"detail", "tool_change | pause (custom G-code is added in the window)"}} };
+    if (in.contains("slot") && !in["slot"].is_number_integer())
+        return { 422, {{"error", "bad_slot"}, {"detail", "slot: a 1-based filament slot"}} };
+    if (in.contains("message") && !in["message"].is_string())
+        return { 400, {{"error", "message_must_be_string"}} };
+    if (type == "tool_change" && !in.contains("slot"))
+        return { 422, {{"error", "bad_slot"}, {"detail", "tool_change needs \"slot\", the filament to change to"}} };
+    const int         slot    = in.value("slot", 0);
+    const std::string message = in.value("message", std::string());
+
+    nlohmann::json r = run_on_ui([plate, z, type, slot, message]() -> nlohmann::json {
+        Plater        *plater = wxGetApp().plater();
+        PartPlateList &plates = plater->get_partplate_list();
+        if (plate >= plates.get_plate_count()) return {{"error", "unknown_plate"}, {"count", plates.get_plate_count()}};
+        if (preview_only()) return {{"error", "preview_only"}};
+        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+        PartPlate *p   = plates.get_plate(plate);
+        Model     &model = plater->model();
+
+        const double top = plate_top_z(*p, model);
+        if (top <= 0.)
+            return {{"error", "bad_z"}, {"detail", "plate " + std::to_string(plate) + " has no objects"}};
+        // At or above the top nothing prints after the change, and the slider drops a
+        // change above the last layer (Preview::check_layers_slider_values).
+        if (!(z > 0. && z < top))
+            return {{"error", "bad_z"}, {"detail", "0 < z < " + std::to_string(top) + " (the plate's tallest object)"}};
+        // The slider takes no changes when the plate prints object by object
+        // (IMSlider::SetTicksValues drops them all in that mode).
+        if (p->get_real_print_seq() == PrintSequence::ByObject)
+            return {{"error", "bad_type"}, {"detail", "the plate prints object by object (print_sequence); layer changes need by layer"}};
+
+        // The slider's mode, as Preview::update_layers_slider_mode works it out: with
+        // several slots and a plate printed with one of them, a tool change switches the
+        // whole plate to another slot from that height on.
+        const int filaments = wxGetApp().filaments_cnt();
+        int       only_slot = -1;
+        bool      one_slot  = true;
+        if (filaments > 1) {
+            const std::vector<int> used = p->get_extruders_without_support();
+            if (!used.empty()) only_slot = used.front();
+            for (int s : used)
+                if (s != only_slot) one_slot = false;
+        }
+        // A pause as the slider adds it (IMSlider::add_code_as_tick): no colour, the
+        // plate's filament as extruder, the message kept with it.
+        CustomGCode::Item item { z, CustomGCode::PausePrint, std::max(1, only_slot), "", message };
+        if (type == "tool_change") {
+            // The slider's "Change Filament" menu: only with 2+ slots, a plate printed
+            // with a single slot (paint or parts in other colours already change
+            // filament) and no spiral vase.
+            if (filaments < 2)
+                return {{"error", "bad_type"}, {"detail", "a tool change needs 2 or more filament slots"}};
+            if (slot < 1 || slot > filaments)
+                return {{"error", "bad_slot"}, {"detail", "the project has " + std::to_string(filaments) + " filament slot(s)"}};
+            if (!one_slot)
+                return {{"error", "bad_type"},
+                        {"detail", "the plate already prints with several filaments (parts, paint or height ranges); "
+                                   "a layer tool change needs a plate printed with one"}};
+            if (wxGetApp().preset_bundle->full_config().opt_bool("spiral_mode"))
+                return {{"error", "bad_type"}, {"detail", "no tool changes in spiral vase mode"}};
+            const std::vector<std::string> colours = plater->get_extruder_colors_from_plater_config();
+            item.type     = CustomGCode::ToolChange;
+            item.extruder = slot;
+            item.color    = size_t(slot - 1) < colours.size() ? colours[slot - 1] : std::string();
+            item.extra    = "";
+        }
+
+        CustomGCode::Info &info = model.plates_custom_gcodes[plate];
+        // Same height: the new change replaces the old one, as picking another entry on a
+        // slider tick does, but never a custom G-code someone wrote in the window.
+        for (auto it = info.gcodes.begin(); it != info.gcodes.end(); ++it) {
+            if (std::abs(it->print_z - z) > k_same_z) continue;
+            if (it->type == CustomGCode::Custom || it->type == CustomGCode::Template)
+                return {{"error", "bad_z"}, {"detail", "a custom G-code is at this height; remove it first (DELETE)"}};
+            info.gcodes.erase(it);
+            break;
+        }
+        // Kept sorted by height, like the slider's list (ToolOrdering relies on it).
+        const auto pos = std::upper_bound(info.gcodes.begin(), info.gcodes.end(), item);
+        info.gcodes.insert(pos, item);
+        // The mode the slider writes with its ticks (IMSlider::GetTicksValues): the G-code
+        // generator applies tool changes only in MultiAsSingle mode.
+        info.mode = only_slot < 0 ? CustomGCode::SingleExtruder : CustomGCode::MultiAsSingle;
+
+        layer_changes_changed(plate);
+        api_notify("Plate " + std::to_string(plate + 1) + ": " +
+                   (type == "tool_change" ? "filament " + std::to_string(slot) : std::string("pause")) +
+                   " at " + std::to_string(z) + " mm");
+        return layer_changes_json(model, plate);
+    });
+    if (r.contains("error")) {
+        const std::string e = r["error"].get<std::string>();
+        if (e == "unknown_plate") return { 404, r };
+        if (e == "slicing" || e == "preview_only") return { 409, r };
+        return { 422, r }; // bad_z, bad_slot, bad_type
+    }
+    return { 201, r };
+}
+
+// DELETE /plates/{i}/layer_changes?z=<mm>
+Response Controller::handle_delete_layer_change(int plate, const std::string &target)
+{
+    // The z query value, e.g. "?z=12.4".
+    double z = 0.;
+    {
+        const size_t q   = target.find('?');
+        const size_t pos = q == std::string::npos ? std::string::npos : target.find("z=", q);
+        if (pos == std::string::npos || (target[pos - 1] != '?' && target[pos - 1] != '&'))
+            return { 400, {{"error", "missing_z"}, {"detail", "DELETE /plates/{i}/layer_changes?z=<mm>"}} };
+        const std::string value = target.substr(pos + 2, target.find('&', pos) - pos - 2);
+        try {
+            size_t used = 0;
+            z = std::stod(value, &used);
+            if (used != value.size() || !std::isfinite(z)) throw std::invalid_argument("not a number");
+        } catch (const std::exception &) {
+            return { 400, {{"error", "bad_z"}, {"detail", "z must be a number in mm"}} };
+        }
+    }
+
+    nlohmann::json r = run_on_ui([plate, z]() -> nlohmann::json {
+        Plater        *plater = wxGetApp().plater();
+        PartPlateList &plates = plater->get_partplate_list();
+        if (plate >= plates.get_plate_count()) return {{"error", "unknown_plate"}, {"count", plates.get_plate_count()}};
+        if (preview_only()) return {{"error", "preview_only"}};
+        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+        Model &model = plater->model();
+        auto   it    = model.plates_custom_gcodes.find(plate);
+        if (it == model.plates_custom_gcodes.end()) return {{"error", "no_change_at_z"}};
+        std::vector<CustomGCode::Item> &gcodes = it->second.gcodes;
+        const auto found = std::find_if(gcodes.begin(), gcodes.end(),
+                                        [z](const CustomGCode::Item &item) { return std::abs(item.print_z - z) <= k_same_z; });
+        if (found == gcodes.end()) return {{"error", "no_change_at_z"}};
+        const std::string what = layer_change_type_name(found->type);
+        gcodes.erase(found);
+        layer_changes_changed(plate);
+        api_notify("Plate " + std::to_string(plate + 1) + ": removed the " + what + " at " + std::to_string(z) + " mm");
+        return layer_changes_json(model, plate);
+    });
+    if (r.contains("error")) {
+        const std::string e = r["error"].get<std::string>();
+        if (e == "unknown_plate" || e == "no_change_at_z") return { 404, r };
+        return { 409, r }; // slicing, preview_only
+    }
     return { 200, r };
 }
 
