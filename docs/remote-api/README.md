@@ -1243,3 +1243,53 @@ error or an unknown state), `409 not_paused` + `status` (resume). A command goes
 - `409 command_in_progress` + `hint`: an earlier command for this printer was still
   waiting for the printer's answer when this one's time ran out; this one was not sent.
 - `409 printer_busy`, `502 printer_error` + `code`.
+## Privacy and network
+
+ElegooSlicer MCP is built from Elegoo's source with Elegoo's production settings. Apart
+from the points below, it uses the network exactly like the official ElegooSlicer.
+
+- **The Remote API itself** answers only the clients that call it: it listens on
+  `127.0.0.1` unless you turn on *Bind LAN*, requires the token on every request and
+  does not contact any server.
+- **Not LAN-only.** Elegoo's production cloud addresses (device/IoT, login and
+  telemetry services) are compiled into every build, not read from a private
+  configuration file, and the elegoo-link printer SDK contains the app ID of Agora RTM,
+  the real-time service behind Elegoo's cloud printer features. So a self-built
+  ElegooSlicer MCP is **not** a LAN-only build: when you log in to an Elegoo account it
+  uses Elegoo's cloud like the official app. Adding a printer by IP address and access
+  code does not need a login (checked in the code; not yet tested with a real printer).
+- **Telemetry.** ElegooSlicer collects usage events and caches them on disk; there is no
+  setting to turn this off. The events are uploaded only while you are logged in to an
+  Elegoo account, including events cached earlier, once you log in. The Remote API adds
+  no events of its own, but what it does runs through the same code as the GUI and is
+  recorded the same way: model imports, slices started and completed, and file
+  transfers / print starts when a print is sent. **Recommendation: stay logged out of
+  your Elegoo account in ElegooSlicer MCP** if you do not want this activity uploaded.
+- **Update check.** The in-app update check only asks GitHub for the latest release of
+  this fork (`api.github.com/repos/ShiftSad/ElegooSlicer-MCP/releases/latest`). It never
+  contacts Elegoo's update servers, so it cannot offer the official build, which would
+  replace this one and remove the API. Printer and filament profile updates are
+  unchanged.
+- **Crash reports and signing.** Builds of this fork are made without Elegoo's private
+  build settings: crash reports are not uploaded to Elegoo's crash-reporting service
+  (Sentry), and the binaries are not code-signed.
+- **Saved printers.** As in the official app, printer connection details, including
+  access codes and passwords, are stored in plain text in
+  `<data directory>/user/printer_list.json`.
+- **Printer SDK log.** The elegoo-link SDK (unchanged from the official app) writes the
+  parameters it connects a LAN printer with, access code included, to
+  `<data directory>/log/elegoolink.log`. The Remote API never returns or logs them; do
+  not share that log as it is.
+
+### Data directory (portable zip)
+
+The portable zip contains a folder named `data_dir` next to `elegoo-slicer.exe`. When
+that folder exists, the app (OrcaSlicer's portable mode, inherited by ElegooSlicer) keeps
+its settings, presets, logs and saved printers there instead of in
+`%APPDATA%\ElegooSlicer`, so ElegooSlicer MCP does not mix them with an official
+ElegooSlicer installation on the same PC.
+
+- Do not share the `data_dir` folder: it holds your printers' access codes.
+- Without that folder (for example a self-built `build\ElegooSlicer`), the app uses
+  `%APPDATA%\ElegooSlicer`, the same directory as the official app. To keep them apart,
+  create the folder or start the app with `elegoo-slicer.exe --datadir <folder>`.
