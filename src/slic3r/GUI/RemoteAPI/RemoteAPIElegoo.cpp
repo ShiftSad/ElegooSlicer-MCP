@@ -2373,17 +2373,27 @@ Response Controller::handle_print_command(const std::string &api_id, const std::
         print_control_notify("Remote API: " + std::string(done) + " " + what);
         return { 200, {{"ok", true}} };
     }
-    print_control_notify("Remote API: could not " + command + " " + what + " (printer layer code " +
-                         std::to_string((int) code) + ")", true);
+    // The notification says what happened in words the user can act on; the code number only
+    // for failures without a reply of their own.
     // The SDK has no resume for a CC2 on the LAN (method 1023 is not wired in SDK 46c7b81).
-    if (code == PrinterNetworkErrorCode::OPERATION_NOT_IMPLEMENTED)
+    if (code == PrinterNetworkErrorCode::OPERATION_NOT_IMPLEMENTED) {
+        print_control_notify("Remote API: ElegooSlicer cannot " + command + " " + what +
+                             (command == "resume" ? ": resume it on the printer's screen" : ""), true);
         return command == "resume" ? Response{ 501, {{"error", "resume_unsupported"}, {"hint", "resume on the printer's screen"}} }
                                    : Response{ 501, {{"error", "command_unsupported"}, {"command", command}} };
-    if (code == PrinterNetworkErrorCode::OPERATION_TIMEOUT)
+    }
+    // The SDK gave up waiting (15 s): a CC2 answers only after it parked, so it may still do it.
+    if (code == PrinterNetworkErrorCode::OPERATION_TIMEOUT) {
+        print_control_notify("Remote API: sent '" + command + "' for " + what + " but the printer did not confirm it: check the printer", true);
         return { 504, {{"error", "printer_timeout"},
                        {"hint", "the printer may still carry out the command: check GET /printers/{id}/status"}} };
-    if (code == PrinterNetworkErrorCode::PRINTER_BUSY)
+    }
+    if (code == PrinterNetworkErrorCode::PRINTER_BUSY) {
+        print_control_notify("Remote API: could not " + command + " " + what + ": the printer is busy", true);
         return { 409, {{"error", "printer_busy"}, {"status", state}} };
+    }
+    print_control_notify("Remote API: could not " + command + " " + what + " (printer layer code " +
+                         std::to_string((int) code) + ")", true);
     return printer_error(code);
 }
 
