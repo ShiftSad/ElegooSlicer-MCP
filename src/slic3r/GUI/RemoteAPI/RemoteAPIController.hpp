@@ -123,6 +123,8 @@ private:
     Response handle_print_start(const std::string &id, const std::string &body);   // POST /printers/{id}/print
     Response handle_get_upload(const std::string &upload_id);                      // GET /uploads/{id}
     Response handle_cancel_upload(const std::string &upload_id);                   // DELETE /uploads/{id}
+    Response handle_print_command(const std::string &id, const std::string &command, // POST /printers/{id}/pause|resume|stop
+                                  const std::string &body);
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);

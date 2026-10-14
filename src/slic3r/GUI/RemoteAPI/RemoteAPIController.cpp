@@ -312,7 +312,7 @@ Response Controller::handle_status()
                               // elegoo-mcp: routes in RemoteAPIModelOps.cpp
                               "orient_object", "view", "volumes", "project_save", "paint",
                               // elegoo-mcp: routes in RemoteAPIElegoo.cpp
-                              "printers", "canvas"}},
+                              "printers", "canvas", "print_control"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"print_control_enabled", Config::print_control_allowed()}, // elegoo-mcp: Preferences > Remote API
             {"project", plater->get_project_filename().ToUTF8().data()},

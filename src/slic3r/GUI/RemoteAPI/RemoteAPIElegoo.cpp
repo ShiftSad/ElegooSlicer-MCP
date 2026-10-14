@@ -5,9 +5,9 @@
 //   GET /printers, /printers/{id}, /printers/{id}/status, /printers/{id}/tasks,
 //   /printers/{id}/files, /printers/{id}/canvas, /printers/{id}/canvas/mapping (read-only)
 //   POST /printers/{id}/canvas/sync (the CANVAS trays become the project's filaments)
-//   POST /printers/{id}/print/prepare, /printers/{id}/print, GET/DELETE /uploads/{id}
-//   (print control: off unless the user allows it in Preferences, see the "print control"
-//   section)
+//   POST /printers/{id}/print/prepare, /printers/{id}/print, GET/DELETE /uploads/{id},
+//   POST /printers/{id}/pause, /resume, /stop (print control: off unless the user allows
+//   it in Preferences, see the "print control" section)
 //
 // Where the data comes from:
 // - PrinterManager keeps every printer in a cache (PrinterCache) that the printers' own
@@ -51,6 +51,7 @@
 #include "slic3r/Utils/Elegoo/PrinterMmsManager.hpp"
 #include "slic3r/Utils/Elegoo/PrinterUploadManager.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
+#include "elegoolink/elegoo_link.h"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/filesystem.hpp>
@@ -75,6 +76,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1094,6 +1096,7 @@ Response Controller::handle_canvas_mapping(const std::string &api_id, const std:
 // same work itself; the comments name the step of the window each part copies.
 
 static const int PLAN_EXPIRES_S    = 300;      // a prepared print must be started within this time
+static const int COMMAND_TIMEOUT_S = 20;       // pause, resume, stop (the SDK waits up to 15 s itself)
 static const int UPLOAD_POLL_MS    = 500;      // how often an upload's thread reads its progress
 static const int CANCEL_SETTLE_S   = 60;       // how long a cancelled transfer may still turn into a print
 static const int UPLOAD_KEEP_S     = 3600;     // a finished upload stays readable this long
@@ -1243,6 +1246,14 @@ struct UploadJob
     std::chrono::steady_clock::time_point done_at;
 };
 
+// The printers a pause, resume or stop is being sent to (send_print_command).
+struct CommandGate
+{
+    std::mutex              mutex;
+    std::condition_variable changed;
+    std::set<std::string>   busy; // PrinterManager ids
+};
+
 } // namespace
 
 // Plans by plan id. API thread only.
@@ -1258,6 +1269,14 @@ static std::map<std::string, std::shared_ptr<UploadJob>> &upload_jobs()
 {
     static std::map<std::string, std::shared_ptr<UploadJob>> jobs;
     return jobs;
+}
+
+// Created once and never freed, like the CANVAS cache: a worker still waiting for a printer
+// when the app exits must not find it destroyed.
+static CommandGate &command_gate()
+{
+    static CommandGate *gate = new CommandGate();
+    return *gate;
 }
 
 // Forgets the plans past their time and the uploads finished more than UPLOAD_KEEP_S ago.
@@ -2081,6 +2100,113 @@ Response Controller::handle_cancel_upload(const std::string &upload_id)
     return { 200, {{"ok", true}} };
 }
 
+// --- print control: pause, resume, stop ---------------------------------------------
+
+// Sends pause, resume or stop to the printer, on a worker thread, one command at a time per
+// printer (the CC2 ignores requests for a while when it gets several in a row). ElegooSlicer's
+// printer layer has no such calls, so this calls the SDK's own singleton directly, the way that
+// layer calls it (sdk: elegoo_link.h pausePrint, resumePrint, stopPrint). Throws
+// std::runtime_error("printer_timeout") when no answer comes within timeout_s: the command may
+// still reach the printer after that.
+static PrinterNetworkErrorCode send_print_command(const std::string &printer_id, const std::string &command, int timeout_s)
+{
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point deadline = Clock::now() + std::chrono::seconds(timeout_s);
+    CommandGate            &gate     = command_gate();
+    {
+        std::unique_lock<std::mutex> lock(gate.mutex);
+        if (!gate.changed.wait_until(lock, deadline, [&gate, &printer_id] { return gate.busy.count(printer_id) == 0; }))
+            throw std::runtime_error("printer_timeout");
+        gate.busy.insert(printer_id); // released by the worker below, even after a timeout here
+    }
+    auto      sdk_code = std::make_shared<elink::ELINK_ERROR_CODE>(elink::ELINK_ERROR_CODE::UNKNOWN_ERROR);
+    const int left_s   = (int) std::chrono::duration_cast<std::chrono::seconds>(deadline - Clock::now()).count();
+    run_on_worker([printer_id, command, sdk_code] {
+        try {
+            elink::ElegooLink       &sdk = elink::ElegooLink::getInstance();
+            const elink::PrinterBaseParams params(printer_id);
+            const elink::VoidResult  result = command == "pause"  ? sdk.pausePrint(params) :
+                                              command == "resume" ? sdk.resumePrint(params) :
+                                                                    sdk.stopPrint(params);
+            *sdk_code = result.code;
+        } catch (...) {
+            // Keep UNKNOWN_ERROR: the gate below must be released whatever happened.
+        }
+        CommandGate &gate = command_gate();
+        {
+            std::lock_guard<std::mutex> lock(gate.mutex);
+            gate.busy.erase(printer_id);
+        }
+        gate.changed.notify_all();
+    }, left_s);
+    // The SDK's error codes have the same numbers as ElegooSlicer's PrinterNetworkErrorCode
+    // (elegoolink/types/base.h and libslic3r/PrinterNetworkResult.hpp; ElegooLink.cpp maps them
+    // one to one).
+    return (PrinterNetworkErrorCode) (int) *sdk_code;
+}
+
+// POST /printers/{id}/pause, /resume, /stop {"confirm": "stop"}: acts on the print in progress.
+Response Controller::handle_print_command(const std::string &api_id, const std::string &command, const std::string &body)
+{
+    Response error;
+    if (!check_print_control(command + " a print", error))
+        return error;
+    nlohmann::json in;
+    if (!read_body_object(body, in, error) || !only_known_fields(in, {"confirm"}, error))
+        return error;
+    // A stop cannot be undone: the body must say so, so that a stray call does not end a print.
+    if (command == "stop" && !(in.contains("confirm") && in["confirm"] == "stop"))
+        return { 400, {{"error", "confirm_required"}, {"hint", "send {\"confirm\": \"stop\"}"}} };
+
+    PrinterNetworkInfo p;
+    if (!find_printer(api_id, p))
+        return { 404, {{"error", "printer_not_found"}} };
+    if (p.connectStatus != PRINTER_CONNECT_STATUS_CONNECTED)
+        return { 409, {{"error", "printer_offline"}} };
+    // Whether the command fits the printer's state, from ElegooSlicer's cache: pause a print that
+    // is printing, resume one that is paused, stop one that has not ended. The printer reports a
+    // print's start (heating, leveling) under other states, so stop is refused only when idle.
+    const PrinterStatus  status = p.printerStatus;
+    const nlohmann::json state  = printer_status_name(status);
+    if (command == "pause" && status != PRINTER_STATUS_PRINTING)
+        return { 409, {{"error", "not_printing"}, {"status", state}} };
+    if (command == "resume" && status != PRINTER_STATUS_PAUSED)
+        return { 409, {{"error", "not_paused"}, {"status", state}} };
+    if (command == "stop" && (status == PRINTER_STATUS_IDLE || status == PRINTER_STATUS_PRINT_COMPLETED ||
+                              status == PRINTER_STATUS_CANCELED))
+        return { 409, {{"error", "not_printing"}, {"status", state}} };
+
+    const std::string what = (p.printTask.fileName.empty() ? std::string("the print") : "'" + p.printTask.fileName + "'") +
+                             " on '" + p.printerName + "'";
+    PrinterNetworkErrorCode code;
+    try {
+        code = send_print_command(p.printerId, command, COMMAND_TIMEOUT_S);
+    } catch (const std::runtime_error &e) {
+        if (std::string(e.what()) != "printer_timeout")
+            throw;
+        print_control_notify("Remote API: sent '" + command + "' for " + what + " but got no answer yet: check the printer", true);
+        return { 504, {{"error", "printer_timeout"},
+                       {"hint", "the printer may still carry out the command: check GET /printers/{id}/status"}} };
+    }
+    if (code == PrinterNetworkErrorCode::SUCCESS) {
+        const char *done = command == "pause" ? "paused" : command == "resume" ? "resumed" : "stopped";
+        print_control_notify("Remote API: " + std::string(done) + " " + what);
+        return { 200, {{"ok", true}} };
+    }
+    print_control_notify("Remote API: could not " + command + " " + what + " (printer layer code " +
+                         std::to_string((int) code) + ")", true);
+    // The SDK has no resume for a CC2 on the LAN (method 1023 is not wired in SDK 46c7b81).
+    if (code == PrinterNetworkErrorCode::OPERATION_NOT_IMPLEMENTED)
+        return command == "resume" ? Response{ 501, {{"error", "resume_unsupported"}, {"hint", "resume on the printer's screen"}} }
+                                   : Response{ 501, {{"error", "command_unsupported"}, {"command", command}} };
+    if (code == PrinterNetworkErrorCode::OPERATION_TIMEOUT)
+        return { 504, {{"error", "printer_timeout"},
+                       {"hint", "the printer may still carry out the command: check GET /printers/{id}/status"}} };
+    if (code == PrinterNetworkErrorCode::PRINTER_BUSY)
+        return { 409, {{"error", "printer_busy"}, {"status", state}} };
+    return printer_error(code);
+}
+
 // --- route group --------------------------------------------------------------------
 
 // Every /api/v1/printers and /api/v1/uploads route (dispatch sends both prefixes here).
@@ -2118,6 +2244,8 @@ Response Controller::route_elegoo(const Request &req)
                 return handle_print_prepare(id, req.body);
             if (req.method == "POST" && action == "print")
                 return handle_print_start(id, req.body);
+            if (req.method == "POST" && (action == "pause" || action == "resume" || action == "stop"))
+                return handle_print_command(id, action, req.body);
         }
         // /api/v1/uploads/<upload id>
         static const std::string upload_pfx = "/api/v1/uploads/";
