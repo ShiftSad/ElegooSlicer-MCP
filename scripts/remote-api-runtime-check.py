@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Runtime checks for the three Remote API fixes (orcaslicer-mcp #9, #10, #11).
+"""Runtime checks for the three Remote API fixes (orcaslicer-mcp #9, #10, #11), plus read-only
+checks of the ElegooSlicer MCP routes the build advertises in GET /status capabilities.
 
 Usage: ORCA_BASE=http://127.0.0.1:13131 ORCA_TOKEN=... python3 orca-runtime-test.py
+(ElegooSlicer MCP listens on 13130: ORCA_BASE=http://127.0.0.1:13130.)
 Read-mostly: every write is restored, and each check asserts the BEFORE state too,
-so a check cannot pass by accident on an already-broken value.
+so a check cannot pass by accident on an already-broken value. The ElegooSlicer MCP part
+only reads; a route whose capability is missing is reported as SKIP, not as a failure.
 """
-import json, os, sys, urllib.request, urllib.error
+import json, os, sys, urllib.parse, urllib.request, urllib.error
 
 BASE  = os.environ.get("ORCA_BASE", "http://127.0.0.1:13131")
 TOKEN = os.environ["ORCA_TOKEN"]
@@ -50,6 +53,7 @@ n = len(before.split(",")) if before else 0
 # a write with one MORE entry than the preset holds must be refused
 bad = ",".join((before.split(",") + ["70"])) if before else "70,70"
 s, j = call("PUT", "/api/v1/config", {KEY: bad})
+rejected_reply = j  # the ElegooSlicer MCP block below checks its error token
 errs = j.get("errors", {})
 check("over-long write rejected with 422", s == 422, "status=%d" % s)
 check("error names per_filament_length_mismatch",
@@ -95,10 +99,155 @@ if now_wl != orig_wl:
     call("PUT", "/api/v1/config", {PK: orig_wl})
 check("wall_loops restored", get_key(PK) == orig_wl, "orig=%r now=%r" % (orig_wl, get_key(PK)))
 
+# ---------------------------------------------------------------- ElegooSlicer MCP
+# Read-only checks of the routes only ElegooSlicer MCP has. Each block runs only when GET
+# /status lists its capability, so an older build (or stock OrcaSlicer MCP) skips them.
+# Nothing here writes, slices, or sends anything to a printer.
+caps = st.get("capabilities") or []
+print("\n=== ElegooSlicer MCP read-only routes ===")
+print("capabilities: " + ", ".join(caps))
+skipped = []
+
+def skip(name, why):
+    skipped.append(name)
+    print("SKIP  " + name + "  | " + why)
+
+# Keys that must never appear in any printer reply (whitelist on the slicer side).
+SECRET_KEYS = {"password", "token", "accesscode", "access_code", "pincode", "pin_code",
+               "extrainfo", "extra_info", "username", "user_name", "serialnumber",
+               "serial_number", "mainboardid", "mainboard_id", "weburl", "web_url"}
+
+def secret_keys_in(value, path="$"):
+    found = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if str(k).lower() in SECRET_KEYS:
+                found.append(path + "." + str(k))
+            found += secret_keys_in(v, path + "." + str(k))
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            found += secret_keys_in(v, "%s[%d]" % (path, i))
+    return found
+
+HEX = "0123456789abcdefABCDEF"
+def is_hex_colour(c):
+    return isinstance(c, str) and len(c) == 7 and c[0] == "#" and all(x in HEX for x in c[1:])
+
+current_plate = ((st.get("plates") or {}).get("current"))
+
+if "filaments" in caps:
+    # Builds that list tonight's capabilities also name a refused config write.
+    check("refused config write has error config_rejected",
+          rejected_reply.get("error") == "config_rejected", repr(rejected_reply.get("error")))
+else:
+    skip("config_rejected token", "build predates it (no 'filaments' capability)")
+
+if "print_control" in caps:
+    check("status has print_control_enabled (bool)",
+          isinstance(st.get("print_control_enabled"), bool), repr(st.get("print_control_enabled")))
+else:
+    skip("print_control_enabled in /status", "no 'print_control' capability")
+
+if "filaments" in caps:
+    s, j = call("GET", "/api/v1/filaments")
+    slots = j.get("slots") or []
+    check("GET /filaments 200", s == 200, "status=%d" % s)
+    check("filaments count == number of slots", j.get("count") == len(slots),
+          "count=%r slots=%d" % (j.get("count"), len(slots)))
+    check("filaments max >= count", isinstance(j.get("max"), int) and j["max"] >= len(slots),
+          "max=%r" % j.get("max"))
+    check("slots numbered 1..n", [x.get("slot") for x in slots] == list(range(1, len(slots) + 1)),
+          repr([x.get("slot") for x in slots]))
+    check("every slot has preset, type, #rrggbb colour and used_on_current_plate",
+          all(x.get("preset") and "type" in x and is_hex_colour(x.get("color"))
+              and isinstance(x.get("used_on_current_plate"), bool) for x in slots),
+          json.dumps(slots)[:200])
+else:
+    skip("GET /filaments", "no 'filaments' capability")
+
+if "layer_changes" in caps and current_plate is not None:
+    s, j = call("GET", "/api/v1/plates/%d/layer_changes" % current_plate)
+    items = j.get("items")
+    check("GET /plates/{current}/layer_changes 200", s == 200, "status=%d" % s)
+    check("layer_changes names its plate", j.get("plate") == current_plate, repr(j.get("plate")))
+    check("layer_changes items are {z, type}",
+          isinstance(items, list) and all(isinstance(x.get("z"), (int, float)) and x.get("type") in
+              ("tool_change", "color_change", "pause", "custom") for x in items),
+          json.dumps(items)[:200])
+    s, j = call("GET", "/api/v1/plates/9999/layer_changes")
+    check("layer_changes of a missing plate -> 404 unknown_plate",
+          s == 404 and j.get("error") == "unknown_plate", "status=%d %r" % (s, j.get("error")))
+else:
+    skip("GET /plates/{i}/layer_changes", "no 'layer_changes' capability")
+
+if "breakdown_purge" in caps:
+    s, j = call("GET", "/api/v1/slice/status")
+    bd = j.get("breakdown")
+    if s == 200 and bd:
+        purge = bd.get("purge") or {}
+        check("breakdown has purge {filament_changes, filament_change_time_s, flush_g, flush_mm}",
+              all(k in purge for k in ("filament_changes", "filament_change_time_s", "flush_g",
+                                       "flush_mm")), json.dumps(purge)[:200])
+    else:
+        skip("breakdown.purge", "no breakdown in /slice/status (slice the plate first)")
+else:
+    skip("breakdown.purge", "no 'breakdown_purge' capability")
+
+printers = []
+if "printers" in caps:
+    s, j = call("GET", "/api/v1/printers")
+    printers = j.get("printers") or []
+    check("GET /printers 200 with a list", s == 200 and isinstance(j.get("printers"), list),
+          "status=%d" % s)
+    check("GET /printers has no secrets", not secret_keys_in(j), repr(secret_keys_in(j))[:200])
+    s, j = call("GET", "/api/v1/printers/no-such-printer")
+    check("unknown printer -> 404 printer_not_found",
+          s == 404 and j.get("error") == "printer_not_found", "status=%d %r" % (s, j.get("error")))
+    if printers:
+        p = printers[0]
+        pid = urllib.parse.quote(str(p.get("id")), safe="")
+        print("first printer: %s (%s, %s)" % (p.get("name"), p.get("model"), p.get("network")))
+        s, j = call("GET", "/api/v1/printers/%s/status" % pid)
+        check("GET /printers/{id}/status 200", s == 200, "status=%d" % s)
+        check("printer status has no secrets", not secret_keys_in(j), repr(secret_keys_in(j))[:200])
+        if p.get("network") == "lan":
+            for route in ("tasks", "files"):
+                s, j = call("GET", "/api/v1/printers/%s/%s" % (pid, route))
+                check("LAN printer /%s -> 501 unsupported_on_lan" % route,
+                      s == 501 and j.get("error") == "unsupported_on_lan",
+                      "status=%d %r" % (s, j.get("error")))
+    else:
+        skip("per-printer routes", "no printer added in the slicer")
+else:
+    skip("GET /printers", "no 'printers' capability")
+
+if "canvas" in caps and printers:
+    pid = urllib.parse.quote(str(printers[0].get("id")), safe="")
+    s, j = call("GET", "/api/v1/printers/%s/canvas" % pid)
+    if s == 200:
+        trays = [t for u in j.get("units") or [] for t in u.get("trays") or []]
+        check("canvas trays have ids A1.. and #rrggbb colours",
+              all(str(t.get("id", ""))[:1].isalpha() and (t.get("color") is None or is_hex_colour(t.get("color")))
+                  for t in trays), json.dumps(trays)[:200])
+        check("canvas has no secrets", not secret_keys_in(j), repr(secret_keys_in(j))[:200])
+    else:
+        check("GET /printers/{id}/canvas answers 200 or a known 409/504",
+              s in (409, 504) and j.get("error") in ("canvas_unsupported", "printer_offline",
+                                                    "printer_timeout"),
+              "status=%d %r" % (s, j.get("error")))
+    s, j = call("GET", "/api/v1/printers/%s/canvas/mapping" % pid)
+    check("GET /printers/{id}/canvas/mapping answers",
+          (s == 200 and isinstance(j.get("filaments"), list)) or (s in (409, 504) and j.get("error")),
+          "status=%d %r" % (s, j.get("error")))
+elif "canvas" in caps:
+    skip("GET /printers/{id}/canvas", "no printer added in the slicer")
+else:
+    skip("GET /printers/{id}/canvas", "no 'canvas' capability")
+
 # ---------------------------------------------------------------- summary
 print("\n=== summary ===")
 bad_n = sum(1 for _, ok, _ in results if not ok)
 for nme, ok, d in results:
     if not ok: print("  FAILED: " + nme + "  | " + d)
-print("%d checks, %d failed" % (len(results), bad_n))
+print("%d checks, %d failed, %d skipped" % (len(results), bad_n, len(skipped)))
 sys.exit(1 if bad_n else 0)
