@@ -246,7 +246,8 @@ For each commit:
    - the routes in `RemoteAPIModelOps.cpp` (orient one object, view, volumes, project
      save, paint).
 4. Doc changes (`docs/remote-api/README.md`, `openapi.yaml`) are merged by hand: ours have
-   extra routes and ElegooSlicer naming.
+   extra routes and ElegooSlicer naming. `docs/` is in Elegoo's `.gitignore`, so stage
+   files there with `git add -f <file>`.
 
 Then build and run the tests from 1.8, and update the fork SHA in the table at the top and
 in the introduction of `docs/remote-api/README.md`, so the next `git log` starts from there.
