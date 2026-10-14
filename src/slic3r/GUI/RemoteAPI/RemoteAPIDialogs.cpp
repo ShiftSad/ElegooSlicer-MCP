@@ -98,8 +98,9 @@ std::vector<std::string> print_settings_questions(const DynamicPrintConfig &prin
 // The Printer tab's question (TabPrinter::toggle_options, asked whenever its Extruder page
 // is on screen): firmware retraction with wipe on and "retract before wipe" below 100%.
 // Its No answer turns firmware retraction off again. Every extruder variant is checked:
-// the slicer refuses firmware retraction with wipe on any of them anyway
-// (PrintConfig.cpp, use_firmware_retraction vs wipe), and the Yes answer fixes them all.
+// the slicer's own config check calls firmware retraction with wipe on any of them
+// invalid (Slic3r::validate in PrintConfig.cpp, run when a 3MF is loaded), and the Yes
+// answer fixes them all.
 std::vector<std::string> printer_settings_questions(const DynamicPrintConfig &printer_config)
 {
     const auto *firmware = printer_config.option<ConfigOptionBool>("use_firmware_retraction");
