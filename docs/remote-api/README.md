@@ -828,6 +828,9 @@ things as they are; the entry then ends with `(answered No)`.
 - **Single-client oriented.** The server uses one I/O thread and marshals most
   calls onto the GUI thread with a 10s timeout (`504 ui_timeout`). Heavy or
   concurrent calls serialize; a stuck GUI stalls the API for up to 10s.
+- **While the window is rebuilt** (a language change), calls that need the GUI answer
+  `503 {"error": "gui_rebuilding", "hint"}` (printer routes: `503 printers_unavailable`);
+  retry after a few seconds.
 - **Token strength.** 32 hex chars (128 bits) from OpenSSL `RAND_bytes` — fine for
   a LAN token, not intended as a cryptographic secret store.
 - **Survives GUI recreate.** Changing language/skin rebuilds the GUI; the server
@@ -1210,20 +1213,26 @@ changed, another plate was selected, or a setting changed: prepare again),
  "file_name": "helmet_PLA_1h2m.gcode"}
 ```
 - `status`: `exporting` (copying the G-code, running the post-processing scripts),
-  `uploading`, `success` (the file was sent and the print started), `failed` (with `code`,
-  ElegooSlicer's `PrinterNetworkErrorCode`, and a `message` that says whether the file was
-  sent), `cancelled`.
+  `uploading`, `cancelling` (after `DELETE`, see below), `success` (the file was sent and the
+  print started), `failed` (with `code`, ElegooSlicer's `PrinterNetworkErrorCode`, and a
+  `message` that says whether the file was sent), `cancelled`, `unknown` (ElegooSlicer closed
+  or rebuilt its window, e.g. for a language change, during the transfer: the print may have
+  started; check the printer).
+- `done`: `true` once the status will not change any more.
 - `bytes`: `[sent, total]`. An upload stays readable for an hour after it ended;
   `404 unknown_upload`.
 
 ### DELETE /uploads/{id}
 
-`{"ok": true}`: the transfer stops and the print does not start. Once the whole file reached
-the printer it is too late: `409 {"error": "too_late", "status", "hint"}`; stop the print
-with `POST .../stop` instead. If the last bytes went out just as the cancel arrived, the
-printer still starts the print: `GET /uploads/{id}` keeps watching for a minute after a
-cancel and then shows `success`. Until then the printer counts as receiving a print:
-`print/prepare` and `print` answer `409 upload_in_progress` + `upload_id` + `hint`.
+`{"ok": true, "status": "cancelling"}`: the transfer stops and the print does not start.
+Once the whole file reached the printer it is too late: `409 {"error": "too_late", "status",
+"hint"}`; stop the print with `POST .../stop` instead. A transfer that already failed before
+the whole file went out answers `409 {"error": "already_ended", "status", "message"}`
+(nothing started). If the last bytes went out just as the cancel arrived, the printer still
+starts the print: the status stays `cancelling` while `GET /uploads/{id}` keeps watching for
+a minute, then becomes `cancelled` (with `done: true`) or `success`. Until then the printer
+counts as receiving a print: `print/prepare` and `print` answer `409 upload_in_progress` +
+`upload_id` + `hint`.
 
 ### POST /printers/{id}/pause, /resume, /stop
 

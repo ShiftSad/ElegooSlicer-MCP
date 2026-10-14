@@ -1533,19 +1533,20 @@ paths:
       description: |
         Capability `print_control`. The transfer stops and the print does not start. Once the
         whole file reached the printer it is too late (409 too_late): stop the print with
-        POST /printers/{id}/stop. If the last bytes went out just as the cancel arrived, the
-        printer still starts the print: GET /uploads/{id} keeps watching for a minute after a
-        cancel and then shows `success`. Until then prepare and print on that printer answer
-        409 upload_in_progress.
+        POST /printers/{id}/stop. The upload's status becomes `cancelling` at once: if the last
+        bytes went out just as the cancel arrived, the printer still starts the print, so
+        GET /uploads/{id} keeps watching for a minute and then shows `cancelled` (final) or
+        `success`. Until then prepare and print on that printer answer 409 upload_in_progress.
       responses:
         "200":
-          description: Cancelled (also when it already was).
+          description: Cancel requested (also when it already was); `status` is the upload's status now.
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   ok: { type: boolean, enum: [true] }
+                  status: { type: string, example: cancelling }
         "403": { $ref: "#/components/responses/PrintControlDisabled" }
         "404":
           description: No such upload.
@@ -1554,7 +1555,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
               example: { error: "unknown_upload" }
         "409":
-          description: "`too_late` (+ `status`, `hint`): the file was sent, or the upload ended. Also `secondary_instance`."
+          description: "`too_late` (+ `status`, `hint`): the file was sent, or the upload ended after sending it. `already_ended` (+ `status`, `message`): the transfer failed before the whole file went out; nothing started. Also `secondary_instance`."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2615,11 +2616,14 @@ components:
       properties:
         status:
           type: string
-          enum: [exporting, uploading, success, failed, cancelled]
+          enum: [exporting, uploading, cancelling, success, failed, cancelled, unknown]
           description: |
             `exporting`: copying the G-code and running the post-processing scripts.
-            `success`: the file was sent and the print started. `cancelled` shows at once after
-            DELETE /uploads/{id}; it becomes `success` if the file had just been sent.
+            `success`: the file was sent and the print started. `cancelling` shows at once after
+            DELETE /uploads/{id}: within a minute it becomes `cancelled`, or `success` if the
+            file had just been sent. `unknown`: ElegooSlicer closed or rebuilt its window during
+            the transfer, so whether the print started is not known: check the printer.
+        done: { type: boolean, description: "true once the status will not change any more." }
         progress: { type: integer, minimum: 0, maximum: 100 }
         bytes: { type: array, items: { type: integer }, minItems: 2, maxItems: 2, description: "[sent, total]" }
         message: { type: string, description: "In English; for failed, it says whether the file was sent." }

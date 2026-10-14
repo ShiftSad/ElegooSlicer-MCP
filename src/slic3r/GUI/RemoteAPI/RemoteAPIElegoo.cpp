@@ -974,7 +974,8 @@ Response Controller::handle_canvas_sync(const std::string &api_id, const std::st
     const PrinterMmsGroup group      = reply.group;
     const std::string     printer_id = p.printerId;
     nlohmann::json r = run_on_ui([group, printer_id, color_only, discard_changes]() -> nlohmann::json {
-        if (wxGetApp().plater() == nullptr)
+        // The sync ends in the Filament tab, which a window rebuild (language change) removes.
+        if (wxGetApp().plater() == nullptr || wxGetApp().get_tab(Preset::TYPE_FILAMENT) == nullptr)
             return {{"error", "printers_unavailable"}};
         PresetCollection &filaments = wxGetApp().preset_bundle->filaments;
         // Step 2 selects the first synced preset in the Filament tab, which opens
@@ -1351,7 +1352,9 @@ struct UploadJob
     std::string api_printer_id;
     std::string printer_name;
     std::string file_name;
-    std::string status { "exporting" }; // exporting | uploading | success | failed | cancelled
+    // exporting | uploading | cancelling (DELETE came, the print may still start) | success |
+    // failed | cancelled | unknown (ElegooSlicer rebuilt its window during the transfer)
+    std::string status { "exporting" };
     bool        done { false };         // the status will not change any more (see refresh_job for a cancel)
     uint64_t    uploaded { 0 };
     uint64_t    total { 0 };
@@ -1654,19 +1657,20 @@ static bool read_tray_choices(const nlohmann::json &in, std::vector<TrayChoice> 
         return false;
     }
     for (const nlohmann::json &item : in) {
-        if (!item.is_object() || !item.contains("slot") || !item["slot"].is_number_integer() || item["slot"].get<int>() < 1 ||
+        if (!item.is_object() || !item.contains("slot") || !item["slot"].is_number_integer() ||
+            item["slot"].get<int64_t>() < 1 || item["slot"].get<int64_t>() > INT_MAX || // no wrap-around
             !item.contains("tray") || !item["tray"].is_string()) {
             error = { 400, bad };
             return false;
         }
         TrayChoice choice;
-        choice.slot = item["slot"].get<int>();
+        choice.slot = (int) item["slot"].get<int64_t>();
         choice.tray = item["tray"].get<std::string>();
         if (item.contains("unit")) {
             if (item["unit"].is_string())
                 choice.unit = item["unit"].get<std::string>();
             else if (item["unit"].is_number_integer())
-                choice.unit = std::to_string(item["unit"].get<int>());
+                choice.unit = std::to_string(item["unit"].get<int64_t>());
             else {
                 error = { 400, bad };
                 return false;
@@ -1717,9 +1721,9 @@ Response Controller::handle_print_prepare(const std::string &api_id, const std::
         return error;
     int plate_index = -1; // -1: the current plate
     if (in.contains("plate")) {
-        if (!in["plate"].is_number_integer() || in["plate"].get<int>() < 0)
+        if (!in["plate"].is_number_integer() || in["plate"].get<int64_t>() < 0 || in["plate"].get<int64_t>() > INT_MAX)
             return { 400, {{"error", "bad_plate_index"}} };
-        plate_index = in["plate"].get<int>();
+        plate_index = (int) in["plate"].get<int64_t>();
     }
     std::optional<bool> bed_b;
     if (in.contains("bed_side")) {
@@ -1964,8 +1968,10 @@ static void refresh_job(UploadJob &job)
     const PrinterNetworkResult<UploadTaskInfo> read = PrinterUploadManager::getInstance()->getUploadTask(job.task_id);
     if (!read.isSuccess() || !read.hasData()) {
         // The manager forgets a transfer unread only when it closes: ElegooSlicer is closing or
-        // rebuilding its window (a language change), which cancels every transfer.
-        finish_job(job, "cancelled", "ElegooSlicer stopped the transfer: it was closing or rebuilding its window");
+        // rebuilding its window (a language change). It cancels the transfers then, but one whose
+        // last bytes had gone out still starts its print, and its result is lost with the task.
+        finish_job(job, "unknown", "ElegooSlicer rebuilt its window during the transfer: the print may have "
+                                   "started; check the printer's status");
         job.app_closing = true;
         return;
     }
@@ -1985,7 +1991,8 @@ static void refresh_job(UploadJob &job)
     case UploadTaskStatus::CANCELLED:
         if (!job.cancel_requested) {
             // Not cancelled by the API: the manager cancels every transfer when it closes (see above).
-            finish_job(job, "cancelled", "ElegooSlicer stopped the transfer: it was closing or rebuilding its window");
+            finish_job(job, "unknown", "ElegooSlicer stopped the transfer while closing or rebuilding its window: "
+                                       "the print may have started; check the printer's status");
             job.app_closing = true;
         } else if (std::chrono::steady_clock::now() - job.cancel_requested_at > std::chrono::seconds(CANCEL_SETTLE_S)) {
             // Cancelled by DELETE /uploads/{id}. The manager reports that at once, but its transfer
@@ -2192,6 +2199,7 @@ static nlohmann::json upload_json(const UploadJob &job)
         {"message", job.message},
         {"printer_id", job.api_printer_id},
         {"file_name", job.file_name},
+        {"done", job.done}, // false while a status can still change (see "cancelling")
     };
     if (job.status == "failed" && job.code != 0)
         j["code"] = job.code;
@@ -2224,22 +2232,28 @@ Response Controller::handle_cancel_upload(const std::string &upload_id)
         return { 404, {{"error", "unknown_upload"}} };
     UploadJob                  &job = *found->second;
     std::lock_guard<std::mutex> lock(job.mutex);
-    if (job.status == "cancelled")
-        return { 200, {{"ok", true}} };
+    if (job.cancel_requested)
+        return { 200, {{"ok", true}, {"status", job.status}} };
     refresh_job(job); // the latest progress, read now
+    // A transfer that failed before the whole file went out started nothing: no stop to advise.
+    if (job.done && job.status == "failed" && (job.total == 0 || job.uploaded < job.total))
+        return { 409, {{"error", "already_ended"}, {"status", job.status}, {"message", job.message}} };
     if (job.done || (job.total > 0 && job.uploaded >= job.total))
         return { 409, {{"error", "too_late"}, {"status", job.status},
                        {"hint", "the file was sent; stop the print with POST /printers/{id}/stop"}} };
     job.cancel_requested    = true;
     job.cancel_requested_at = std::chrono::steady_clock::now();
-    job.status              = "cancelled";
-    job.message             = "cancelled";
+    // Not "cancelled" yet: the transfer stops only at its next progress report, and one whose last
+    // bytes had already gone out still starts the print. refresh_job sets the final status.
+    job.status  = "cancelling";
+    job.message = "cancel requested; if the last bytes had already gone out the printer may still start "
+                  "the print (watched for up to a minute)";
     // While the file is copied there is no transfer yet: the job's thread sees cancel_requested
     // before it starts one.
     if (!job.task_id.empty())
         PrinterUploadManager::getInstance()->cancelUploadTask(job.task_id);
     print_control_notify("Remote API: cancelled sending '" + job.file_name + "' to '" + job.printer_name + "'");
-    return { 200, {{"ok", true}} };
+    return { 200, {{"ok", true}, {"status", job.status}} };
 }
 
 // --- print control: pause, resume, stop ---------------------------------------------
@@ -2462,7 +2476,8 @@ Response Controller::route_elegoo(const Request &req)
     } catch (const std::runtime_error &e) {
         if (std::string(e.what()) == "printer_timeout")
             return { 504, {{"error", "printer_timeout"}} };
-        if (std::string(e.what()) == "printers_unavailable") // wait_s: ElegooSlicer is closing
+        if (std::string(e.what()) == "printers_unavailable" || // wait_s: ElegooSlicer is closing
+            std::string(e.what()) == "gui_rebuilding")          // UiTask::run: it rebuilds its window
             return printers_unavailable();
         throw; // ui_timeout and the rest are answered by dispatch
     }
