@@ -221,6 +221,15 @@ async def test_finished_after_a_print_completes(monkeypatch):
     assert out["met"] is True and out["stopped_early"] is None
 
 
+async def test_finished_when_the_printer_goes_straight_back_to_idle(monkeypatch):
+    out = await _run(monkeypatch, [_snap("printing", TASK), _snap("idle")], "finished")
+    assert out["met"] is True and out["stopped_early"] is None
+    out = await _run(monkeypatch, [_snap("idle")], "finished")
+    assert out["met"] is False and out["note"] == "nothing is printing"
+    out = await _run(monkeypatch, [_snap("printing", TASK), _snap("error")], "finished")
+    assert out["met"] is True and "error" in out["stopped_early"]
+
+
 async def test_a_cancelled_print_ends_the_wait_for_printing(monkeypatch):
     out = await _run(monkeypatch, [_snap("preheating"), _snap("canceled")], "printing")
     assert out["met"] is False and out["stopped_early"] == "The job ended before extrusion started."

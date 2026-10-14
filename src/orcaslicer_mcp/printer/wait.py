@@ -127,6 +127,10 @@ def condition_met(until: str, snap: dict, start_state: str | None, kind: str | N
         return printing(snap, kind) or (was_running and completed(snap, kind))
     if until == "first_layer_done":
         return first_layer_done(snap, prev) or (was_running and completed(snap, kind))
+    if kind == "elegoo" and was_running and snap.get("state") in ("idle", "finished", "cancelled", "error"):
+        # ElegooSlicer keeps no job once a print ends, and a printer may go from printing straight
+        # back to idle: a job seen running that is gone has ended, however it ended.
+        return True
     return finished(snap, start_state, kind)
 
 
