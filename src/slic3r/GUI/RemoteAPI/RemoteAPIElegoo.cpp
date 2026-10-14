@@ -5,6 +5,9 @@
 //   GET /printers, /printers/{id}, /printers/{id}/status, /printers/{id}/tasks,
 //   /printers/{id}/files, /printers/{id}/canvas, /printers/{id}/canvas/mapping (read-only)
 //   POST /printers/{id}/canvas/sync (the CANVAS trays become the project's filaments)
+//   POST /printers/{id}/print/prepare, /printers/{id}/print, GET/DELETE /uploads/{id}
+//   (print control: off unless the user allows it in Preferences, see the "print control"
+//   section)
 //
 // Where the data comes from:
 // - PrinterManager keeps every printer in a cache (PrinterCache) that the printers' own
@@ -27,27 +30,47 @@
 #include "RemoteAPIController.hpp"
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/GCode/PostProcessor.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Print.hpp"
 #include "libslic3r/PrinterNetworkInfo.hpp"
 #include "libslic3r/StandardColorMatcher.hpp"
+#include "libslic3r/Utils.hpp"
+#include "libslic3r_version.h"
 #include "slic3r/GUI/Elegoo/PrintSendDialogEx.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PlaterExt.hpp"
+#include "slic3r/Utils/ASCIIFolding.hpp"
+#include "slic3r/Utils/Elegoo/MultiInstanceCoordinator.hpp"
 #include "slic3r/Utils/Elegoo/PrinterManager.hpp"
 #include "slic3r/Utils/Elegoo/PrinterMmsManager.hpp"
+#include "slic3r/Utils/Elegoo/PrinterUploadManager.hpp"
+#include "slic3r/Utils/PrintHost.hpp"
 
 #include <boost/algorithm/string.hpp>
+#include <boost/filesystem.hpp>
+#include <boost/log/trivial.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 #include <functional>
 #include <future>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -1048,9 +1071,1019 @@ Response Controller::handle_canvas_mapping(const std::string &api_id, const std:
     return { 200, {{"plate", info["plate"]}, {"sliced", sliced}, {"ok", ok}, {"filaments", list}} };
 }
 
+// --- print control ------------------------------------------------------------------
+//
+// POST /printers/{id}/print/prepare and POST /printers/{id}/print send the plate ElegooSlicer
+// sliced to a printer and start it; GET and DELETE /uploads/{id} follow and cancel that
+// transfer; POST /printers/{id}/pause, /resume and /stop act on the print in progress. They
+// move a real machine, so:
+// - they are off unless the user turned on Preferences > Remote API > "Allow sending and
+//   controlling prints" (403 print_control_disabled), read again on every request;
+// - they run in the first ElegooSlicer window only: it is the one connected to the printers
+//   (a second window forwards printer reads to it, but not uploads);
+// - a print is sent in two steps. prepare makes the checks the Print dialog makes (and a few
+//   more) and answers a summary and a plan id; print sends that plan only, within
+//   PLAN_EXPIRES_S, and only while the plate still holds the slice result that was checked;
+// - the file sent is always the G-code ElegooSlicer sliced for the plate, the same bytes the
+//   window's Print button sends: never a file or a path from the client;
+// - each of them shows a notification in ElegooSlicer, whatever remote_api_notify says.
+//
+// The window's Print button opens the Print dialog (PrintSendDialogEx), then exports and
+// queues the upload (Plater::send_gcode_legacy, BackgroundSlicingProcess::prepare_upload,
+// PrintHostJobQueue::perform_job). Those steps can open message boxes, so the API does the
+// same work itself; the comments name the step of the window each part copies.
+
+static const int PLAN_EXPIRES_S    = 300;      // a prepared print must be started within this time
+static const int UPLOAD_POLL_MS    = 500;      // how often an upload's thread reads its progress
+static const int CANCEL_SETTLE_S   = 60;       // how long a cancelled transfer may still turn into a print
+static const int UPLOAD_KEEP_S     = 3600;     // a finished upload stays readable this long
+static const int UPLOAD_MAX_S      = 6 * 3600; // an upload that reports no end by then is called failed
+
+// The notification of a print-control request. Shown whatever remote_api_notify says: the user
+// must always see that an external tool sent, started, paused, resumed or stopped a print. Each
+// is a notification of its own (a CustomNotification, not the toast that gathers the other API
+// messages), and a warning stays until it is closed. Plain ASCII text. Any thread.
+static void print_control_notify(const std::string &text, bool warning = false)
+{
+    wxGetApp().CallAfter([text, warning]() {
+        Plater *plater = wxGetApp().plater();
+        if (plater == nullptr || plater->get_notification_manager() == nullptr)
+            return;
+        plater->get_notification_manager()->push_notification(
+            NotificationType::CustomNotification,
+            warning ? NotificationManager::NotificationLevel::WarningNotificationLevel
+                    : NotificationManager::NotificationLevel::ImportantNotificationLevel,
+            text);
+    });
+}
+
+// The checks every print-control route starts with. False, with the answer in `refused`, when
+// the preference is off (403) or this is not the first ElegooSlicer window (409). `what` names
+// the request in the notification a refused action shows ("start a print"); "" for a read.
+bool Controller::check_print_control(const std::string &what, Response &refused)
+{
+    const bool allowed = run_on_ui([]() -> nlohmann::json { return Config::print_control_allowed(); }).get<bool>();
+    if (!allowed) {
+        if (!what.empty())
+            print_control_notify("Remote API: refused to " + what + ": print control is off "
+                                 "(Preferences > Remote API > Allow sending and controlling prints)", true);
+        refused = { 403, {{"error", "print_control_disabled"},
+                          {"hint", "Preferences > Remote API > Allow sending and controlling prints"}} };
+        return false;
+    }
+    // Only the first window (MultiInstanceCoordinator's master) is connected to the printers. A
+    // second one forwards printer reads to it, but PrinterUploadManager does not forward uploads.
+    if (!MultiInstanceCoordinator::getInstance()->isMaster()) {
+        refused = { 409, {{"error", "secondary_instance"}, {"hint", "close the other ElegooSlicer windows"}} };
+        return false;
+    }
+    return true;
+}
+
+// Reads a request body that may be empty (= {}). False, with the answer in `error`, when it is
+// not a JSON object; a JSON syntax error is thrown (route_elegoo answers 400 invalid_json).
+static bool read_body_object(const std::string &body, nlohmann::json &in, Response &error)
+{
+    in = nlohmann::json::object();
+    if (body.find_first_not_of(" \t\r\n") == std::string::npos)
+        return true;
+    in = nlohmann::json::parse(body);
+    if (!in.is_object()) {
+        error = { 400, {{"error", "body_must_be_object"}} };
+        return false;
+    }
+    return true;
+}
+
+// Refuses a field the route does not know: on a request that starts a print, a misspelt option
+// ("timelaps") must not be silently ignored.
+static bool only_known_fields(const nlohmann::json &in, std::initializer_list<const char *> known, Response &error)
+{
+    for (auto it = in.begin(); it != in.end(); ++it) {
+        bool found = false;
+        for (const char *name : known)
+            found = found || it.key() == name;
+        if (!found) {
+            error = { 400, {{"error", "unknown_field"}, {"field", it.key()}} };
+            return false;
+        }
+    }
+    return true;
+}
+
+// Reads an optional boolean field. False, with the answer in `error`, when present but not a
+// boolean (400 bad_<field>).
+static bool read_bool_field(const nlohmann::json &in, const std::string &key, std::optional<bool> &value, Response &error)
+{
+    if (!in.contains(key))
+        return true;
+    if (!in[key].is_boolean()) {
+        error = { 400, {{"error", "bad_" + key}, {"detail", key + ": true | false"}} };
+        return false;
+    }
+    value = in[key].get<bool>();
+    return true;
+}
+
+static std::string new_id()
+{
+    return boost::uuids::to_string(boost::uuids::random_generator()());
+}
+
+namespace {
+
+// A tray the client picked for a filament slot in POST .../print/prepare.
+struct TrayChoice
+{
+    int         slot { 0 };  // 1-based filament slot
+    std::string unit;        // the unit's id as in GET .../canvas ("" = not given)
+    std::string tray;        // the tray's id as in GET .../canvas ("A1")
+};
+
+// A print checked by POST .../print/prepare and waiting for POST .../print. API thread only.
+struct PrintPlan
+{
+    std::string                           api_printer_id;
+    std::string                           printer_id;   // PrinterManager's id
+    std::string                           printer_name;
+    std::chrono::steady_clock::time_point made_at;
+    int                                   plate { 0 };
+    std::string                           fingerprint;  // slice_fingerprint() when it was made
+    // What the upload needs, read on the GUI thread by prepare.
+    std::string                           gcode_path;   // the plate's sliced G-code (ElegooSlicer's temp file)
+    std::uintmax_t                        gcode_size { 0 };
+    std::time_t                           gcode_written { 0 };
+    std::string                           file_name;    // the file's name on the printer
+    std::string                           host_name;    // the print host's name, for post-processing scripts
+    DynamicPrintConfig                    print_config; // the plate's print config, for post-processing scripts
+    PrinterNetworkParams                  params;       // printer, options and tray mapping (no file yet)
+    std::map<std::string, std::string>    recent;       // the Print dialog's remembered choices to update
+    nlohmann::json                        summary;
+};
+
+// One print sent by POST .../print: the copy of the G-code, its transfer and the start.
+struct UploadJob
+{
+    std::mutex  mutex; // the API thread and the job's own thread both use the fields below
+    std::string printer_id;    // PrinterManager's id
+    std::string api_printer_id;
+    std::string printer_name;
+    std::string file_name;
+    std::string status { "exporting" }; // exporting | uploading | success | failed | cancelled
+    bool        done { false };         // the status will not change any more (see refresh_job for a cancel)
+    uint64_t    uploaded { 0 };
+    uint64_t    total { 0 };
+    int         progress { 0 };
+    std::string message { "copying the sliced G-code" };
+    int         code { 0 };             // PrinterNetworkErrorCode of a failure
+    std::string task_id;                // PrinterUploadManager's transfer, once it started
+    bool        cancel_requested { false };
+    bool        app_closing { false };  // ended because ElegooSlicer closed
+    std::chrono::steady_clock::time_point cancel_requested_at;
+    std::chrono::steady_clock::time_point done_at;
+};
+
+} // namespace
+
+// Plans by plan id. API thread only.
+static std::map<std::string, std::shared_ptr<PrintPlan>> &print_plans()
+{
+    static std::map<std::string, std::shared_ptr<PrintPlan>> plans;
+    return plans;
+}
+
+// Uploads by upload id. The map itself is used on the API thread only; each job's fields are
+// shared with its own thread under job->mutex.
+static std::map<std::string, std::shared_ptr<UploadJob>> &upload_jobs()
+{
+    static std::map<std::string, std::shared_ptr<UploadJob>> jobs;
+    return jobs;
+}
+
+// Forgets the plans past their time and the uploads finished more than UPLOAD_KEEP_S ago.
+// API thread only.
+static void forget_old_plans_and_uploads()
+{
+    const auto now = std::chrono::steady_clock::now();
+    auto &plans = print_plans();
+    for (auto it = plans.begin(); it != plans.end();)
+        it = now - it->second->made_at > std::chrono::seconds(PLAN_EXPIRES_S) ? plans.erase(it) : std::next(it);
+    auto &jobs = upload_jobs();
+    for (auto it = jobs.begin(); it != jobs.end();) {
+        bool old;
+        {
+            std::lock_guard<std::mutex> lock(it->second->mutex);
+            old = it->second->done && now - it->second->done_at > std::chrono::seconds(UPLOAD_KEEP_S);
+        }
+        it = old ? jobs.erase(it) : std::next(it);
+    }
+}
+
+// Whether the printer can take a new print now, from ElegooSlicer's cache: connected, and idle or
+// showing its last print as completed (the Print dialog's printerBusy test), and not receiving a
+// print the API is still sending. False, with the answer in `error`, when not. API thread.
+static bool printer_free(const PrinterNetworkInfo &p, Response &error)
+{
+    if (p.connectStatus != PRINTER_CONNECT_STATUS_CONNECTED) {
+        error = { 409, {{"error", "printer_offline"}} };
+        return false;
+    }
+    if (p.printerStatus != PRINTER_STATUS_IDLE && p.printerStatus != PRINTER_STATUS_PRINT_COMPLETED) {
+        error = { 409, {{"error", "printer_busy"}, {"status", printer_status_name(p.printerStatus)}} };
+        return false;
+    }
+    for (const auto &[upload_id, job] : upload_jobs()) {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        // A cancelled upload sends nothing more (its thread may still be cleaning up).
+        if (job->printer_id == p.printerId && !job->done && !job->cancel_requested) {
+            error = { 409, {{"error", "upload_in_progress"}, {"upload_id", upload_id}} };
+            return false;
+        }
+    }
+    return true;
+}
+
+// --- print control: the plate (GUI thread) ------------------------------------------
+
+// A hash of every setting the project slices with: the printer, print and filament presets, and
+// the project's own settings and filament colours. GUI thread.
+static size_t project_config_hash()
+{
+    const DynamicPrintConfig config = wxGetApp().preset_bundle->full_config();
+    std::string              text;
+    for (const std::string &key : config.keys())
+        text += key + '=' + config.opt_serialize(key) + '\n';
+    return std::hash<std::string>{}(text);
+}
+
+// What a plan is bound to: the plate, its slice result, the G-code file that slice wrote, and the
+// settings. Slicing again or changing a setting changes it. "" when the plate has no slice result
+// or no G-code file. GUI thread.
+static std::string slice_fingerprint(PartPlate *plate, int plate_index)
+{
+    const GCodeProcessorResult *result = plate->get_slice_result();
+    if (result == nullptr)
+        return {};
+    const std::string         path = plate->get_tmp_gcode_path();
+    boost::system::error_code ec;
+    const std::uintmax_t      size = boost::filesystem::file_size(path, ec);
+    if (ec)
+        return {};
+    const std::time_t written = boost::filesystem::last_write_time(path, ec);
+    if (ec)
+        return {};
+    return std::to_string(plate_index) + '|' + std::to_string(result->id) + '|' + std::to_string(size) + '|' +
+           std::to_string((long long) written) + '|' + std::to_string(project_config_hash());
+}
+
+// The Print dialog's filterModelName (resources/web/printer/print_send/printsend.js): drops the
+// characters Windows does not allow in a file name, appends '_' to a reserved device name, and
+// drops trailing spaces and dots.
+static std::string print_dialog_file_stem(const std::string &name)
+{
+    std::string stem;
+    for (char c : name)
+        if (std::string("\\/:*?\"<>|").find(c) == std::string::npos)
+            stem += c;
+    const std::string upper  = boost::algorithm::to_upper_copy(stem);
+    const bool        device = upper == "CON" || upper == "PRN" || upper == "AUX" || upper == "NUL" ||
+                               (upper.size() == 4 && (upper.compare(0, 3, "COM") == 0 || upper.compare(0, 3, "LPT") == 0) &&
+                                upper[3] >= '1' && upper[3] <= '9');
+    if (device)
+        stem += '_';
+    while (!stem.empty() && (std::isspace((unsigned char) stem.back()) || stem.back() == '.'))
+        stem.pop_back();
+    return stem;
+}
+
+// The name the window gives the file on the printer, built by the same steps. GUI thread. Throws
+// when the filename_format template does not process (the window shows that error).
+static std::string print_file_name(const Print &print)
+{
+    // Plater::send_gcode_legacy: the project's G-code file name from the filename_format template
+    // (BackgroundSlicingProcess::output_filepath_for_project), folded to ASCII.
+    const boost::filesystem::path project = into_path(wxGetApp().plater()->get_project_filename(".3mf"));
+    const std::string output = project.empty() ? print.output_filepath("")
+                                               : print.output_filepath(project.parent_path().string(), project.stem().string());
+    const std::string file   = boost::filesystem::path(fold_utf8_to_ascii(output)).filename().string();
+    // PrintSendDialogEx::init: the remembered upload folder (printhost_path) and the file name
+    // without ".gcode"; the dialog's page filters that name, and onPrint adds ".gcode" back.
+    std::string name = wxGetApp().app_config->get("recent", CONFIG_KEY_PATH);
+    if (!name.empty() && name.back() != '/')
+        name += '/';
+    name += file;
+    if (boost::algorithm::ends_with(name, ".gcode"))
+        name.resize(name.size() - 6);
+    name = print_dialog_file_stem(name);
+    if (!boost::algorithm::ends_with(name, ".gcode"))
+        name += ".gcode";
+    // BackgroundSlicingProcess::prepare_upload: the print statistics applied to the name.
+    return print.print_statistics().finalize_output_path(name);
+}
+
+// Why a sliced plate cannot be printed (PartPlate::is_slice_result_ready_for_print is false).
+static const char *not_printable_reason(const GCodeProcessorResult *result)
+{
+    if (result == nullptr)
+        return "no_slice_result";
+    if (result->toolpath_outside)
+        return "toolpath_outside";
+    if (result->gcode_check_result.error_code != 0)
+        return "gcode_check_failed";
+    return "filament_not_printable";
+}
+
+// The plate part of POST .../print/prepare, on the GUI thread: the checks the window makes before
+// its Print button sends, and what the upload will need, into `plan` and `filaments`.
+// {"error": ...} when the plate cannot be sent, else the figures for the summary.
+static nlohmann::json read_plate_for_print(int plate_index, const std::string &printer_model, PrintPlan &plan,
+                                           std::vector<PrintFilamentMmsMapping> &filaments)
+{
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return {{"error", "printers_unavailable"}};
+    // With a G-code file or an exported .gcode.3mf open, the plates hold G-code ElegooSlicer did
+    // not slice from this project; the API only sends G-code it sliced.
+    if (plater->only_gcode_mode() || plater->using_exported_file())
+        return {{"error", "preview_only"}, {"hint", "open or create a project and slice it"}};
+
+    PartPlateList &plates  = plater->get_partplate_list();
+    const int      current = plates.get_curr_plate_index();
+    const int      index   = plate_index < 0 ? current : plate_index;
+    if (index >= plates.get_plate_count())
+        return {{"error", "unknown_plate"}};
+    // The window prints the current plate, and only the current plate's slice result follows
+    // every setting change at once (another plate is checked again when it gets selected).
+    if (index != current)
+        return {{"error", "plate_not_current"}, {"plate", index}, {"current", current},
+                {"hint", "select the plate (POST /plates/{i}/select), slice it, then prepare again"}};
+    PartPlate *plate = plates.get_plate(index);
+    if (!plate->is_slice_result_valid())
+        return {{"error", "not_sliced"}, {"plate", index}};
+    // The window's Print button needs this too (MainFrame::get_enable_print_status).
+    if (!plate->is_slice_result_ready_for_print())
+        return {{"error", "not_printable"}, {"plate", index}, {"reason", not_printable_reason(plate->get_slice_result())}};
+
+    // The window opens the Print dialog for Elegoo printers only when the printer profile uploads
+    // through ElegooLink (Plater::send_gcode_legacy), and sends a .gcode.3mf instead of plain
+    // G-code when the profile asks for it (use_3mf; the CC2 profiles do not).
+    DynamicPrintConfig printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    if (!PrintHost::support_device_list_management(printer_config))
+        return {{"error", "not_elegoolink_profile"},
+                {"hint", "select an Elegoo printer profile whose printer is connected through ElegooLink"}};
+    const ConfigOptionBool *use_3mf = printer_config.option<ConfigOptionBool>("use_3mf");
+    if (use_3mf != nullptr && use_3mf->value)
+        return {{"error", "upload_format_unsupported"}, {"detail", "the printer profile sends .gcode.3mf files (use_3mf)"}};
+    // The Print dialog warns when the printer is another model than the project's printer
+    // profile; the API refuses: the G-code is made for that model.
+    const ConfigOptionString *model_opt     = printer_config.option<ConfigOptionString>("printer_model");
+    const std::string         project_model = model_opt != nullptr ? model_opt->value : std::string();
+    if (project_model != printer_model)
+        return {{"error", "printer_model_mismatch"}, {"printer_model", printer_model}, {"project_model", project_model}};
+
+    const Print &print = *plate->fff_print();
+    plan.plate       = index;
+    plan.fingerprint = slice_fingerprint(plate, index);
+    if (plan.fingerprint.empty())
+        return {{"error", "not_sliced"}, {"plate", index}};
+    plan.gcode_path = plate->get_tmp_gcode_path();
+    boost::system::error_code ec;
+    plan.gcode_size    = boost::filesystem::file_size(plan.gcode_path, ec);
+    plan.gcode_written = boost::filesystem::last_write_time(plan.gcode_path, ec);
+    try {
+        plan.file_name = print_file_name(print);
+    } catch (const std::exception &e) {
+        return {{"error", "filename_format_error"}, {"detail", e.what()}};
+    }
+    // BackgroundSlicingProcess::prepare_upload hands the print host's name to the post-processing
+    // scripts (an ElegooLink profile makes an OctoPrint host object there).
+    std::unique_ptr<PrintHost> host(PrintHost::get_print_host(&printer_config));
+    plan.host_name    = host ? host->get_name() : "";
+    plan.print_config = print.full_print_config();
+    // The Print dialog's list of the plate's filaments (PrintSendDialogEx::preparePrintTask).
+    filaments = PrintSendDialogEx::getPlateFilamentList(plate, plate->get_used_filaments());
+
+    // The summary's figures, as the Print dialog shows them.
+    int layers = 0;
+    for (const PrintObject *object : print.objects())
+        layers = std::max(layers, (int) object->layer_count());
+    const GCodeProcessorResult *result = plate->get_slice_result();
+    nlohmann::json time_s = nullptr;
+    if (result != nullptr && !result->print_statistics.modes.empty())
+        time_s = std::lround(result->print_statistics.modes.front().time);
+    bool post_processing = false;
+    if (const ConfigOptionStrings *scripts = plan.print_config.option<ConfigOptionStrings>("post_process"))
+        for (const std::string &script : scripts->values)
+            post_processing = post_processing || !is_blank(script);
+
+    // The Print dialog's remembered choices (PrintSendDialogEx::init): the options' defaults.
+    AppConfig *ac        = wxGetApp().app_config;
+    auto       recent_on = [ac](const char *key) { return std::atoi(ac->get("recent", key).c_str()) != 0; };
+    return {
+        {"plate", index},
+        {"recent_bed_b", std::atoi(ac->get("recent", CONFIG_KEY_BEDTYPE).c_str()) == (int) btPC},
+        {"recent_leveling", recent_on(CONFIG_KEY_HEATEDBEDLEVELING)},
+        {"recent_timelapse", recent_on(CONFIG_KEY_TIMELAPSE)},
+        {"recent_auto_refill", recent_on(CONFIG_KEY_AUTO_REFILL)},
+        {"nozzles", nozzle_diameters_json()},
+        {"estimated_time_s", time_s},
+        {"filament_g", std::round(print.print_statistics().total_weight * 100.0) / 100.0},
+        {"layers", layers},
+        {"post_processing", post_processing},
+    };
+}
+
+// --- print control: prepare ---------------------------------------------------------
+
+// Reads the "mapping" field of POST .../print/prepare: [{slot, unit?, tray}].
+static bool read_tray_choices(const nlohmann::json &in, std::vector<TrayChoice> &choices, Response &error)
+{
+    const nlohmann::json bad = {{"error", "bad_mapping"},
+                                {"detail", "mapping: [{\"slot\": 1, \"unit\"?: \"0\", \"tray\": \"A1\"}], slot 1-based, "
+                                           "unit and tray as in GET /printers/{id}/canvas"}};
+    if (!in.is_array()) {
+        error = { 400, bad };
+        return false;
+    }
+    for (const nlohmann::json &item : in) {
+        if (!item.is_object() || !item.contains("slot") || !item["slot"].is_number_integer() || item["slot"].get<int>() < 1 ||
+            !item.contains("tray") || !item["tray"].is_string()) {
+            error = { 400, bad };
+            return false;
+        }
+        TrayChoice choice;
+        choice.slot = item["slot"].get<int>();
+        choice.tray = item["tray"].get<std::string>();
+        if (item.contains("unit")) {
+            if (item["unit"].is_string())
+                choice.unit = item["unit"].get<std::string>();
+            else if (item["unit"].is_number_integer())
+                choice.unit = std::to_string(item["unit"].get<int>());
+            else {
+                error = { 400, bad };
+                return false;
+            }
+        }
+        choices.push_back(choice);
+    }
+    return true;
+}
+
+// The tray of the CANVAS reply with this id ("A1"), or null.
+static const PrinterMmsTray *find_tray_by_name(const PrinterMmsGroup &group, const std::string &name)
+{
+    for (const PrinterMms &unit : group.mmsList)
+        for (const PrinterMmsTray &tray : unit.trayList)
+            if (tray.trayName == name)
+                return &tray;
+    return nullptr;
+}
+
+// An option of the Print dialog (leveling, timelapse, auto refill, bed side B): the client's choice,
+// else the dialog's last one; off when the printer does not have it. False, with the answer in
+// `error`, when the client turns on an option the printer does not have.
+static bool choose_option(const char *name, const std::optional<bool> &asked, bool recent, bool supported, bool &value,
+                          Response &error)
+{
+    if (asked.has_value() && *asked && !supported) {
+        error = { 422, {{"error", "unsupported_option"}, {"option", name}} };
+        return false;
+    }
+    value = supported && asked.value_or(recent);
+    return true;
+}
+
+// POST /printers/{id}/print/prepare {"plate"?, "bed_side"?: "A"|"B", "leveling"?, "timelapse"?,
+//                                    "auto_refill"?, "mapping"?: [{slot, unit?, tray}]}
+// Checks a print of the current plate on this printer and answers what it would do, with a plan
+// id for POST .../print. Nothing is sent to the printer (the CANVAS is read, as GET .../canvas).
+Response Controller::handle_print_prepare(const std::string &api_id, const std::string &body)
+{
+    Response error;
+    if (!check_print_control("prepare a print", error))
+        return error;
+
+    nlohmann::json in;
+    if (!read_body_object(body, in, error) ||
+        !only_known_fields(in, {"plate", "bed_side", "leveling", "timelapse", "auto_refill", "mapping"}, error))
+        return error;
+    int plate_index = -1; // -1: the current plate
+    if (in.contains("plate")) {
+        if (!in["plate"].is_number_integer() || in["plate"].get<int>() < 0)
+            return { 400, {{"error", "bad_plate_index"}} };
+        plate_index = in["plate"].get<int>();
+    }
+    std::optional<bool> bed_b;
+    if (in.contains("bed_side")) {
+        if (!in["bed_side"].is_string() || (in["bed_side"] != "A" && in["bed_side"] != "B"))
+            return { 400, {{"error", "bad_bed_side"}, {"detail", "bed_side: \"A\" | \"B\""}} };
+        bed_b = in["bed_side"] == "B";
+    }
+    std::optional<bool> leveling_asked, timelapse_asked, refill_asked;
+    if (!read_bool_field(in, "leveling", leveling_asked, error) || !read_bool_field(in, "timelapse", timelapse_asked, error) ||
+        !read_bool_field(in, "auto_refill", refill_asked, error))
+        return error;
+    std::vector<TrayChoice> choices;
+    if (in.contains("mapping") && !read_tray_choices(in["mapping"], choices, error))
+        return error;
+
+    // The printer, from ElegooSlicer's cache.
+    PrinterNetworkInfo p;
+    if (!find_printer(api_id, p))
+        return { 404, {{"error", "printer_not_found"}} };
+    if (!printer_free(p, error))
+        return error;
+
+    // The plate and the project, on the GUI thread.
+    auto           plan      = std::make_shared<PrintPlan>();
+    auto           filaments = std::make_shared<std::vector<PrintFilamentMmsMapping>>();
+    const std::string printer_model = p.printerModel;
+    nlohmann::json info = run_on_ui([plate_index, printer_model, plan, filaments]() -> nlohmann::json {
+        return read_plate_for_print(plate_index, printer_model, *plan, *filaments);
+    });
+    if (info.contains("error")) {
+        const std::string e = info["error"].get<std::string>();
+        if (e == "printers_unavailable")
+            return printers_unavailable();
+        if (e == "unknown_plate")
+            return { 404, info };
+        if (e == "filename_format_error")
+            return { 422, info };
+        return { 409, info };
+    }
+
+    // The CANVAS, read as GET .../canvas does (a reply is reused for 5 s). The Print dialog maps
+    // the filaments to trays when the printer has a connected CANVAS unit (its mHasMms), and
+    // refuses to send when that read fails.
+    const bool      has_canvas = p.systemCapabilities.supportsMultiFilament;
+    bool            has_mms    = false;
+    PrinterMmsGroup group {};
+    if (has_canvas) {
+        const CanvasReply reply = read_canvas(p.printerId, info["nozzles"].get<std::vector<double>>(), CANVAS_TIMEOUT_S);
+        if (reply.code != PrinterNetworkErrorCode::SUCCESS)
+            return printer_error(reply.code);
+        group   = reply.group;
+        has_mms = group.connected && !group.mmsList.empty();
+    }
+    // Without a CANVAS the printer prints with the filament in its extruder: the Print dialog then
+    // sends several filaments without a mapping; the API refuses.
+    if (!has_mms && filaments->size() > 1)
+        return { 409, {{"error", has_canvas ? "canvas_disconnected" : "canvas_unsupported"},
+                       {"filaments", filaments->size()},
+                       {"hint", "the plate prints with several filaments; they need a connected CANVAS"}} };
+    if (!has_mms && !choices.empty())
+        return { 422, {{"error", "bad_mapping"}, {"detail", "the printer has no connected CANVAS to map filaments to"}} };
+
+    // The options. Time-lapse is offered on LAN printers only, auto refill with a CANVAS only.
+    bool leveling = false, timelapse = false, auto_refill = false, side_b = false;
+    const bool can_switch_bed = p.printCapabilities.supportsHeatedBedSwitching;
+    if (!choose_option("leveling", leveling_asked, info["recent_leveling"].get<bool>(),
+                       p.printCapabilities.supportsAutoBedLeveling, leveling, error) ||
+        !choose_option("timelapse", timelapse_asked, info["recent_timelapse"].get<bool>(),
+                       p.printCapabilities.supportsTimeLapse && p.networkType == NETWORK_TYPE_LAN, timelapse, error) ||
+        !choose_option("auto_refill", refill_asked, info["recent_auto_refill"].get<bool>(),
+                       p.printCapabilities.supportsAutoRefill && has_mms, auto_refill, error) ||
+        !choose_option("bed_side", bed_b, info["recent_bed_b"].get<bool>(), can_switch_bed, side_b, error))
+        return error;
+
+    // The tray of each filament.
+    nlohmann::json warnings = nlohmann::json::array();
+    nlohmann::json mapping  = nlohmann::json::array();
+    if (has_mms) {
+        // The Print dialog's own choice (it reads the choices earlier prints saved; the API saves none).
+        PrinterMmsManager::getInstance()->getFilamentMmsMapping(*filaments, group);
+        // The client's choices replace it, slot by slot.
+        for (const TrayChoice &choice : choices) {
+            PrintFilamentMmsMapping *filament = nullptr;
+            for (PrintFilamentMmsMapping &f : *filaments)
+                if (f.index + 1 == choice.slot)
+                    filament = &f;
+            if (filament == nullptr)
+                return { 422, {{"error", "bad_mapping"}, {"detail", "slot " + std::to_string(choice.slot) + " is not printed by this plate"}} };
+            const PrinterMmsTray *tray = find_tray_by_name(group, choice.tray);
+            if (tray == nullptr || (!choice.unit.empty() && choice.unit != tray->mmsId))
+                return { 422, {{"error", "bad_mapping"}, {"detail", "no tray " + choice.tray + " in the CANVAS"}} };
+            // The Print dialog offers only the trays that are loaded or preloaded.
+            if (tray->status != TRAY_STATUS_LOADED && tray->status != TRAY_STATUS_PRELOADED)
+                return { 422, {{"error", "bad_mapping"}, {"detail", "tray " + choice.tray + " is not loaded"}} };
+            filament->mappedMmsFilament = *tray;
+        }
+        nlohmann::json problems = nlohmann::json::array();
+        for (PrintFilamentMmsMapping &f : *filaments) {
+            // What the Print dialog sends for each filament (PrintSendDialogEx::onPrint): the tray's
+            // ids, name, filament and colour, everything else empty.
+            PrinterMmsTray sent {};
+            sent.trayName      = f.mappedMmsFilament.trayName;
+            sent.mmsId         = f.mappedMmsFilament.mmsId;
+            sent.trayId        = f.mappedMmsFilament.trayId;
+            sent.filamentColor = f.mappedMmsFilament.filamentColor;
+            sent.filamentName  = f.mappedMmsFilament.filamentName;
+            sent.filamentType  = f.mappedMmsFilament.filamentType;
+            f.mappedMmsFilament = sent;
+            // A filament without a tray, on a tray that is not ready, or on a tray of another
+            // filament type is refused; another colour only warned about.
+            nlohmann::json item     = mapped_filament_json(f, group, /*sliced=*/true);
+            nlohmann::json blocking = nlohmann::json::array();
+            for (const nlohmann::json &issue : item["issues"]) {
+                if (issue == "color_mismatch")
+                    warnings.push_back({{"code", "color_mismatch"}, {"slot", f.index + 1},
+                                        {"message", "slot " + std::to_string(f.index + 1) + " prints from tray " +
+                                                        f.mappedMmsFilament.trayName + ", which holds another colour"}});
+                else
+                    blocking.push_back(issue);
+            }
+            if (!blocking.empty())
+                problems.push_back({{"slot", f.index + 1}, {"issues", blocking}});
+            mapping.push_back(item);
+        }
+        if (!problems.empty())
+            return { 422, {{"error", "mapping_incomplete"}, {"issues", problems}, {"filaments", mapping},
+                           {"hint", "load the filaments, sync the CANVAS (POST /printers/{id}/canvas/sync) "
+                                    "or pick trays with \"mapping\""}} };
+    } else if (has_canvas) {
+        warnings.push_back({{"code", "no_canvas"}, {"message", "no CANVAS unit is connected: the printer prints with "
+                                                                "the filament loaded in its extruder"}});
+    }
+    if (p.printerStatus == PRINTER_STATUS_PRINT_COMPLETED)
+        warnings.push_back({{"code", "print_completed"}, {"message", "the printer shows its last print as completed: "
+                                                                       "make sure the bed is clear"}});
+    if (info["post_processing"].get<bool>())
+        warnings.push_back({{"code", "post_processing"}, {"message", "the post-processing scripts of the print profile "
+                                                                       "run on the file before it is sent and may rename it"}});
+
+    // The upload's parameters, as PrintHostJobQueue::perform_job builds them from the Print
+    // dialog's choices (PrintSendDialogEx::getExtendedInfo).
+    plan->api_printer_id             = api_id;
+    plan->printer_id                 = p.printerId;
+    plan->printer_name               = p.printerName;
+    plan->made_at                    = std::chrono::steady_clock::now();
+    plan->params.printerId           = p.printerId;
+    plan->params.bedType             = side_b ? 1 : 0; // the SDK's side B is bedType 1 (btPC in the dialog)
+    plan->params.timeLapse           = timelapse;
+    plan->params.heatedBedLeveling   = leveling;
+    plan->params.autoRefill          = auto_refill;
+    plan->params.hasMms              = has_mms;
+    plan->params.uploadAndStartPrint = true;
+    if (has_mms)
+        plan->params.filamentMmsMappingList = *filaments;
+    // The Print dialog remembers the printer and its options for next time
+    // (PrintSendDialogEx::EndModal); the options the printer does not have keep their value.
+    plan->recent[CONFIG_KEY_SELECTED_PRINTER_ID] = p.printerId;
+    if (can_switch_bed)
+        plan->recent[CONFIG_KEY_BEDTYPE] = std::to_string((int) (side_b ? btPC : btPTE));
+    if (p.printCapabilities.supportsAutoBedLeveling)
+        plan->recent[CONFIG_KEY_HEATEDBEDLEVELING] = leveling ? "1" : "0";
+    if (p.printCapabilities.supportsTimeLapse && p.networkType == NETWORK_TYPE_LAN)
+        plan->recent[CONFIG_KEY_TIMELAPSE] = timelapse ? "1" : "0";
+    if (p.printCapabilities.supportsAutoRefill && has_mms)
+        plan->recent[CONFIG_KEY_AUTO_REFILL] = auto_refill ? "1" : "0";
+    plan->summary = {
+        {"printer", p.printerName},
+        {"printer_id", api_id},
+        {"plate", info["plate"]},
+        {"file_name", plan->file_name},
+        {"estimated_time_s", info["estimated_time_s"]},
+        {"filament_g", info["filament_g"]},
+        {"layers", info["layers"]},
+        {"bed_side", can_switch_bed ? nlohmann::json(side_b ? "B" : "A") : nlohmann::json()},
+        {"leveling", leveling},
+        {"timelapse", timelapse},
+        {"auto_refill", auto_refill},
+        {"mapping", mapping},
+        {"warnings", warnings},
+    };
+
+    forget_old_plans_and_uploads();
+    const std::string plan_id = new_id();
+    print_plans()[plan_id] = plan;
+    print_control_notify("Remote API: prepared a print of '" + plan->file_name + "' on '" + p.printerName +
+                         "'. It starts only if the tool sends the start request within 5 minutes.");
+    return { 200, {{"plan_id", plan_id}, {"expires_in_s", PLAN_EXPIRES_S}, {"summary", plan->summary}}};
+}
+
+// --- print control: the upload ------------------------------------------------------
+
+// Marks the job finished. job.mutex held.
+static void finish_job(UploadJob &job, const std::string &status, const std::string &message, int code = 0)
+{
+    job.status  = status;
+    job.message = message;
+    job.code    = code;
+    job.done    = true;
+    job.done_at = std::chrono::steady_clock::now();
+    if (status == "success")
+        job.progress = 100;
+}
+
+// A failed transfer's message, in the API's own words: the upload manager's message is left out
+// (it is translated, and the printer layer's part of it can quote the printer id).
+static std::string upload_failure_message(const UploadTaskInfo &task)
+{
+    const bool        sent = task.totalBytes > 0 && task.uploadedBytes >= task.totalBytes;
+    const std::string what = sent ? "the file was sent but the print did not start" : "sending the file failed";
+    switch (task.code) {
+    case PrinterNetworkErrorCode::PRINTER_BUSY:                      return what + ": the printer is busy";
+    case PrinterNetworkErrorCode::PRINTER_OFFLINE:
+    case PrinterNetworkErrorCode::PRINTER_CONNECTION_ERROR:          return what + ": the printer is offline";
+    case PrinterNetworkErrorCode::OPERATION_TIMEOUT:                 return what + ": the printer did not answer in time";
+    case PrinterNetworkErrorCode::FILE_TOO_LARGE:                    return what + ": the file is too large for a cloud upload";
+    case PrinterNetworkErrorCode::PRINTER_MISSING_BED_LEVELING_DATA: return what + ": the printer has no bed leveling data";
+    case PrinterNetworkErrorCode::PRINTER_FILAMENT_RUNOUT:           return what + ": the printer reports a filament runout";
+    case PrinterNetworkErrorCode::PRINTER_PRINT_FILE_NOT_FOUND:      return what + ": the printer did not find the file";
+    default:                                                         return what + " (printer layer code " + std::to_string((int) task.code) + ")";
+    }
+}
+
+// Reads the upload manager's state of the job's transfer into the job. job.mutex held; called by
+// the job's thread and by DELETE /uploads/{id}. The manager forgets a finished transfer the first
+// time it is read (PrinterUploadManager::getUploadTask), so every read must land in the job.
+static void refresh_job(UploadJob &job)
+{
+    if (job.done || job.task_id.empty())
+        return;
+    const PrinterNetworkResult<UploadTaskInfo> read = PrinterUploadManager::getInstance()->getUploadTask(job.task_id);
+    if (!read.isSuccess() || !read.hasData()) {
+        // The manager forgets a transfer unread only when it closes with ElegooSlicer.
+        finish_job(job, "cancelled", "ElegooSlicer closed before the transfer finished");
+        job.app_closing = true;
+        return;
+    }
+    const UploadTaskInfo &task = read.value();
+    job.uploaded = task.uploadedBytes;
+    job.total    = task.totalBytes;
+    job.progress = task.progress;
+    switch (task.status) {
+    case UploadTaskStatus::UPLOADING:
+        break;
+    case UploadTaskStatus::SUCCESS:
+        finish_job(job, "success", "the file was sent and the print started");
+        break;
+    case UploadTaskStatus::FAILED:
+        finish_job(job, "failed", upload_failure_message(task), (int) task.code);
+        break;
+    case UploadTaskStatus::CANCELLED:
+        if (!job.cancel_requested) {
+            // Not cancelled by the API: the manager cancels every transfer when it closes.
+            finish_job(job, "cancelled", "ElegooSlicer closed before the transfer finished");
+            job.app_closing = true;
+        } else if (std::chrono::steady_clock::now() - job.cancel_requested_at > std::chrono::seconds(CANCEL_SETTLE_S)) {
+            // Cancelled by DELETE /uploads/{id}. The manager reports that at once, but its transfer
+            // stops only at its next progress report, and a transfer that had just finished still
+            // starts the print (the manager then reports success). So the job waited for that.
+            finish_job(job, "cancelled", "cancelled");
+        }
+        break;
+    }
+}
+
+// Deletes the job's copy of the G-code. The transfer may keep the file open for a moment after it
+// stopped, and Windows does not delete an open file, so this tries for a few seconds.
+static void remove_upload_copy(const boost::filesystem::path &path)
+{
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        boost::system::error_code ec;
+        boost::filesystem::remove(path, ec);
+        if (!ec)
+            return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    BOOST_LOG_TRIVIAL(warning) << "remote-api: could not delete the upload copy " << path.string();
+}
+
+// The upload of one plan, on a thread of its own (POST .../print answers at once): the work
+// BackgroundSlicingProcess::prepare_upload and PrintHostJobQueue::perform_job do for the window's
+// Print button, then PrinterUploadManager's transfer, followed until it ends.
+static void run_upload(std::shared_ptr<UploadJob> job, std::shared_ptr<const PrintPlan> plan)
+{
+    namespace fs = boost::filesystem;
+    // Marks the job failed. The steps below go on only while the job is not done.
+    auto fail = [&job](const std::string &message) {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        if (!job->done)
+            finish_job(*job, "failed", message);
+    };
+    auto is_done = [&job] {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        return job->done;
+    };
+    fs::path    copy;
+    std::string name = plan->file_name;
+    try {
+        // 1. A copy of the plate's sliced G-code under a new temp name, as prepare_upload makes it.
+        //    The G-code already holds its thumbnails (written when the plate was sliced).
+        copy = fs::temp_directory_path() / fs::unique_path("." SLIC3R_APP_KEY ".upload.%%%%-%%%%-%%%%-%%%%");
+        std::string error;
+        bool        copied = copy_file(plan->gcode_path, copy.string(), error) == CopyFileResult::SUCCESS;
+        // The plan was checked against this file just before; if the plate was sliced again while
+        // it was being copied, the copy is not the G-code that was confirmed.
+        boost::system::error_code ec;
+        copied = copied && fs::file_size(plan->gcode_path, ec) == plan->gcode_size && !ec &&
+                 fs::last_write_time(plan->gcode_path, ec) == plan->gcode_written && !ec &&
+                 fs::file_size(copy, ec) == plan->gcode_size && !ec;
+        if (!copied)
+            fail("could not copy the sliced G-code (was the plate sliced again?); prepare again");
+
+        // 2. The print profile's post-processing scripts, run on the copy as prepare_upload runs them
+        //    for a printer that is not a Bambu Lab one. They may rename the file.
+        std::string source = copy.string();
+        if (!is_done()) {
+            try {
+                run_post_process_scripts(source, false, plan->host_name, name, plan->print_config);
+            } catch (const std::exception &e) {
+                fail(std::string("a post-processing script failed: ") + e.what());
+            }
+        }
+
+        // 3. The transfer and the start, as perform_job asks PrinterUploadManager for them. Under the
+        //    lock, so a DELETE /uploads/{id} sees either no transfer yet or its task id.
+        {
+            std::lock_guard<std::mutex> lock(job->mutex);
+            job->file_name = name;
+            if (job->done) {
+                // failed above
+            } else if (job->cancel_requested) {
+                finish_job(*job, "cancelled", "cancelled before the transfer started");
+            } else {
+                PrinterNetworkParams params = plan->params;
+                params.filePath             = source;
+                params.fileName             = name;
+                const PrinterNetworkResult<std::string> started = PrinterUploadManager::getInstance()->startAsyncUpload(params);
+                if (!started.isSuccess() || !started.hasData()) {
+                    finish_job(*job, "failed", "the transfer could not start (printer layer code " +
+                                                   std::to_string((int) started.code) + ")", (int) started.code);
+                } else {
+                    job->task_id = started.value();
+                    job->status  = "uploading";
+                    job->message = "sending the file to the printer";
+                }
+            }
+        }
+
+        // 4. Follow the transfer until it ends.
+        const auto started_at = std::chrono::steady_clock::now();
+        while (!is_done()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(UPLOAD_POLL_MS));
+            std::lock_guard<std::mutex> lock(job->mutex);
+            refresh_job(*job);
+            if (!job->done && std::chrono::steady_clock::now() - started_at > std::chrono::seconds(UPLOAD_MAX_S))
+                finish_job(*job, "failed", "the transfer reported no end");
+        }
+    } catch (const std::exception &e) {
+        fail(std::string("the upload stopped: ") + e.what());
+    }
+    if (!copy.empty())
+        remove_upload_copy(copy);
+
+    // 5. Tell the user how it ended. Not while ElegooSlicer is closing (its window is going away),
+    //    and not for a cancel: DELETE /uploads/{id} told it already.
+    std::string status, message;
+    bool        closing = false;
+    {
+        std::lock_guard<std::mutex> lock(job->mutex);
+        status  = job->status;
+        message = job->message;
+        name    = job->file_name; // the name post-processing may have changed
+        closing = job->app_closing;
+    }
+    if (closing)
+        return;
+    if (status == "success")
+        print_control_notify("Remote API: '" + name + "' was sent to '" + plan->printer_name + "' and is printing");
+    else if (status == "failed")
+        print_control_notify("Remote API: printing '" + name + "' on '" + plan->printer_name + "' failed: " + message, true);
+}
+
+// POST /printers/{id}/print {"plan_id"}: sends the plan POST .../print/prepare made and starts the
+// print. Answers 202 with the upload id at once; GET /uploads/{id} follows the transfer.
+Response Controller::handle_print_start(const std::string &api_id, const std::string &body)
+{
+    Response error;
+    if (!check_print_control("start a print", error))
+        return error;
+    nlohmann::json in;
+    if (!read_body_object(body, in, error) || !only_known_fields(in, {"plan_id"}, error))
+        return error;
+    if (!in.contains("plan_id") || !in["plan_id"].is_string())
+        return { 400, {{"error", "bad_plan_id"}, {"detail", "plan_id: the id POST /printers/{id}/print/prepare answered"}} };
+    const std::string plan_id = in["plan_id"].get<std::string>();
+
+    auto      &plans = print_plans();
+    const auto found = plans.find(plan_id);
+    if (found == plans.end() || found->second->api_printer_id != api_id)
+        return { 404, {{"error", "unknown_plan"}} };
+    const std::shared_ptr<PrintPlan> plan = found->second;
+    if (std::chrono::steady_clock::now() - plan->made_at > std::chrono::seconds(PLAN_EXPIRES_S)) {
+        plans.erase(found);
+        return { 410, {{"error", "plan_expired"}, {"detail", "the plan is older than 5 minutes; prepare again"}} };
+    }
+
+    // The printer again: it may have started something since.
+    PrinterNetworkInfo p;
+    if (!find_printer(api_id, p))
+        return { 404, {{"error", "printer_not_found"}} };
+    if (!printer_free(p, error))
+        return error;
+
+    // The plate again, on the GUI thread: still the current one, holding the slice result that was
+    // checked, with the same settings. Then the choices are remembered, as the Print dialog does
+    // when it sends (PrintSendDialogEx::EndModal).
+    nlohmann::json check = run_on_ui([plan]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        if (plater == nullptr)
+            return {{"error", "printers_unavailable"}};
+        PartPlateList &plates = plater->get_partplate_list();
+        PartPlate     *plate  = plates.get_curr_plate();
+        if (plater->only_gcode_mode() || plater->using_exported_file() || plates.get_curr_plate_index() != plan->plate ||
+            !plate->is_slice_result_ready_for_print() || slice_fingerprint(plate, plan->plate) != plan->fingerprint)
+            return {{"error", "plan_expired"},
+                    {"detail", "the plate was sliced again or changed, another plate was selected, or a setting changed; prepare again"}};
+        for (const auto &[key, value] : plan->recent)
+            wxGetApp().app_config->set("recent", key, value);
+        return {{"ok", true}};
+    });
+    if (check.contains("error")) {
+        if (check["error"] == "printers_unavailable")
+            return printers_unavailable();
+        plans.erase(plan_id);
+        return { 410, check };
+    }
+    plans.erase(plan_id); // a plan sends one print
+
+    auto job            = std::make_shared<UploadJob>();
+    job->printer_id     = plan->printer_id;
+    job->api_printer_id = plan->api_printer_id;
+    job->printer_name   = plan->printer_name;
+    job->file_name      = plan->file_name;
+    forget_old_plans_and_uploads();
+    const std::string upload_id = new_id();
+    upload_jobs()[upload_id]    = job;
+    std::thread([job, plan] { run_upload(job, plan); }).detach();
+    print_control_notify("Remote API: sending '" + plan->file_name + "' to '" + plan->printer_name + "' to print it");
+    return { 202, {{"upload_id", upload_id}} };
+}
+
+static nlohmann::json upload_json(const UploadJob &job)
+{
+    nlohmann::json j = {
+        {"status", job.status},
+        {"progress", job.progress},
+        {"bytes", {job.uploaded, job.total}},
+        {"message", job.message},
+        {"printer_id", job.api_printer_id},
+        {"file_name", job.file_name},
+    };
+    if (job.status == "failed" && job.code != 0)
+        j["code"] = job.code;
+    return j;
+}
+
+// GET /uploads/{id}: how a print sent by POST .../print is going. The job's thread reads the
+// transfer's progress every UPLOAD_POLL_MS.
+Response Controller::handle_get_upload(const std::string &upload_id)
+{
+    Response error;
+    if (!check_print_control("", error))
+        return error;
+    const auto found = upload_jobs().find(upload_id);
+    if (found == upload_jobs().end())
+        return { 404, {{"error", "unknown_upload"}} };
+    std::lock_guard<std::mutex> lock(found->second->mutex);
+    return { 200, upload_json(*found->second) };
+}
+
+// DELETE /uploads/{id}: stops a print sent by POST .../print before it reaches the printer. Once
+// the whole file was sent the printer starts it: then 409 too_late (stop it with POST .../stop).
+Response Controller::handle_cancel_upload(const std::string &upload_id)
+{
+    Response error;
+    if (!check_print_control("cancel an upload", error))
+        return error;
+    const auto found = upload_jobs().find(upload_id);
+    if (found == upload_jobs().end())
+        return { 404, {{"error", "unknown_upload"}} };
+    UploadJob                  &job = *found->second;
+    std::lock_guard<std::mutex> lock(job.mutex);
+    if (job.status == "cancelled")
+        return { 200, {{"ok", true}} };
+    refresh_job(job); // the latest progress, read now
+    if (job.done || (job.total > 0 && job.uploaded >= job.total))
+        return { 409, {{"error", "too_late"}, {"status", job.status},
+                       {"hint", "the file was sent; stop the print with POST /printers/{id}/stop"}} };
+    job.cancel_requested    = true;
+    job.cancel_requested_at = std::chrono::steady_clock::now();
+    job.status              = "cancelled";
+    job.message             = "cancelled";
+    // While the file is copied there is no transfer yet: the job's thread sees cancel_requested
+    // before it starts one.
+    if (!job.task_id.empty())
+        PrinterUploadManager::getInstance()->cancelUploadTask(job.task_id);
+    print_control_notify("Remote API: cancelled sending '" + job.file_name + "' to '" + job.printer_name + "'");
+    return { 200, {{"ok", true}} };
+}
+
 // --- route group --------------------------------------------------------------------
 
-// Every /api/v1/printers route (dispatch sends the whole prefix here).
+// Every /api/v1/printers and /api/v1/uploads route (dispatch sends both prefixes here).
 Response Controller::route_elegoo(const Request &req)
 {
     try {
@@ -1081,6 +2114,20 @@ Response Controller::route_elegoo(const Request &req)
                 return handle_canvas_sync(id, req.body);
             if (req.method == "GET" && action == "canvas/mapping")
                 return handle_canvas_mapping(id, query);
+            if (req.method == "POST" && action == "print/prepare")
+                return handle_print_prepare(id, req.body);
+            if (req.method == "POST" && action == "print")
+                return handle_print_start(id, req.body);
+        }
+        // /api/v1/uploads/<upload id>
+        static const std::string upload_pfx = "/api/v1/uploads/";
+        if (path.size() > upload_pfx.size() && path.compare(0, upload_pfx.size(), upload_pfx) == 0 &&
+            path.find('/', upload_pfx.size()) == std::string::npos) {
+            const std::string upload_id = path.substr(upload_pfx.size());
+            if (req.method == "GET")
+                return handle_get_upload(upload_id);
+            if (req.method == "DELETE")
+                return handle_cancel_upload(upload_id);
         }
         return { 404, {{"error", "not_found"}} };
     } catch (const nlohmann::json::parse_error &) {

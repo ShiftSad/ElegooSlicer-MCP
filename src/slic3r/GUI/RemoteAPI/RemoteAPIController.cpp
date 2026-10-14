@@ -2564,7 +2564,7 @@ Response Controller::dispatch(const Request &req)
                 return { 404, {{"error", "not_found"}} };
             }
         }
-        if (t.rfind("/api/v1/printers", 0) == 0) return route_elegoo(req); // elegoo-mcp: RemoteAPIElegoo.cpp
+        if (t.rfind("/api/v1/printers", 0) == 0 || t.rfind("/api/v1/uploads", 0) == 0) return route_elegoo(req); // elegoo-mcp: RemoteAPIElegoo.cpp
         return { 404, {{"error", "not_found"}} };
     } catch (const std::exception &e) {
         if (std::string(e.what()) == "ui_timeout")

@@ -107,7 +107,7 @@ private:
 
     // elegoo-mcp: Elegoo printers and CANVAS, defined in RemoteAPIElegoo.cpp.
     // {id} is the printer's API id (see api_printer_id there).
-    Response route_elegoo(const Request &req);            // every /api/v1/printers route
+    Response route_elegoo(const Request &req);            // every /api/v1/printers and /api/v1/uploads route
     Response handle_get_printers();                       // GET /printers
     Response handle_get_printer(const std::string &id);   // GET /printers/{id}
     Response handle_get_printer_status(const std::string &id, const std::string &query); // GET /printers/{id}/status
@@ -116,6 +116,13 @@ private:
     Response handle_get_canvas(const std::string &id);    // GET /printers/{id}/canvas
     Response handle_canvas_sync(const std::string &id, const std::string &body);     // POST /printers/{id}/canvas/sync
     Response handle_canvas_mapping(const std::string &id, const std::string &query); // GET /printers/{id}/canvas/mapping
+    // Print control, also in RemoteAPIElegoo.cpp. Off unless the user allows it in Preferences;
+    // check_print_control makes the checks every print-control route starts with.
+    bool     check_print_control(const std::string &what, Response &refused);
+    Response handle_print_prepare(const std::string &id, const std::string &body); // POST /printers/{id}/print/prepare
+    Response handle_print_start(const std::string &id, const std::string &body);   // POST /printers/{id}/print
+    Response handle_get_upload(const std::string &upload_id);                      // GET /uploads/{id}
+    Response handle_cancel_upload(const std::string &upload_id);                   // DELETE /uploads/{id}
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);
