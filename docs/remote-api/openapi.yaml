@@ -476,7 +476,8 @@ paths:
         Applies to the object's first copy, in this order: `translate` (mm, added to
         the current position), then `rotate` (degrees, about the **world** axes from
         the current orientation, as the rotate gizmo does: X first, then Y, then Z,
-        around the object's origin, so `offset` does not change; successive calls add
+        around the object's origin, so the rotation itself does not move `offset`,
+        though the drop onto the bed below may then change its Z; successive calls add
         up like gizmo drags), then `scale` (absolute factor along the object's own
         axes). Afterwards the object is put back on the bed as a drag in the window
         does: a floating object drops onto the bed (a pure upward `translate` does not

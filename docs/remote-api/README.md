@@ -326,7 +326,8 @@ applied to the object's first copy in this order:
 - `translate` (mm) is added to the current position.
 - `rotate` (degrees) turns the object from its current orientation about the
   **world** axes, as the rotate gizmo does: X first, then Y, then Z, around the
-  object's origin (its `offset` does not change). Calls add up like gizmo drags, so
+  object's origin (the rotation itself does not move `offset`, but the drop onto the
+  bed described below may then change its Z). Calls add up like gizmo drags, so
   `[0,-90,0]` followed by `[0,90,0]` puts the object back the way it started.
 - `scale` (factor) is absolute, along the object's own axes (`[1,1,1]` = original size).
 
