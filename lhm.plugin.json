@@ -71,7 +71,7 @@
     },
     {
       "name": "set_config",
-      "description": "Apply config changes to the active project as unsaved overrides, atomically: if any key is invalid the whole batch is rejected and nothing changes. Returns {applied, errors}."
+      "description": "Apply config changes to the active project as unsaved overrides, atomically: if any key is invalid the whole batch is rejected and nothing changes."
     },
     {
       "name": "slice",
@@ -115,7 +115,7 @@
     },
     {
       "name": "set_object_config",
-      "description": "Set per-object config overrides on an object by id, e.g. {\"wall_loops\": 4, \"sparse_infill_density\": \"30%\"}. Atomic (nothing applied if any key is invalid)."
+      "description": "Set per-object config overrides on an object by id, e.g. {\"wall_loops\": 4, \"sparse_infill_density\": \"30%\"}. Atomic (nothing applied if any key is invalid: the reply is then config_rejected with the reason per key in errors)."
     },
     {
       "name": "duplicate_object",

@@ -179,6 +179,8 @@ def compute_comparison(results: list[dict], baseline: str | None, detail: bool) 
         }
         if r.get("error"):
             row["error"] = r["error"]
+            if r.get("errors"):
+                row["errors"] = r["errors"]  # the refused keys of a rejected variant
         else:
             row["time"] = {"min": int(math.floor((r["time_s"] or 0) / 60.0 + 0.5)),
                            "formatted": _fmt_time(r["time_s"])}

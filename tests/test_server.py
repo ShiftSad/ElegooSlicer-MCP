@@ -73,8 +73,10 @@ async def test_list_presets_invalid_type_errors(monkeypatch):
 async def test_set_config_validation_returns_errors(monkeypatch):
     _env(monkeypatch)
     respx.put("http://x:13130/api/v1/config").mock(
-        return_value=httpx.Response(422, json={"applied": [], "errors": {"k": "unknown_key"}}))
+        return_value=httpx.Response(422, json={"error": "config_rejected", "applied": [],
+                                               "errors": {"k": "unknown_key"}}))
     out = await srv.set_config({"k": 1})
+    assert out["error"] == "config_rejected"
     assert out["errors"] == {"k": "unknown_key"}
 
 

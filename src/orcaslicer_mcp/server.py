@@ -79,14 +79,39 @@ async def _start_slice(c) -> dict:
         return await c.slice()
 
 
+# What to do about the per-key reasons a refused config write (422 config_rejected) gives most
+# often. Other reasons are the slicer's own words (a bad value, say) and speak for themselves.
+_CONFIG_REASON_HINTS = {
+    "unknown_key": ("unknown_key means there is no such setting: look the key up with "
+                    "search_settings or find_config_keys."),
+    "not_editable_in_current_config": ("not_editable_in_current_config means the setting exists "
+                                       "but this write cannot change it (it is computed, or "
+                                       "belongs to a plate)."),
+    "readonly_key": ("readonly_key means the slicer does not let this setting be edited (its "
+                     "window greys it out either); select a preset that has the value you need."),
+    "blocked_by_remote_api_policy": ("OrcaSlicer itself refused these keys: Preferences > Remote "
+                                     "API > 'Allow script, G-code and connection edits' is off. "
+                                     "They stay a change for the user to make in the OrcaSlicer "
+                                     "GUI."),
+}
+
+
 def _err(e: ApiError) -> dict:
     out = {"error": str(e)}
     if isinstance(e, Validation):
         out["errors"] = e.errors
-        if "blocked_by_remote_api_policy" in (e.errors or {}).values():
-            out["hint"] = ("OrcaSlicer itself refused these keys: Preferences > Remote API > "
-                           "'Allow script, G-code and connection edits' is off. They stay a "
-                           "change for the user to make in the OrcaSlicer GUI.")
+        errors = e.errors if isinstance(e.errors, dict) else {}
+        if errors:
+            # A config write is all-or-nothing: one refused key means nothing was applied, which
+            # a model reading only "errors" can miss and then trust the other keys took effect.
+            out["message"] = ("Nothing was applied: the slicer refused "
+                              f"{', '.join(sorted(errors))} (the reason for each is in errors). "
+                              "Settings are written all-or-nothing, so fix or drop those keys "
+                              "and send the batch again.")
+            reasons = {v for v in errors.values() if isinstance(v, str)}
+            hints = [h for reason, h in _CONFIG_REASON_HINTS.items() if reason in reasons]
+            if hints:
+                out["hint"] = " ".join(hints)
     return out
 
 
@@ -128,7 +153,9 @@ async def set_config(
         "preset open in the Filament tab, so pass that preset's single value instead."))],
 ) -> dict:
     """Apply config changes to the active project as unsaved overrides, atomically: if any
-    key is invalid the whole batch is rejected and nothing changes. Returns {applied, errors}.
+    key is invalid the whole batch is rejected and nothing changes. Returns {applied, errors};
+    a rejected batch returns {"error": "config_rejected", "errors": {key: reason}, "message"}
+    (plus a "hint" for common reasons such as unknown_key or readonly_key).
 
     Overrides show as modified in get_status, are not written to any preset file, and revert
     if the preset is reselected; call save_preset to persist them. Each apply invalidates the
@@ -325,6 +352,8 @@ async def compare_settings(key: str, values: list, extra: dict | None = None) ->
                         row["warnings"] = s["warnings"]
                     except ApiError as e:
                         row["error"] = str(e)
+                        if isinstance(e, Validation) and e.errors:
+                            row["errors"] = e.errors  # config_rejected: which keys, and why
                     rows.append(row)
             finally:
                 if originals:
@@ -413,6 +442,8 @@ async def compare_slices(variants: list[dict], baseline: str | None = None,
                             r["roles"] = build_breakdown(st, await c.get_config(None)).get("roles")
                     except ApiError as e:
                         r["error"] = str(e)
+                        if isinstance(e, Validation) and e.errors:
+                            r["errors"] = e.errors  # config_rejected: which keys, and why
                     results.append(r)
             finally:
                 if snapshot:
@@ -489,7 +520,7 @@ async def list_objects() -> dict:
 
 @mcp.tool()
 async def set_object_config(object_id: int, changes: dict) -> dict:
-    """Set per-object config overrides on an object by id, e.g. {"wall_loops": 4, "sparse_infill_density": "30%"}. Atomic (nothing applied if any key is invalid)."""
+    """Set per-object config overrides on an object by id, e.g. {"wall_loops": 4, "sparse_infill_density": "30%"}. Atomic (nothing applied if any key is invalid: the reply is then config_rejected with the reason per key in errors)."""
     try:
         async with _client() as c:
             return await c.set_object_config(object_id, changes)

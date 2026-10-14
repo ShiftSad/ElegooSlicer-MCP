@@ -69,6 +69,11 @@ def error_from_status(status: int, body: dict) -> ApiError:
     if status == 409:
         return Conflict(msg)
     if status == 422:
+        # A refused config write answers {"error": "config_rejected", "applied": [], "errors":
+        # {key: reason}} on ElegooSlicer MCP. Older builds send the same body without the
+        # "error" token: name it config_rejected too, so callers see one token either way.
+        if body.get("errors") and not body.get("error"):
+            msg = "config_rejected"
         return Validation(msg, body.get("errors"))
     if status == 504:
         return UiTimeout("OrcaSlicer GUI did not respond in time; retry")

@@ -65,11 +65,13 @@ async def test_401_raises_unauthorized():
 @respx.mock
 async def test_put_config_422_raises_validation():
     respx.put("http://x:13130/api/v1/config").mock(
-        return_value=httpx.Response(422, json={"applied": [], "errors": {"k": "unknown_key"}}))
+        return_value=httpx.Response(422, json={"error": "config_rejected", "applied": [],
+                                               "errors": {"k": "unknown_key"}}))
     async with OrcaClient(CFG) as c:
         with pytest.raises(Validation) as ei:
             await c.put_config({"k": 1})
     assert ei.value.errors == {"k": "unknown_key"}
+    assert str(ei.value) == "config_rejected"
 
 @respx.mock
 async def test_get_config_keys_query():

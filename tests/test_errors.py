@@ -6,9 +6,23 @@ def test_maps_401():
 
 
 def test_maps_422_with_errors():
-    e = error_from_status(422, {"applied": [], "errors": {"k": "unknown_key"}})
+    e = error_from_status(422, {"error": "config_rejected", "applied": [],
+                                "errors": {"k": "unknown_key"}})
     assert isinstance(e, Validation)
     assert e.errors == {"k": "unknown_key"}
+    assert str(e) == "config_rejected"
+
+
+def test_422_without_a_token_from_an_older_build_is_config_rejected_too():
+    # Builds before the config_rejected token sent only applied/errors.
+    e = error_from_status(422, {"applied": [], "errors": {"k": "unknown_key"}})
+    assert isinstance(e, Validation) and str(e) == "config_rejected"
+    assert e.errors == {"k": "unknown_key"}
+
+
+def test_422_with_another_token_keeps_it():
+    e = error_from_status(422, {"error": "bad_view"})
+    assert str(e) == "bad_view" and e.errors == {}
 
 
 def test_maps_409_and_404():

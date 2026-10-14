@@ -368,7 +368,8 @@ async def test_slicer_side_refusal_gets_a_hint(monkeypatch):
     _env(monkeypatch)
     monkeypatch.setenv("ORCA_MCP_ALLOW_KEYS", "post_process")
     respx.put(f"{BASE}/api/v1/config").mock(return_value=httpx.Response(422, json={
-        "applied": [], "errors": {"post_process": "blocked_by_remote_api_policy"}}))
+        "error": "config_rejected", "applied": [],
+        "errors": {"post_process": "blocked_by_remote_api_policy"}}))
     out = await srv.set_config({"post_process": "x"})
     assert out["errors"] == {"post_process": "blocked_by_remote_api_policy"}
     assert "Preferences > Remote API" in out["hint"]
