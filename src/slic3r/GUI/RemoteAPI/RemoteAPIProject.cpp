@@ -277,10 +277,13 @@ Response Controller::handle_put_filaments(const std::string &body)
         return { 422, {{"error", "bad_count"}, {"detail", "count: the number of filament slots, an integer"}} };
     if (in.contains("force") && !in["force"].is_boolean())
         return { 400, {{"error", "force_must_be_boolean"}} };
-    const int  count = in["count"].get<int>();
-    const bool force = in.value("force", false);
-    if (count < 1 || count > (int) MAXIMUM_EXTRUDER_NUMBER)
+    // Checked as a 64-bit number: get<int>() would wrap a huge count into range
+    // (4294967297 becomes 1) and remove every slot but the first.
+    const int64_t count64 = in["count"].get<int64_t>();
+    const bool    force   = in.value("force", false);
+    if (count64 < 1 || count64 > (int64_t) MAXIMUM_EXTRUDER_NUMBER)
         return { 422, {{"error", "bad_count"}, {"detail", "1 <= count <= " + std::to_string(MAXIMUM_EXTRUDER_NUMBER)}} };
+    const int count = int(count64);
 
     // Each slot rebuilds sidebar widgets and the flush matrix: allow 30 s, not 10.
     nlohmann::json r = run_on_ui([count, force]() -> nlohmann::json {
@@ -752,7 +755,12 @@ Response Controller::handle_add_layer_change(int plate, const std::string &body)
         return { 400, {{"error", "message_must_be_string"}} };
     if (type == "tool_change" && !in.contains("slot"))
         return { 422, {{"error", "bad_slot"}, {"detail", "tool_change needs \"slot\", the filament to change to"}} };
-    const int         slot    = in.value("slot", 0);
+    // Checked as a 64-bit number: get<int>() would wrap a huge slot into a real one
+    // (4294967298 becomes 2). A pause ignores its slot.
+    const int64_t slot64 = in.value("slot", int64_t(0));
+    if (type == "tool_change" && (slot64 < 1 || slot64 > (int64_t) MAXIMUM_EXTRUDER_NUMBER))
+        return { 422, {{"error", "bad_slot"}, {"detail", "slot: a 1-based filament slot"}} };
+    const int         slot    = type == "tool_change" ? int(slot64) : 0;
     const std::string message = in.value("message", std::string());
 
     nlohmann::json r = run_on_ui([plate, z, type, slot, message]() -> nlohmann::json {
