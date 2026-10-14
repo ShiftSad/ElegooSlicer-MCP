@@ -180,14 +180,14 @@ async def test_sync_sends_only_what_was_asked_and_summarises(monkeypatch):
 
 
 @respx.mock
-async def test_sync_refused_for_unsaved_filament_edits_keeps_the_slicer_hint(monkeypatch):
+async def test_sync_refused_for_unsaved_filament_edits_names_the_tools(monkeypatch):
     _env(monkeypatch)
     listing(printer())
     respx.post(f"{F}/printers/p1/canvas/sync").mock(return_value=httpx.Response(409, json={
         "error": "unsaved_filament_changes", "preset": "My PLA", "hint": "slicer hint"}))
     out = await srv.sync_canvas_to_project()
     assert out["error"] == "unsaved_filament_changes" and out["preset"] == "My PLA"
-    assert out["hint"] == "slicer hint" and "Nothing was changed" in out["message"]
+    assert "save_preset" in out["hint"] and "Nothing was changed" in out["message"]
 
 
 @respx.mock

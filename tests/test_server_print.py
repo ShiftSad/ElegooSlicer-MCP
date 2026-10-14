@@ -117,6 +117,41 @@ async def test_prepare_on_a_build_without_print_control():
     assert "'print_control'" in out["error"]
 
 
+def test_plan_sentence_from_the_slicer_plan():
+    # The plan as RemoteAPIElegoo.cpp builds it: mapping entries are the filaments as
+    # preview_filament_mapping shows them, warnings are objects with a code and a message.
+    plan = {"printer": "CC2", "printer_id": "p1", "plate": 1, "file_name": "helmet.gcode",
+            "estimated_time_s": 3600, "filament_g": 12.0, "layers": 100, "bed_side": None,
+            "leveling": False, "timelapse": False, "auto_refill": True,
+            "mapping": [{"slot": 1, "preset": "Elegoo PLA @ECC2", "type": "PLA", "color": "#ffffff",
+                         "weight_g": 12.0, "tray": {"unit": "0", "tray": "A1", "type": "PLA",
+                                                    "color": "#ffffff"}, "issues": []}],
+            "warnings": [{"code": "print_completed", "message": "the printer shows its last print as "
+                                                               "completed: make sure the bed is clear"}]}
+    assert srv._plan_sentence(plan) == (
+        "Print helmet.gcode (plate 2) on CC2: about 1 h, 12.0 g of filament, 100 layers; leveling off, "
+        "timelapse off, auto refill on; filament 1 (PLA #ffffff) from A1. Warnings: The printer shows "
+        "its last print as completed: make sure the bed is clear.")
+
+
+@respx.mock
+async def test_prepare_errors_of_the_slicer():
+    listing()
+    route = respx.post(f"{F}/printers/p1/print/prepare")
+    route.mock(return_value=httpx.Response(409, json={"error": "upload_in_progress", "upload_id": "u-0"}))
+    out = await srv.prepare_print()
+    assert out["error"] == "upload_in_progress" and out["upload_id"] == "u-0" and "get_upload_status" in out["hint"]
+    route.mock(return_value=httpx.Response(422, json={"error": "bad_mapping", "detail": "no tray A9 in the CANVAS"}))
+    out = await srv.prepare_print(mapping=[{"slot": 1, "tray": "A9"}])
+    assert out["error"] == "bad_mapping" and out["detail"] == "no tray A9 in the CANVAS"
+    route.mock(return_value=httpx.Response(422, json={
+        "error": "mapping_incomplete", "issues": [{"slot": 2, "issues": ["no_tray"]}], "filaments": [],
+        "hint": "load the filaments, sync the CANVAS (POST /printers/{id}/canvas/sync)"}))
+    out = await srv.prepare_print()
+    # the slicer's hint names HTTP routes; the tool's hint names tools
+    assert "preview_filament_mapping" in out["hint"] and "POST" not in out["hint"]
+
+
 def test_plan_sentence_with_little_information():
     assert srv._plan_sentence({}) == "Print the plate on the printer."
     assert srv._plan_sentence({"printer": {"id": "p1", "name": "CC2"}, "file_name": "a.gcode",
@@ -169,7 +204,8 @@ async def test_start_refused_by_the_slicer():
     respx.post(f"{F}/printers/p1/print").mock(return_value=httpx.Response(403, json={
         "error": "print_control_disabled", "hint": "Preferences > Remote API"}))
     out = await srv.start_print("plan-1", user_confirmed=True)
-    assert out["error"] == "print_control_disabled" and out["hint"] == "Preferences > Remote API"
+    assert out["error"] == "print_control_disabled"
+    assert out["hint"] == "Preferences > Remote API > Allow sending and controlling prints"
     # the attempt used the plan up: a retry can never start a print twice
     assert "plan-1" not in srv._PRINT_PLANS
     srv._PRINT_PLANS["plan-2"] = {"printer_id": "p1", "summary": "x", "expires_at": 1e18}
@@ -299,7 +335,11 @@ async def test_pause_and_resume():
     respx.post(f"{F}/printers/p1/resume").mock(return_value=httpx.Response(501, json={
         "error": "resume_unsupported", "hint": "resume on the printer's screen"}))
     out = await srv.resume_print()
-    assert out["error"] == "resume_unsupported" and out["hint"] == "resume on the printer's screen"
+    assert out["error"] == "resume_unsupported" and out["hint"] == "Resume it on the printer's screen."
+    respx.post(f"{F}/printers/p1/resume").mock(return_value=httpx.Response(409, json={
+        "error": "not_paused", "status": "printing"}))
+    out = await srv.resume_print()
+    assert out["error"] == "not_paused" and out["status"] == "printing" and "isn't paused" in out["message"]
 
 
 @respx.mock

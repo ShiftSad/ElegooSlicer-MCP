@@ -2305,8 +2305,9 @@ _PRINTER = Field(description=(
     "Leave it out for the printer ElegooSlicer's Print dialog would pick (selected_id in "
     "list_printers)."))
 
-# What the printer layer's error tokens mean, and what to do about them. The slicer's token stays
-# the "error"; its own details (and its hint, when it sends one) are kept.
+# What the printer layer's error tokens mean, and what to do about them, in terms of these tools.
+# The slicer's token stays the "error" and its details are kept; its own hint, written for HTTP
+# clients (it names routes), is kept only for tokens without one here.
 _PRINTER_ERRORS = {
     "printer_not_found": ("ElegooSlicer has no printer with that id.",
                           "Take the id from list_printers."),
@@ -2353,8 +2354,18 @@ _PRINTER_ERRORS = {
     "too_late": ("The file already reached the printer, which may be printing it.",
                  "To stop the print, use stop_print (it asks the user first)."),
     "not_printing": ("The printer isn't printing.", None),
+    "not_paused": ("The print isn't paused, so there is nothing to resume.", None),
     "resume_unsupported": ("ElegooSlicer can't resume a print on this printer over the network "
                            "(the Centauri Carbon 2 over LAN).", "Resume it on the printer's screen."),
+    "command_unsupported": ("ElegooSlicer can't send this command to this printer.",
+                            "Use the printer's screen."),
+    "upload_in_progress": ("A print is still being sent to this printer (upload_id names it).",
+                           "Follow it with get_upload_status, or cancel it with cancel_upload."),
+    "unknown_upload": ("There is no such transfer: ElegooSlicer forgets a finished one after an "
+                       "hour, and all of them when it restarts.", None),
+    "bad_mapping": ("The mapping isn't usable (detail says why).",
+                    "Give each entry as get_canvas names the tray, e.g. {'slot': 1, 'unit': '0', "
+                    "'tray': 'A1'}, for a ready tray and a slot the plate prints with."),
 }
 
 # A pause, resume or stop the printer did not confirm in time may still have happened.
@@ -2373,9 +2384,9 @@ def _printer_err(e: ApiError, capability: str) -> dict:
     out = {"error": token, **{k: v for k, v in e.body.items() if k != "error"}}
     message, hint = _PRINTER_ERRORS.get(token, (None, None))
     if message:
-        out.setdefault("message", message)
+        out["message"] = message
     if hint:
-        out.setdefault("hint", hint)
+        out["hint"] = hint
     return out
 
 
@@ -2693,17 +2704,27 @@ def _plan_sentence(s: dict) -> str:
             options.append(f"{label} {_on_off(s[key])}")
     trays = []
     for m in s.get("mapping") or []:
-        if isinstance(m, dict) and m.get("slot") is not None:
-            trays.append(f"filament {m.get('slot')} from {m.get('tray') or 'no tray'}")
+        if not isinstance(m, dict) or m.get("slot") is None:
+            continue
+        # Each entry is a filament of the plate as preview_filament_mapping shows it.
+        tray = m.get("tray")
+        tray_name = tray.get("tray") if isinstance(tray, dict) else tray
+        what = " ".join(str(x) for x in (m.get("type"), m.get("color")) if x)
+        trays.append(f"filament {m['slot']}" + (f" ({what})" if what else "")
+                     + f" from {tray_name or 'no tray'}")
     text = head + (": " + ", ".join(facts) if facts else "")
     if options:
         text += "; " + ", ".join(options)
     if trays:
         text += "; " + ", ".join(trays)
     text += "."
-    warnings = [str(w) for w in s.get("warnings") or [] if w]
+    warnings = []
+    for w in s.get("warnings") or []:
+        w = str(w.get("message") or w.get("code") or "") if isinstance(w, dict) else str(w or "")
+        if w:
+            warnings.append(w[0].upper() + w[1:] + ("" if w.endswith(".") else "."))
     if warnings:
-        text += " Warnings: " + " ".join(w if w.endswith(".") else w + "." for w in warnings)
+        text += " Warnings: " + " ".join(warnings)
     return text
 
 
@@ -2737,11 +2758,13 @@ async def prepare_print(
     has not confirmed. The plan lasts expires_in_s seconds (5 minutes), and a re-slice or a
     change of settings or plate ends it sooner: then prepare again and ask again.
 
-    Options left out take the Print dialog's last choices; details holds the slicer's full plan.
-    Errors: print_control_disabled (403: printing from the assistant is off in ElegooSlicer's
+    Options left out take the Print dialog's last choices; details holds the slicer's full plan
+    (mapping lists each filament with its tray, warnings each warning with a code). Errors:
+    print_control_disabled (403: printing from the assistant is off in ElegooSlicer's
     Preferences; tell the user and stop there), not_sliced, printer_offline, printer_busy (with
-    status), canvas_disconnected, secondary_instance (409), mapping_incomplete (422, with
-    issues). Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
+    status), upload_in_progress, canvas_disconnected, secondary_instance (409),
+    mapping_incomplete (422, with issues per slot), bad_mapping. Needs ElegooSlicer MCP
+    ('print_control' in get_status capabilities)."""
     options: dict = {}
     for key, value in (("plate", plate), ("bed_side", bed_side), ("leveling", leveling),
                        ("timelapse", timelapse), ("auto_refill", auto_refill), ("mapping", mapping)):
@@ -2925,7 +2948,7 @@ async def pause_print(printer: Annotated[str | None, _PRINTER] = None) -> dict:
 async def resume_print(printer: Annotated[str | None, _PRINTER] = None) -> dict:
     """Resume a paused print on an Elegoo printer. Returns {"ok": true}. The Centauri Carbon 2
     can't be resumed over the network by ElegooSlicer: the reply is then resume_unsupported (501)
-    with a hint to resume on the printer's screen; relay that. Errors also: not_printing,
+    with a hint to resume on the printer's screen; relay that. Errors also: not_paused,
     printer_offline (409), print_control_disabled (403), printer_timeout (check
     get_printer_status). Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
     return await _printer_command(printer, "resume")
