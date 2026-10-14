@@ -1712,13 +1712,14 @@ components:
             invalid_json:  { value: { error: "invalid_json" } }
             unknown_field: { value: { error: "unknown_field", field: "force" } }
     PrintCommandRefused:
-      description: "Nothing was sent. `not_printing` / `not_paused` (+ `status`, from ElegooSlicer's cache), `printer_offline`, `printer_busy`, `secondary_instance`."
+      description: "Nothing was sent. `not_printing` / `not_paused` (+ `status`, from ElegooSlicer's cache), `printer_offline`, `printer_busy`, `secondary_instance`, `command_in_progress` (an earlier command for this printer was still running after 20 s)."
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           examples:
             not_printing: { value: { error: "not_printing", status: "idle" } }
             not_paused:   { value: { error: "not_paused", status: "printing" } }
+            in_progress:  { value: { error: "command_in_progress", hint: "nothing was sent; wait a few seconds, check GET /printers/{id}/status, then retry" } }
             offline:      { value: { error: "printer_offline" } }
             secondary:    { value: { error: "secondary_instance", hint: "close the other ElegooSlicer windows" } }
     PrintCommandUnsupported:

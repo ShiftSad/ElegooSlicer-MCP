@@ -2170,8 +2170,9 @@ Response Controller::handle_cancel_upload(const std::string &upload_id)
 // printer (the CC2 ignores requests for a while when it gets several in a row). ElegooSlicer's
 // printer layer has no such calls, so this calls the SDK's own singleton directly, the way that
 // layer calls it (sdk: elegoo_link.h pausePrint, resumePrint, stopPrint). Throws
-// std::runtime_error("printer_timeout") when no answer comes within timeout_s: the command may
-// still reach the printer after that.
+// std::runtime_error("command_in_progress") when another command for the printer still runs
+// after timeout_s (this one was not sent), and std::runtime_error("printer_timeout") when the
+// printer did not answer within timeout_s (the command may still reach it after that).
 static PrinterNetworkErrorCode send_print_command(const std::string &printer_id, const std::string &command, int timeout_s)
 {
     using Clock = std::chrono::steady_clock;
@@ -2180,7 +2181,7 @@ static PrinterNetworkErrorCode send_print_command(const std::string &printer_id,
     {
         std::unique_lock<std::mutex> lock(gate.mutex);
         if (!gate.changed.wait_until(lock, deadline, [&gate, &printer_id] { return gate.busy.count(printer_id) == 0; }))
-            throw std::runtime_error("printer_timeout");
+            throw std::runtime_error("command_in_progress");
         gate.busy.insert(printer_id); // released by the worker below, even after a timeout here
     }
     auto      sdk_code = std::make_shared<elink::ELINK_ERROR_CODE>(elink::ELINK_ERROR_CODE::UNKNOWN_ERROR);
@@ -2272,6 +2273,14 @@ Response Controller::handle_print_command(const std::string &api_id, const std::
     try {
         code = send_print_command(p.printerId, command, COMMAND_TIMEOUT_S);
     } catch (const std::runtime_error &e) {
+        // Another command for this printer was still inside the SDK the whole time: this one was
+        // never sent, which the client must not take for a command that is on its way.
+        if (std::string(e.what()) == "command_in_progress") {
+            print_control_notify("Remote API: did not send '" + command + "' for " + what +
+                                 ": another command for this printer is still running", true);
+            return { 409, {{"error", "command_in_progress"},
+                           {"hint", "nothing was sent; wait a few seconds, check GET /printers/{id}/status, then retry"}} };
+        }
         if (std::string(e.what()) != "printer_timeout")
             throw;
         print_control_notify("Remote API: sent '" + command + "' for " + what + " but got no answer yet: check the printer", true);

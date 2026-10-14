@@ -924,4 +924,6 @@ error or an unknown state), `409 not_paused` + `status` (resume). A command goes
   Elegoo SDK of this build cannot resume a Centauri Carbon 2 over the LAN.
   `501 command_unsupported` for another command the SDK does not have for the printer.
   `501 unsupported_on_wan` for a cloud printer (nothing is sent).
+- `409 command_in_progress` + `hint`: an earlier command for this printer was still
+  waiting for the printer's answer for 20 s; this one was not sent.
 - `409 printer_busy`, `502 printer_error` + `code`.
