@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+- `load_model` reports a model file that doesn't exist as `file not found: <path>`, with a hint to check that the file exists and to pass an absolute path, when the slicer answers 404 `file_not_found`. Before, that 404 read as a missing route ("not available on this OrcaSlicer build (needs M4a)"). A bare 404 `not_found` still means the route is missing.
+- `check_placement` checks each object against the plate it sits on, moved by that plate's origin from the plate list. Before, an object on plate 2 or later was compared with the first plate's bed and reported off the bed. An object parked beside the bed, on no plate, is reported as not fitting, with a note that it won't be printed. Each object now reports its `plate`, `bed`, `ring_mm` and `brim_from`.
+- `check_placement` uses an object's own `brim_type`, `brim_width` and `brim_object_gap` (set with `set_object_config`) for its brim ring, and the print preset's where the object sets none. The footprint comes from the object's bounding box when the slicer reports it, so a rotated part is measured correctly. When the slicer doesn't report plate positions or per-object settings, a `notes` list says what was assumed instead.
+- `save_gcode` names the default file after the plate that was saved: `<plate name>_<timestamp>.gcode` when the plate has a name, else `plate<N>_<objects on it>_<timestamp>.gcode` (up to three object names, then a count). Before, it used the project's first object, so a later plate got plate 1's part name. A one-plate project's file now starts with `plate1_`. The outcome store records the plate's first object as the model. Builds without the plate tools keep the old name.
+
+### Changed
+- `slice_and_wait` waits 50 seconds by default instead of 300, so it answers before Claude Desktop gives up on a tool call (after about 60 seconds). When the slice is still running, the reply has `timed_out: true`, the current state and a hint; calling `slice_and_wait` again waits for that same slice instead of failing with `already_slicing`. `timeout` can still raise the wait for clients that allow longer calls.
+- `check_profile_physics`, and the physics gate in `edit_preset`, take the filament preset's `filament_max_volumetric_speed` over the generic melt-rate estimate for its temperature. When the flow the print settings ask for is within the preset's limit, `temp_vs_flow` is a warning instead of a failure, so a stock vendor profile tuned above the estimate (the Elegoo Centauri Carbon 2 with PLA at 210 °C) is no longer blocked. A nozzle at or below the material's base temperature (195 °C for PLA) still fails.
+
 ## [0.1.17] - 2026-10-12
 
 ### Added
