@@ -1,5 +1,6 @@
 // src/slic3r/GUI/RemoteAPI/RemoteAPIController.cpp
 #include "RemoteAPIController.hpp"
+#include "RemoteAPIDialogs.hpp" // elegoo-mcp (D8)
 
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -227,7 +228,13 @@ void UiTask::run()
     // fire between the calls of an API burst.
     Slic3r::backup_defer(3);
     try {
-        promise->set_value(fn());
+        // elegoo-mcp (D8): GUI code skips its dialogs while this log exists; the reply
+        // lists what they would have shown or asked (RemoteAPIDialogs.hpp).
+        DialogLog      dialogs;
+        nlohmann::json result = fn();
+        if (!dialogs.skipped.empty() && result.is_object())
+            result["skipped_dialogs"] = dialogs.skipped;
+        promise->set_value(std::move(result));
     } catch (...) {
         promise->set_exception(std::current_exception());
     }

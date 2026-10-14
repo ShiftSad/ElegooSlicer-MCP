@@ -1634,3 +1634,13 @@ components:
           items: { type: string, enum: [print, filament, printer, sla_print, sla_material, other] }
         project: { type: string, description: "project.opened: the opened project filename." }
       required: [event]
+    SkippedDialogs:
+      type: array
+      items: { type: string }
+      description: |
+        `skipped_dialogs`, added to any JSON reply when the request's GUI work would have
+        opened a dialog: an API request never opens one (nobody may be there to close it,
+        and it would block the window and every later call). Each entry is the dialog's
+        text; a question answered on the API's behalf ends with "(answered No)" or
+        "(answered Yes)". The same text is shown as a notification in the window. See
+        README.md, "Dialogs".

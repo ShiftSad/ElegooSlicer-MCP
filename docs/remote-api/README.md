@@ -768,6 +768,28 @@ slicing`,
 discard_project_must_be_boolean | invalid_json`. Allow up to 60 s: the test model is
 loaded and cut to height.
 
+## Dialogs
+
+An API request never opens a dialog in the window: nobody may be at the machine to
+close it, and a modal dialog would block the window, and every later API call, until
+someone did. Where the window would show a message box (an error, a warning, a note),
+the request shows the same text as a notification in the window, starting with
+"Remote API:", and lists it in its reply under `skipped_dialogs` (only present when
+something was skipped):
+
+```json
+{ "loaded": true, "objects": [ ... ],
+  "skipped_dialogs": [ "The 3mf is not supported by ElegooSlicer, load geometry data only." ] }
+```
+
+Where the window would ask a question, the route either refuses the request with the
+question as the reason (each route below says when), or takes the answer that leaves
+things as they are; the entry then ends with `(answered No)`.
+
+| Where | What the window would show | What the API does |
+|---|---|---|
+| any route | an error box (`show_error`) or an info box (`show_info`), e.g. "Failed loading file" on `POST /model`, the "load geometry data only" note for a PrusaSlicer 3MF | notification + `skipped_dialogs` |
+
 ## Notes & limits
 
 - **Single-client oriented.** The server uses one I/O thread and marshals most
