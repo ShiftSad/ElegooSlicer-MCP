@@ -165,6 +165,16 @@ async def test_split_object_errors(monkeypatch):
     _needs(await srv.split_object(6, "parts"), "split")
 
 
+@respx.mock
+async def test_split_object_still_running(monkeypatch):
+    # The slicer keeps splitting after the tool's wait ran out: say so, do not report a failure.
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/7/split").mock(side_effect=httpx.ReadTimeout("slow"))
+    out = await srv.split_object(7, "objects")
+    assert out["error"] == "split_unconfirmed" and "list_objects" in out["hint"]
+    assert route.calls.last.request.extensions["timeout"]["read"] == 50.0
+
+
 def test_split_object_hints():
     assert _hints("split_object").read_only_hint is False
     assert _hints("split_object").destructive_hint is False
