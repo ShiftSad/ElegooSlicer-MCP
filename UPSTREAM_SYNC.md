@@ -181,8 +181,9 @@ any `guard.py` change.
 
 ### 1.8 Build and test
 
-- **Build.** Locally with the workspace wrapper (`tools\build.cmd onlydeps` only if
-  `git diff --quiet $OLD $NEW -- deps` reports changes, then `tools\build.cmd dlweb slicer`),
+- **Build.** Locally with the wrapper (`tools\remote-api\build.cmd onlydeps` only if
+  `git diff --quiet $OLD $NEW -- deps` reports changes, then
+  `tools\remote-api\build.cmd dlweb slicer`),
   or push the branch as `ci-<name>` and let `.github/workflows/build_elegoo_mcp.yml` build
   it. Check the Device-tab web UI URL in `scripts/download_web_dep.bat` too: Elegoo pins a
   release date there.
@@ -199,9 +200,9 @@ any `guard.py` change.
 - **MCP smoke** on the "Elegoo Centauri Carbon 2 0.4 nozzle" profile: `get_status`,
   `load_model`, `slice_and_wait`, `get_slice_breakdown`, `render_plate` (editor and
   preview), `list_plates`, `set_config`, `select_preset`, `describe_plate`, plus the newer
-  routes (orient one object, view, volumes, project save, paint). The workspace scripts
-  `tools\phase1_smoke.py`, `tools\phase1b_features_check.py` and
-  `tools\phase1b_mcp_smoke.py` automate this.
+  routes (orient one object, view, volumes, project save, paint), and the printer routes
+  against the fake CC2. `tools/remote-api/run_all_checks.sh` runs every runtime check
+  (see `tools/remote-api/README.md`).
 - **GUI unchanged** for people who do not use the API: sending to the printer, CANVAS sync
   and the Device tab work as in the official ElegooSlicer.
 

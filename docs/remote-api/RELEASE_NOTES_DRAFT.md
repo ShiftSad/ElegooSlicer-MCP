@@ -79,7 +79,7 @@ version as `1.5.3.5-mcp.1` and its window title ends in "- ElegooSlicer MCP".
 ### Not tested on a real printer yet
 
 The printer, CANVAS and print routes were tested against an emulated Centauri Carbon 2
-built from the elegoo-link SDK's protocol (`tools/fakecc2` in the workspace), not yet on
+built from the elegoo-link SDK's protocol (`tools/remote-api/fakecc2`), not yet on
 the real printer. Field values the SDK leaves to the firmware (the printer model string,
 the camera address, tray numbering) are confirmed only once a real CC2 is connected.
 

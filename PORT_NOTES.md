@@ -27,6 +27,8 @@ Root: `C:\Users\rosal\Documents\elegooslicer-mcp\`
 | `tools/build.cmd` | **Build wrapper** — sets up VS 2022 Build Tools v143 + bundled CMake 3.31.6 + portable Perl, clears `NoDefaultCurrentDirectoryInExePath` (set by the Claude Code shell; breaks the Elegoo/deps scripts), then calls `build_release_windows.bat %*` at **below-normal priority, pinned to 24 of 32 logical CPUs** (`BUILD_AFFINITY`, default `0xFFFFFF`; Victor uses the machine during builds — `0xFFFF` = 16 threads when busy, `0xFFFFFFFF` = all threads). Run e.g. `cmd /c tools\build.cmd onlydeps > tools\logs\deps.log 2>&1`. |
 | `tools/strawberry-perl-5.42.3.1/` | Strawberry Perl 5.42.3.1 portable (GitHub release `SP_54231_64bit`, zip SHA-256 `6a081a81…a10690` verified against the GitHub asset digest). Only `perl\bin` goes on PATH, and only inside `build.cmd`. No system change. |
 | `tools/logs/` | Build logs and disk measurements. |
+| `tools/test-datadir/` | The TEST data dir every runtime check uses. |
+| `ElegooSlicer/tools/remote-api/` | Since 2026-10-14 the workspace scripts this file names as `tools\build.cmd`, `tools\phase*.py`, `tools\fakecc2`, `tools\run_all_checks.sh` and `tools/overnight/CONTRACT.md` live in the repository here (README there). Perl, logs and the test data dir stay in the workspace `tools/`. |
 | `orcaslicer-mcp/` | `MaxEllis/orcaslicer-mcp` at `v0.1.17` (`ccfacb4`). Has a `.venv` from the test run. |
 | `elegoo-link/` | SDK, `main` = `46c7b81` (reference only). |
 | `pycentauri/` | Community CC2 library (reference only, shallow). |
