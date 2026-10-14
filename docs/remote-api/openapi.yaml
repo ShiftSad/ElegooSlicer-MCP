@@ -1174,6 +1174,134 @@ paths:
         "502": { $ref: "#/components/responses/PrinterError" }
         "503": { $ref: "#/components/responses/PrintersUnavailable" }
         "504": { $ref: "#/components/responses/PrinterTimeout" }
+  /printers/{id}/canvas/sync:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Make the CANVAS trays the project's filaments (the GUI's Sync button)
+      operationId: syncCanvas
+      description: |
+        Capability `canvas`. The GUI's "Sync filaments with MMS" without its dialogs (same
+        code). `filament_and_color` (default, as the GUI) replaces the project's filament
+        slots with the synced trays in tray order; `color_only` copies the trays' colours to
+        the first slots. Flush volumes are recalculated as in the GUI, every plate is marked
+        unsliced, and the printer becomes the one the Print dialog preselects.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode: { type: string, enum: [filament_and_color, color_only], default: filament_and_color }
+                discard_changes:
+                  type: boolean
+                  default: false
+                  description: Drop unsaved edits of the Filament tab's preset instead of answering 409 unsaved_filament_changes.
+      responses:
+        "200":
+          description: The project's filament slots after the sync.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CanvasSyncResult" }
+        "400":
+          description: Bad body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                invalid_json:    { value: { error: "invalid_json" } }
+                not_an_object:   { value: { error: "body_must_be_object" } }
+                mode_type:       { value: { error: "bad_mode", detail: "mode: \"filament_and_color\" | \"color_only\"" } }
+                discard_changes: { value: { error: "bad_discard_changes", detail: "discard_changes: true | false" } }
+        "404": { $ref: "#/components/responses/PrinterNotFound" }
+        "409":
+          description: |
+            Nothing was changed. `unsaved_filament_changes`: the Filament tab's preset has
+            unsaved edits (save them or pass `discard_changes: true`). `no_compatible_filaments`:
+            no tray can be synced (`unknown` says why). `canvas_disconnected`: no CANVAS unit is
+            connected. Also `printer_offline`, `canvas_unsupported`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, enum: [unsaved_filament_changes, no_compatible_filaments, canvas_disconnected, printer_offline, canvas_unsupported] }
+                  preset: { type: string, description: "unsaved_filament_changes: the modified preset." }
+                  hint: { type: string }
+                  unknown:
+                    type: array
+                    description: "no_compatible_filaments: the trays and why they were not synced."
+                    items: { $ref: "#/components/schemas/CanvasSyncUnknownTray" }
+              examples:
+                unsaved:
+                  value: { error: "unsaved_filament_changes", preset: "Elegoo PLA @ECC2",
+                           hint: "save the filament preset (POST /preset/save), or sync with \"discard_changes\": true" }
+                none:
+                  value: { error: "no_compatible_filaments", unknown: [{ tray: "A1", type: null, reason: "empty" }] }
+                disconnected: { value: { error: "canvas_disconnected" } }
+        "422":
+          description: Unknown mode.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "bad_mode", detail: "mode: \"filament_and_color\" | \"color_only\"" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504":
+          description: The CANVAS read (`printer_timeout`) or the GUI thread (`ui_timeout`) did not answer in time.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                printer: { value: { error: "printer_timeout" } }
+                gui:     { value: { error: "ui_timeout" } }
+  /printers/{id}/canvas/mapping:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: The CANVAS tray each filament of a plate would print from
+      operationId: getCanvasMapping
+      description: |
+        Capability `canvas`. Decided as the Print dialog decides it (same code): the tray
+        picked for that filament in an earlier print when it is still loaded, else a ready
+        tray of the same colour whose filament matches the slot's preset. Read-only.
+      parameters:
+        - { name: plate, in: query, required: false, schema: { type: integer, minimum: 0 }, description: "0-based; default: the current plate." }
+      responses:
+        "200":
+          description: The mapping and its problems.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CanvasMapping" }
+        "400":
+          description: Bad plate index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "bad_plate_index" }
+        "404":
+          description: Unknown printer or plate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                printer: { value: { error: "printer_not_found" } }
+                plate:   { value: { error: "unknown_plate" } }
+        "409":
+          description: The printer is offline, reports no multi-filament support, or no CANVAS unit is connected.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                offline:      { value: { error: "printer_offline" } }
+                unsupported:  { value: { error: "canvas_unsupported" } }
+                disconnected: { value: { error: "canvas_disconnected" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrinterTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -1483,3 +1611,62 @@ components:
         bed_temp: { type: array, nullable: true, items: { type: integer }, description: "Always null (not provided by the printer layer)." }
         matched_preset: { type: string, nullable: true, example: "Elegoo PLA @ECC2", description: "System filament preset matched to the loaded tray; the CANVAS sync starts from it." }
         matched_alias: { type: string, nullable: true, example: Elegoo PLA }
+    CanvasSyncUnknownTray:
+      type: object
+      properties:
+        tray: { type: string, example: A2 }
+        type: { type: string, nullable: true, description: "The tray's filament type; null for an empty tray." }
+        reason:
+          type: string
+          enum: [empty, not_matched, fallback_preset]
+          description: |
+            `empty` and `not_matched` (no filament preset matches the tray, or it reports an
+            unknown filament or an error): left out of the sync. `fallback_preset`: synced with
+            a generic, the previous or another preset.
+        detail: { type: string, description: "fallback_preset: the line the GUI's warning dialog shows (English)." }
+    CanvasSyncResult:
+      type: object
+      properties:
+        synced: { type: integer, description: "Slots that took a tray's filament." }
+        slots:
+          type: array
+          description: Every filament slot of the project after the sync.
+          items:
+            type: object
+            properties:
+              slot: { type: integer, description: "1-based." }
+              preset: { type: string }
+              type: { type: string, nullable: true }
+              color: { type: string, nullable: true, example: "#ffffff" }
+              tray: { type: string, nullable: true, example: A1, description: "The tray the slot was synced from; null for a color_only slot past the last synced tray." }
+        unknown:
+          type: array
+          items: { $ref: "#/components/schemas/CanvasSyncUnknownTray" }
+    CanvasMapping:
+      type: object
+      properties:
+        plate: { type: integer }
+        sliced: { type: boolean }
+        ok: { type: boolean, description: "No filament has an issue." }
+        filaments:
+          type: array
+          description: The slots the plate prints with (from its slice result when sliced, else from what its objects are set to use).
+          items:
+            type: object
+            properties:
+              slot: { type: integer, description: "1-based." }
+              preset: { type: string }
+              type: { type: string, nullable: true }
+              color: { type: string, nullable: true, example: "#ffffff" }
+              weight_g: { type: number, nullable: true, description: "The Print dialog's estimate; null until the plate is sliced." }
+              tray:
+                type: object
+                nullable: true
+                properties:
+                  unit: { type: string }
+                  tray: { type: string, example: A1 }
+                  type: { type: string }
+                  color: { type: string, nullable: true }
+              issues:
+                type: array
+                items: { type: string, enum: [no_tray, type_mismatch, color_mismatch, tray_not_ready] }

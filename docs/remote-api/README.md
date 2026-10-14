@@ -531,9 +531,10 @@ invalid_json`.
 
 ## Elegoo printers and CANVAS
 
-Read-only access to the printers of the Device tab and to the CANVAS multi-material
-unit of a Centauri Carbon 2 (capabilities `printers` and `canvas`). Nothing here opens a
-window or a dialog, and nothing is sent to the printer except status and CANVAS
+Access to the printers of the Device tab and to the CANVAS multi-material unit of a
+Centauri Carbon 2 (capabilities `printers` and `canvas`): read-only, except the CANVAS
+sync, which changes the project's filaments like the GUI's Sync button. Nothing here opens
+a window or a dialog, and nothing is sent to the printer except status and CANVAS
 requests.
 
 | Method | Path | Purpose |
@@ -544,6 +545,8 @@ requests.
 | GET | `/printers/{id}/tasks?page=1&size=20` | Print history (cloud printers only) |
 | GET | `/printers/{id}/files?page=1&size=20` | Files stored on the printer (cloud printers only) |
 | GET | `/printers/{id}/canvas` | CANVAS units and trays, with the filament preset matched to each tray |
+| POST | `/printers/{id}/canvas/sync` | Make the CANVAS trays the project's filaments (the GUI's Sync button) |
+| GET | `/printers/{id}/canvas/mapping[?plate=i]` | The tray each filament of a plate would print from, with problems |
 
 - **Where the data comes from.** ElegooSlicer keeps every printer in a cache that the
   printers' own status messages keep up to date; the printer routes read it. The
@@ -663,3 +666,87 @@ asking a printer, the other requests for that printer wait for its answer: the C
 silently ignores requests for a while when it gets 3 or more in a row. Errors:
 `409 canvas_unsupported` (the printer reports no multi-filament support),
 `409 printer_offline`, `504 printer_timeout`.
+
+### POST /printers/{id}/canvas/sync
+
+Body (optional): `{"mode": "filament_and_color" | "color_only", "discard_changes": bool}`.
+
+The GUI's "Sync filaments with MMS" without its dialogs: the CANVAS read of
+`GET .../canvas` (a reply is reused for 5 s), then the same code as the Sync button.
+With `filament_and_color` (the default, as the GUI: it ignores the
+`sync_ams_filament_mode` preference) the project's filament slots become the synced
+trays, in tray order, with the preset matched to each tray and its colour; `color_only`
+keeps the slots' presets and copies the trays' colours to the first slots. Flush volumes
+are recalculated as in the GUI, every plate is marked unsliced, and the printer becomes
+the one the Print dialog preselects.
+
+```json
+{
+  "synced": 2,
+  "slots": [
+    {"slot": 1, "preset": "Elegoo PLA @ECC2", "type": "PLA", "color": "#ffffff", "tray": "A1"},
+    {"slot": 2, "preset": "Elegoo PETG @ECC2", "type": "PETG", "color": "#ff0000", "tray": "A3"}
+  ],
+  "unknown": [
+    {"tray": "A2", "type": null, "reason": "empty"},
+    {"tray": "A4", "type": "PLA", "reason": "fallback_preset",
+     "detail": "The filament model is unknown. Generic filament presets will be used."}
+  ]
+}
+```
+(Values illustrative.)
+- `slots`: every filament slot of the project after the sync; `tray` is the tray it was
+  synced from (`null` for a `color_only` slot past the last synced tray).
+- `synced`: how many slots took a tray's filament.
+- `unknown`: the trays not taken as they are. `reason`: `empty` (left out),
+  `not_matched` (left out: no filament preset matches the tray's filament, or the tray
+  reports an unknown filament or an error; see `matched_preset` in `GET .../canvas`),
+  `fallback_preset` (synced with a generic, the previous or another preset; `detail` is the
+  line the GUI's warning dialog shows).
+
+Errors, besides the ones of `GET .../canvas`:
+- `409 {"error": "unsaved_filament_changes", "preset", "hint"}`: the Filament tab's preset
+  has unsaved edits (the GUI would ask about them). Nothing was changed. Save them
+  (`POST /preset/save`) or repeat with `"discard_changes": true` to drop them.
+- `409 {"error": "no_compatible_filaments", "unknown": [...]}`: no tray can be synced (the
+  GUI says "There are no compatible filaments"). Nothing was changed.
+- `409 canvas_disconnected`: the printer reports no connected CANVAS unit.
+- `400 bad_mode` (not a string) / `422 bad_mode` (unknown value), `400 bad_discard_changes`,
+  `400 invalid_json`, `400 body_must_be_object`.
+
+### GET /printers/{id}/canvas/mapping
+
+`?plate=i` (0-based, default: the current plate; `400 bad_plate_index`, `404
+unknown_plate`). Which tray each filament of the plate would print from, decided as the
+Print dialog decides it (same code): the tray picked for that filament in an earlier print
+when it is still loaded, else a ready tray of the same colour whose filament matches the
+slot's preset. The CANVAS state is the read of `GET .../canvas` (a reply is reused for 5 s).
+Read-only: nothing is saved, nothing is sent.
+
+```json
+{
+  "plate": 0, "sliced": true, "ok": false,
+  "filaments": [
+    {"slot": 1, "preset": "Elegoo PLA @ECC2", "type": "PLA", "color": "#ffffff",
+     "weight_g": 12.4, "tray": {"unit": "0", "tray": "A1", "type": "PLA", "color": "#ffffff"},
+     "issues": []},
+    {"slot": 3, "preset": "Elegoo PETG @ECC2", "type": "PETG", "color": "#00ff00",
+     "weight_g": 3.1, "tray": null, "issues": ["no_tray"]}
+  ]
+}
+```
+(Values illustrative.)
+- `filaments`: the slots the plate prints with: from its slice result when `sliced`, else
+  from the filaments its objects, parts, paint and settings use.
+- `weight_g`: the Print dialog's estimate (model, support, wipe tower and flush), `null`
+  until the plate is sliced.
+- `tray`: `unit` and `tray` as in `GET .../canvas` (`null` when no tray matched).
+- `issues`: `no_tray` (the Print dialog would refuse to start: "some filaments not
+  mapped"), `type_mismatch` (the tray's filament type differs from the preset's),
+  `color_mismatch` (the tray's colour is another colour of ElegooSlicer's standard palette
+  than the slot's, the comparison the matching itself uses), `tray_not_ready` (the tray is
+  not loaded or preloaded).
+- `ok`: `true` when no filament has an issue.
+
+Errors, besides the ones of `GET .../canvas`: `409 canvas_disconnected` (the printer
+reports no connected CANVAS unit; the Print dialog then sends without a mapping).
