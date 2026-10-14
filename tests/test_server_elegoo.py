@@ -395,3 +395,16 @@ async def test_part_tools_keep_unknown_object_apart_from_a_missing_route(monkeyp
     assert (await srv.remove_part(42, 77))["error"] == "unknown_volume"
     respx.post(f"{BASE}/objects/99/paint").mock(return_value=httpx.Response(404, json={"error": "unknown_object"}))
     assert (await srv.paint_region(99, "seam", state="enforce"))["error"] == "unknown_object"
+
+
+# --- error details reach the model -------------------------------------------
+
+
+@respx.mock
+async def test_elegoo_error_details_are_passed_on(monkeypatch):
+    # save_project's file_exists names the path; before, only the error token got through.
+    _env(monkeypatch)
+    respx.post(f"{BASE}/project/save").mock(return_value=httpx.Response(
+        409, json={"error": "file_exists", "path": "C:\\prints\\a.3mf"}))
+    out = await srv.save_project("C:\\prints\\a.3mf")
+    assert out == {"error": "file_exists", "path": "C:\\prints\\a.3mf"}

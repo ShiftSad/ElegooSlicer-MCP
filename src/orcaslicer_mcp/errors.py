@@ -2,7 +2,9 @@ from __future__ import annotations
 
 
 class ApiError(Exception):
-    pass
+    # The slicer's JSON error body, for the details it sends next to "error" (used_by, detail,
+    # hint, path, ...). Empty for errors raised here rather than read from a reply.
+    body: dict = {}
 
 
 class Unauthorized(ApiError):
@@ -50,6 +52,12 @@ class Validation(ApiError):
 
 
 def error_from_status(status: int, body: dict) -> ApiError:
+    err = _error_for_status(status, body)
+    err.body = body if isinstance(body, dict) else {}
+    return err
+
+
+def _error_for_status(status: int, body: dict) -> ApiError:
     msg = body.get("error") or body.get("detail") or f"HTTP {status}"
     if status == 401:
         return Unauthorized("unauthorized (check ORCA_API_TOKEN)")

@@ -492,7 +492,13 @@ def _elegoo_build(capability: str) -> str:
 
 
 def _elegoo_err(e: ApiError, capability: str) -> dict:
-    return _m4_err(e, _elegoo_build(capability))
+    out = _m4_err(e, _elegoo_build(capability))
+    # ElegooSlicer MCP error replies carry details next to "error" (used_by on slot_in_use,
+    # detail on bad_params, path on file_exists, ...). They say what to fix, so pass them on.
+    for key, value in e.body.items():
+        if key not in out and key != "applied":
+            out[key] = value
+    return out
 
 
 async def _missing_capability(c, capability: str) -> dict | None:
