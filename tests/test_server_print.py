@@ -403,6 +403,36 @@ async def test_stop_asks_the_user_through_the_client(mode):
     assert out["error"] == "not_confirmed" and route.call_count == 1
 
 
+BUSY = httpx.Response(504, json={"error": "ui_timeout"})
+OK_PRINTING = httpx.Response(200, json={"printers": [PRINTING], "selected_id": "p1"})
+
+
+@pytest.mark.parametrize("mode,replies", [
+    # The question's printer read hits a busy window; the tool's own read works.
+    ("legacy", [BUSY, OK_PRINTING, OK_PRINTING]),
+    # Round 1 asks and the user says no; round 2's read for the question fails.
+    ("auto", [OK_PRINTING, BUSY, OK_PRINTING, OK_PRINTING]),
+])
+@respx.mock
+async def test_stop_never_takes_user_confirmed_in_place_of_the_prompt(mode, replies):
+    respx.get(f"{F}/printers").mock(side_effect=replies)
+    route = respx.post(f"{F}/printers/p1/stop").mock(return_value=httpx.Response(200, json={"ok": True}))
+    out = await call("stop_print", {"user_confirmed": True}, mode, Asker("decline"))
+    assert out["error"] == "not_confirmed" and not route.called
+
+
+@respx.mock
+async def test_stop_refuses_when_the_printer_started_while_asking():
+    # The question saw an idle printer (no question), the tool sees it printing.
+    idle = httpx.Response(200, json={"printers": [printer("idle")], "selected_id": "p1"})
+    respx.get(f"{F}/printers").mock(side_effect=[idle, OK_PRINTING])
+    route = respx.post(f"{F}/printers/p1/stop")
+    asker = Asker()
+    out = await call("stop_print", {"user_confirmed": True}, "legacy", asker)
+    assert out["error"] == "not_confirmed" and "Call the tool again" in out["hint"]
+    assert asker.questions == [] and not route.called
+
+
 def test_print_tools_annotations():
     tools = srv.mcp._tool_manager._tools
     assert tools["prepare_print"].annotations.read_only_hint is True
