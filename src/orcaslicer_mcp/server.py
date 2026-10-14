@@ -614,6 +614,8 @@ async def set_view(
 
 
 def _volumes_err(e: ApiError) -> dict:
+    # A bare 404 "not_found" means the route is missing (an older build). The slicer must
+    # answer an unknown id with 404 unknown_object / unknown_volume, which pass through.
     return _elegoo_err(e, "volumes")
 
 
@@ -630,8 +632,8 @@ async def list_parts(object_id: Annotated[int, _OBJECT_ID]) -> dict:
     Each part has id (the part_id the other part tools take), index, name, type (part,
     modifier, negative, support_enforcer or support_blocker), extruder (its filament slot,
     0 when it uses the object's own), size_mm, position_mm (its centre, in the same world
-    millimetres as list_objects) and config (its own setting overrides). Needs ElegooSlicer
-    MCP ('volumes' in get_status capabilities)."""
+    millimetres as list_objects) and config (its own setting overrides). An unknown object id
+    returns unknown_object. Needs ElegooSlicer MCP ('volumes' in get_status capabilities)."""
     try:
         async with _client() as c:
             return await c.get_volumes(object_id)
@@ -687,7 +689,7 @@ async def remove_part(
     or one of several model parts. Cannot be undone through the API; returns {"ok": true}.
 
     An object's last model part cannot be removed (last_part); use delete_object to remove
-    the whole object. The object's plate is left unsliced, so re-slice afterwards. Needs
+    the whole object. An unknown id returns unknown_object or unknown_volume. The object's plate is left unsliced, so re-slice afterwards. Needs
     ElegooSlicer MCP ('volumes' in get_status capabilities)."""
     try:
         async with _client() as c:
@@ -710,7 +712,8 @@ async def set_part_config(
     A part's override beats its object's, which beats the print preset. Keys that run code or
     drive the printer (custom G-code, post-processing, printer connection) are refused, as for
     set_object_config. To give a part another filament, set_part_filament is the shortcut. The
-    object's plate is left unsliced, so re-slice afterwards. Needs ElegooSlicer MCP ('volumes'
+    object's plate is left unsliced, so re-slice afterwards. An unknown id returns
+    unknown_object or unknown_volume. Needs ElegooSlicer MCP ('volumes'
     in get_status capabilities)."""
     try:
         async with _client() as c:

@@ -382,3 +382,16 @@ async def test_paint_overhang_angle_0_and_90_are_sent(monkeypatch):
     for angle in (0, 90):
         await srv.paint_region(42, "support", state="enforce", max_overhang_deg=angle)
         assert _sent(route)["max_overhang_deg"] == angle
+
+
+@respx.mock
+async def test_part_tools_keep_unknown_object_apart_from_a_missing_route(monkeypatch):
+    # unknown_object / unknown_volume are resource errors; only a bare not_found means an
+    # older build without the route.
+    _env(monkeypatch)
+    respx.get(f"{BASE}/objects/99/volumes").mock(return_value=httpx.Response(404, json={"error": "unknown_object"}))
+    assert (await srv.list_parts(99))["error"] == "unknown_object"
+    respx.delete(f"{BASE}/objects/42/volumes/77").mock(return_value=httpx.Response(404, json={"error": "unknown_volume"}))
+    assert (await srv.remove_part(42, 77))["error"] == "unknown_volume"
+    respx.post(f"{BASE}/objects/99/paint").mock(return_value=httpx.Response(404, json={"error": "unknown_object"}))
+    assert (await srv.paint_region(99, "seam", state="enforce"))["error"] == "unknown_object"
