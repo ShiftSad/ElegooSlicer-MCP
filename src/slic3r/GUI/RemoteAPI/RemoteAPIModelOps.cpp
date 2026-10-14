@@ -489,8 +489,8 @@ Response Controller::handle_save_project(const std::string &body)
 // max_overhang_deg, when its normal points down at least that many degrees below
 // horizontal (unit normal n: n.z < 0 and -n.z >= sin(a)). So 90 keeps only flat
 // undersides, 45 the usual overhangs that need support, 0 every downward face; this
-// is the rule the spec and the MCP's paint_region tool state. "clear" first erases
-// that layer on the whole object; with no state/slot it only erases.
+// is the rule the spec and the MCP's paint_region tool state. "clear" (never with a
+// box) first erases that layer on the whole object; with no state/slot it only erases.
 Response Controller::handle_paint(uint64_t id, const std::string &body)
 {
     nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in dispatch
@@ -539,6 +539,13 @@ Response Controller::handle_paint(uint64_t id, const std::string &body)
         box_max = c0.cwiseMax(c1);
         has_box = true;
     }
+    // "clear" erases the layer on the whole object (the spec gives it no box). With a box
+    // a caller most likely means "redo this spot" and would silently lose every other
+    // stroke, so refuse it, as the MCP does; state "none" erases inside a box.
+    if (clear && has_box)
+        return { 422, {{"error", "clear_takes_no_box"},
+                       {"detail", "clear erases the layer on the whole object; to erase inside box_mm "
+                                  "use \"state\": \"none\" (support, seam)"}} };
 
     bool   has_overhang = false;
     double max_overhang_deg = 0.;

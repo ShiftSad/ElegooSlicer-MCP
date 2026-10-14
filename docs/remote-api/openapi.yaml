@@ -890,9 +890,9 @@ paths:
         with `max_overhang_deg` = a, when its outward normal points down at least a
         degrees below horizontal (unit normal n: n.z < 0 and -n.z >= sin(a); 90 = only
         flat undersides, 45 = the usual overhangs, 0 = every downward face).
-        `clear: true` first erases the layer on the whole
-        object; with no state/slot it only erases. The object's plates are marked
-        unsliced.
+        `clear: true` first erases the layer on the whole object (it takes no
+        `box_mm`; use state `none` to erase inside a box); with no state/slot it only
+        erases. The object's plates are marked unsliced.
       parameters:
         - { name: id, in: path, required: true, schema: { type: integer } }
       requestBody:
@@ -937,16 +937,17 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "422":
-          description: Bad layer, state, slot, box or overhang angle.
+          description: Bad layer, state, slot, box or overhang angle, or clear with a box.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               examples:
-                layer:    { value: { error: "bad_layer" } }
-                state:    { value: { error: "bad_state" } }
-                slot:     { value: { error: "bad_slot" } }
-                box:      { value: { error: "bad_box" } }
-                overhang: { value: { error: "bad_overhang" } }
+                layer:     { value: { error: "bad_layer" } }
+                state:     { value: { error: "bad_state" } }
+                slot:      { value: { error: "bad_slot" } }
+                box:       { value: { error: "bad_box" } }
+                overhang:  { value: { error: "bad_overhang" } }
+                clear_box: { value: { error: "clear_takes_no_box" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
 components:

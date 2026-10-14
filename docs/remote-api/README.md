@@ -493,13 +493,14 @@ retouched) in the window's Support painting, Seam painting and Color painting to
   undersides, 45 the usual overhangs that need support, 0 every face that points down
   at all (vertical walls never count).
 - `clear` (optional): `true` first erases that layer on the whole object; without
-  `state`/`slot` that is all it does.
+  `state`/`slot` that is all it does. It takes no `box_mm` (`422 clear_takes_no_box`):
+  to erase only inside a box, send `"state": "none"` with the box (support, seam).
 
 Only the object's solid parts are painted (as in the gizmos), whole triangles at a
 time: big triangles crossing the box edge are painted or not as a whole. An open paint
 tool is closed first so it cannot write its old copy back. The object's plates are
 marked unsliced and the change can be undone in the window. Errors:
-`422 bad_layer | bad_state | bad_slot | bad_box | bad_overhang`,
+`422 bad_layer | bad_state | bad_slot | bad_box | bad_overhang | clear_takes_no_box`,
 `404 unknown_object | no_instance`, `400 body_must_be_object | clear_must_be_boolean |
 invalid_json`.
 
