@@ -2135,6 +2135,9 @@ Response Controller::handle_orient()
         // (OrientJob::prepare_selected). "All objects" needs an empty selection, also
         // after POST /orient {"object_id"} left that object selected.
         plater->deselect_all();
+        // elegoo-mcp: the job's finish re-checks only the current plate; the objects on
+        // every plate may turn, so mark them all now (see invalidate_object_plates).
+        plater->get_partplate_list().invalid_all_slice_result();
         plater->orient();
         return {{"started", true}};
     });

@@ -245,9 +245,11 @@ Each plate's `slice_result_valid` (`GET /plates`) goes false as soon as its G-co
 out of date: a change to the global config (`PUT /config`, `PUT /preset`,
 `POST /preset/save` under a new name, `DELETE /preset` of a filament still in use)
 marks **every** plate unsliced, and a per-object change (object or volume config,
-layer height, height ranges, volumes, paint, transform) marks the plates holding a
-copy of that object. (On its own, Orca re-checks only the current plate when a
-setting changes; the API marks the others too, and the window shows the same flags.)
+layer height, height ranges, volumes, paint, transform, `POST /orient` with
+`object_id`) marks the plates holding a copy of that object; `POST /orient` of every
+object marks every plate when the job starts. (On its own, Orca re-checks only the
+current plate when a setting changes; the API marks the others too, and the window
+shows the same flags.)
 
 `GET /slice/status` follows the current plate. After a plate is selected, added
 with `select`, deleted, or an object moves, it reports the current plate's own
@@ -374,7 +376,8 @@ Starts the window's auto-orient job and answers `202` at once; poll
 `GET /jobs/status` until `idle`. With `{"object_id": id}` only that object is turned:
 it is selected in the 3D view, as a click on it does, and the job orients the
 selection (the object stays selected afterwards). Without a body, or with `{}`, every
-object is oriented and any selection in the window is cleared first. Objects on a
+object is oriented and any selection in the window is cleared first. The plates of
+the objects that may turn are marked unsliced when the job starts. Objects on a
 locked plate and unprintable objects are left alone; asking for an unprintable object
 by id answers `409 object_not_printable` (the job would orient every other object
 instead), and `409 select_failed` when the 3D view could not select it. Errors:

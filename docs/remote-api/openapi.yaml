@@ -547,8 +547,10 @@ paths:
         `idle`). With `object_id` only that object is oriented: it is selected in the 3D
         view and the job orients the selection (it stays selected). Without a body, or
         with `{}`, every object is oriented and the window's selection is cleared first.
-        Objects on a locked plate and unprintable objects are left alone; an
-        unprintable `object_id` is refused (the job would orient every other object).
+        When the job starts, the object's plates (every plate without `object_id`) are
+        marked unsliced. Objects on a locked plate and unprintable objects are left
+        alone; an unprintable `object_id` is refused (the job would orient every other
+        object).
       requestBody:
         required: false
         content:

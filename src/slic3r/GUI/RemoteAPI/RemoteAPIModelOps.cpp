@@ -64,6 +64,10 @@ Response Controller::handle_orient_object(const std::string &body)
         // Same reset as handle_orient: Elegoo's sticky "outside bed" prepare state makes
         // the job skip the selection.
         plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
+        // The job's finish (OrientJob::finalize -> Plater::update) re-checks only the
+        // current plate, so mark the object's plates now, like every per-object edit
+        // (see invalidate_object_plates). Harmless if the job ends up turning nothing.
+        invalidate_object_plates(idx);
         plater->orient();
         return {{"started", true}, {"object_id", id}};
     });
