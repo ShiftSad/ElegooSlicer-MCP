@@ -756,7 +756,13 @@ reply is `409 {"error":"unsaved_project","project_unsaved":true,"presets_unsaved
 unless the body has `"discard_project": true`; then those changes are dropped and the
 reply lists them in `discarded_changes` (`"project"`, `"print"`, `"filament"`,
 `"printer"`). A calibration itself leaves the settings edited and the project unsaved,
-so a second calibration in a row needs `discard_project` too.
+so a second calibration in a row needs `discard_project` too. The
+`max_volumetric_speed` and `vfa` tests turn spiral vase on in the print settings;
+`max_volumetric_speed` sets one wall, no top layers and no infill on the test object
+only, and `vfa` leaves supports as they were. So afterwards a `PUT /config` that
+changes print settings can be refused with the window's spiral vase question until the
+print settings agree with it, which is when the window would ask too (see
+[Dialogs](#dialogs)).
 
 `params` holds the dialog's fields; everything is optional and defaults to the
 dialog's own default. An unknown name, a wrong type or a value the dialog would refuse
@@ -772,8 +778,7 @@ gives `422 bad_params` with a `detail` that names the parameter.
 | `retraction` | `start` (0), `end` (2), `step` (0.1), mm of retraction length | `start` >= 0, `step` > 0, `end` >= `start` + `step` |
 
 Other errors: `422 bad_type`, `409 job_running` (an arrange/orient job is running) `|
-slicing`,
-`500 calibration_failed` (the test model did not load), `400 body_must_be_object |
+slicing`, `500 calibration_failed` (the test model did not load), `400 body_must_be_object |
 discard_project_must_be_boolean | invalid_json`. Allow up to 60 s: the test model is
 loaded and cut to height.
 
@@ -807,7 +812,7 @@ things as they are; the entry then ends with `(answered No)`.
 | `POST /model` | an OBJ file with colours: the window asks which filament prints each colour | loaded without its colours (the dialog's Cancel), with a `skipped_dialogs` note |
 | `POST /model` | several objects at different heights: "load as a single object with multiple parts?" | loaded as separate objects, the dialog's No (as in MaxEllis/OrcaSlicer; no `skipped_dialogs` entry) |
 | `POST /preset/save` of a filament preset | "Temperature Safety Check": the first-layer and other-layer temperatures differ by more than 30 °C (nozzle) or 15 °C (a bed type); "Continue anyway?" | refused, nothing saved: `422 {"error":"temperature_safety_check","detail":"<the question>"}`. Add `"ignore_temperature_check": true` to the body to save anyway (answered Yes) |
-| `GET /plate/render?view=preview` | the G-code preview cannot start its OpenGL renderer (an error box) | notification + `skipped_dialogs`; the render then fails with `500 render_failed` |
+| `GET /plate/render?view=preview` | the G-code preview cannot start its OpenGL renderer (an error box) | notification + `skipped_dialogs`; the render then most likely fails with `500 render_failed` |
 | `POST /arrange`, `POST /orient` (the job ends after the reply) | "Arrange failed. Found some exceptions when processing object geometries.", "An unexpected error occurred: ..." | notification, and the text in `GET /jobs/status` as `last_error` (null when the last job the API started had no error); jobs started in the window keep their dialog |
 | `POST /slice` (the slice ends after the reply) | a critical slicing error in an error box | an error notification like the window's other slicing errors; `GET /slice/status` has `state: "error"` and the message, and WS sends `slice.error`. Slices started in the window keep their dialog |
 
