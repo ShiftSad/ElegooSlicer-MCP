@@ -357,7 +357,7 @@
     },
     {
       "name": "prepare_print",
-      "description": "Prepare printing a sliced plate on an Elegoo printer, WITHOUT starting it. ElegooSlicer checks that the plate is sliced, that the printer is connected and idle and that every filament has a CANVAS tray, and returns a plan. Nothing is sent to the printer."
+      "description": "Prepare printing the current, sliced plate on an Elegoo printer, WITHOUT starting it."
     },
     {
       "name": "start_print",
