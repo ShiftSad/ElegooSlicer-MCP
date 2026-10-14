@@ -2019,6 +2019,11 @@ Response Controller::handle_arrange()
         Plater *plater = wxGetApp().plater();
         if (plater->model().objects.empty()) return {{"error", "empty"}};
         if (!plater->get_ui_job_worker().is_idle()) return {{"busy", true}};
+        // elegoo-mcp: ElegooSlicer's Alt+A (arranges objects outside the bed) leaves the
+        // prepare state at PREPARE_STATE_OUTSIDE_BED until the next GUI arrange. Reset it
+        // like the GUI's own arrange button does, or this call would quietly
+        // only move the objects that are off the bed.
+        plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
         plater->arrange();
         return {{"started", true}};
     });
@@ -2033,6 +2038,11 @@ Response Controller::handle_orient()
         Plater *plater = wxGetApp().plater();
         if (plater->model().objects.empty()) return {{"error", "empty"}};
         if (!plater->get_ui_job_worker().is_idle()) return {{"busy", true}};
+        // elegoo-mcp: ElegooSlicer's Alt+A (arranges objects outside the bed) leaves the
+        // prepare state at PREPARE_STATE_OUTSIDE_BED until the next GUI orient. Reset it
+        // like the GUI's own orient button does, or this call would quietly
+        // do nothing.
+        plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
         plater->orient();
         return {{"started", true}};
     });
