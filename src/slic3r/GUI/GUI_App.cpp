@@ -4392,6 +4392,12 @@ bool GUI_App::TryShowBeginnerGuideOnPreparePage()
     if (!m_post_initialized||!m_initialized || !app_config || app_config->get_beginner_guide_shown() || !mainframe)
         return false;
 
+    // elegoo-mcp: a Remote API load switches to the Prepare tab, which would open this
+    // modal and block the API call. Skip it then; it still shows on the next manual
+    // switch to Prepare because beginner_guide_shown stays false.
+    if (RemoteAPI::Controller::api_ui_task_active())
+        return false;
+
     if (mainframe->current_tab() != MainFrame::tp3DEditor)
         return false;
 
