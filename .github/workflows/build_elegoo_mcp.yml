@@ -26,10 +26,12 @@ on:
       - ci
       - 'ci-*'
       - remote-api
-    # A docs-only push does not need a 1-2 h build.
+    # A docs-only push does not need a 1-2 h build, nor does one that only changes the
+    # Python MCP server in mcp/ (it is installed from git, not packed into the zip).
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'mcp/**'
   workflow_dispatch:
 
 # One build per branch at a time. A newer push waits for the running build instead of
