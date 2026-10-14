@@ -585,7 +585,9 @@ removed slot uses: the window would ask what to do with them), `409
 print_settings_question` (the print settings disagree, e.g. spiral vase with several
 walls after a calibration test, and the Print tab's check that every + and - runs would
 ask about it; `detail` has the question: fix the settings with `PUT /config` first),
-`409 preview_only`, `400 body_must_be_object | force_must_be_boolean | invalid_json`.
+`409 preview_only`, `500 filament_change_failed` (the sidebar did not add or remove a
+slot; slots already changed by the request stay changed: `GET /filaments` shows where
+it stopped), `400 body_must_be_object | force_must_be_boolean | invalid_json`.
 
 ### PUT /filaments/{slot}
 
@@ -816,7 +818,7 @@ things as they are; the entry then ends with `(answered No)`.
 | `POST /model` | "The object ... is too small, and maybe in meters or inches. Do you want to scale to millimeters?"; "Your object appears to be too large, do you want to scale it down ...?" | answered No: the file is loaded as it is; scale it with `POST /objects/{id}/transform` |
 | `POST /model` | an OBJ file with colours: the window asks which filament prints each colour | loaded without its colours (the dialog's Cancel), with a `skipped_dialogs` note |
 | `POST /model` | several objects at different heights: "load as a single object with multiple parts?" | loaded as separate objects, the dialog's No (as in MaxEllis/OrcaSlicer; no `skipped_dialogs` entry) |
-| `POST /preset/save` of a filament preset | "Temperature Safety Check": the first-layer and other-layer temperatures differ by more than 30 °C (nozzle) or 15 °C (a bed type); "Continue anyway?" | refused, nothing saved: `422 {"error":"temperature_safety_check","detail":"<the question>"}`. Add `"ignore_temperature_check": true` to the body to save anyway (answered Yes) |
+| `POST /preset/save` of a filament preset | "Temperature Safety Check": the first-layer and other-layer temperatures differ by more than 30 °C (nozzle) or 15 °C (a bed type); "Continue anyway?" | refused, nothing saved: `422 {"error":"temperature_safety_check","detail":"<the question>"}`. Add `"ignore_temperature_check": true` to the body to save anyway (answered Yes); a value that is not a boolean gives `400 ignore_temperature_check_must_be_boolean` |
 | `GET /plate/render?view=preview` | the G-code preview cannot start its OpenGL renderer (an error box) | notification + `skipped_dialogs`; the render then most likely fails with `500 render_failed` |
 | `POST /arrange`, `POST /orient` (the job ends after the reply) | "Arrange failed. Found some exceptions when processing object geometries.", "An unexpected error occurred: ..." | notification, and the text in `GET /jobs/status` as `last_error` (null when the last job the API started had no error); jobs started in the window keep their dialog |
 | `POST /slice` (the slice ends after the reply), and a slice that an API change starts by itself (the "auto slice after change" preference, or background processing) | a critical slicing error in an error box | an error notification like the window's other slicing errors; `GET /slice/status` has `state: "error"` and the message, and WS sends `slice.error`. Slices started in the window keep their dialog |

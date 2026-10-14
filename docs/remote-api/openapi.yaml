@@ -1039,6 +1039,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { error: "bad_count" }
+        "500":
+          description: |
+            The sidebar did not add or remove a slot. Slots already changed by the request
+            stay changed (GET /filaments shows where it stopped).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "filament_change_failed" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
   /filaments/{slot}:
