@@ -6,7 +6,8 @@ Usage: ORCA_BASE=http://127.0.0.1:13131 ORCA_TOKEN=... python3 orca-runtime-test
 (ElegooSlicer MCP listens on 13130: ORCA_BASE=http://127.0.0.1:13130.)
 Read-mostly: every write is restored, and each check asserts the BEFORE state too,
 so a check cannot pass by accident on an already-broken value. The ElegooSlicer MCP part
-only reads; a route whose capability is missing is reported as SKIP, not as a failure.
+only reads (and, while print control is off in Preferences, checks that two print routes
+refuse); a route whose capability is missing is reported as SKIP, not as a failure.
 """
 import json, os, sys, urllib.parse, urllib.request, urllib.error
 
@@ -243,6 +244,20 @@ elif "canvas" in caps:
     skip("GET /printers/{id}/canvas", "no printer added in the slicer")
 else:
     skip("GET /printers/{id}/canvas", "no 'canvas' capability")
+
+if "print_control" in caps and st.get("print_control_enabled") is False:
+    # Off (the default): every print route must refuse before doing anything, so these calls
+    # are safe. With print control on, nothing here touches the print routes.
+    s, j = call("POST", "/api/v1/printers/no-such-printer/print/prepare", {})
+    check("print control off: prepare -> 403 print_control_disabled",
+          s == 403 and j.get("error") == "print_control_disabled", "status=%d %r" % (s, j.get("error")))
+    s, j = call("GET", "/api/v1/uploads/no-such-upload")
+    check("print control off: uploads -> 403 print_control_disabled",
+          s == 403 and j.get("error") == "print_control_disabled", "status=%d %r" % (s, j.get("error")))
+elif "print_control" in caps:
+    skip("print routes", "print control is on in Preferences: the check leaves the printer alone")
+else:
+    skip("print routes", "no 'print_control' capability")
 
 # ---------------------------------------------------------------- summary
 print("\n=== summary ===")
