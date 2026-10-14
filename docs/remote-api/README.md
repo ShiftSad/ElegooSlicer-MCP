@@ -806,6 +806,7 @@ things as they are; the entry then ends with `(answered No)`.
 | `POST /model` | an OBJ file with colours: the window asks which filament prints each colour | loaded without its colours (the dialog's Cancel), with a `skipped_dialogs` note |
 | `POST /model` | several objects at different heights: "load as a single object with multiple parts?" | loaded as separate objects, the dialog's No (as in MaxEllis/OrcaSlicer; no `skipped_dialogs` entry) |
 | `POST /preset/save` of a filament preset | "Temperature Safety Check": the first-layer and other-layer temperatures differ by more than 30 °C (nozzle) or 15 °C (a bed type); "Continue anyway?" | refused, nothing saved: `422 {"error":"temperature_safety_check","detail":"<the question>"}`. Add `"ignore_temperature_check": true` to the body to save anyway (answered Yes) |
+| `GET /plate/render?view=preview` | the G-code preview cannot start its OpenGL renderer (an error box) | notification + `skipped_dialogs`; the render then fails with `500 render_failed` |
 
 ## Notes & limits
 
