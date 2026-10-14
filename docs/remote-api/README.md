@@ -613,8 +613,10 @@ The `Printer` plus:
 
 Each call also asks the printer to send its status again (at most once every 2 s per
 printer, without waiting): the answer updates the cache for the next call.
-`?raw=1` adds `raw` (the SDK's raw status JSON, with every secret-named key removed)
-and `raw_age_s`; it is read at most once every 2 s per printer. The SDK has it for
+`?raw=1` adds `raw` (the SDK's raw status JSON, cleaned at any depth: every key whose
+name looks like a secret, such as `serialNumber`, `deviceSn`, `accessCode` or `apiKey`, and
+every key holding one of the printer's secret values is removed, and every string holding
+one, such as its serial number, becomes `null`) and `raw_age_s`; it is read at most once every 2 s per printer. The SDK has it for
 cloud printers only: a LAN printer answers `501 unsupported_on_lan`.
 
 ### GET /printers/{id}/tasks, GET /printers/{id}/files

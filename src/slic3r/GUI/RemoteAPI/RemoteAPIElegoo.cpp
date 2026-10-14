@@ -390,37 +390,71 @@ static void request_status_refresh(const PrinterNetworkInfo &p)
     std::thread([id] { PrinterManager::getInstance()->refreshPrinterStatus(id); }).detach();
 }
 
-// The raw status of a cloud printer is the SDK's JSON as it came, not a whitelist, so
-// every key that names a secret is dropped from it, at any depth and in any spelling
-// ("serial_number", "accessCode", "sn", ...).
+// The raw status of a cloud printer is the SDK's JSON as it came, not a whitelist (its keys
+// are the cloud's and the printer's, not ElegooSlicer's), so it is cleaned at any depth in two
+// ways (drop_secrets): by the name of a key, and by the printer's own secret values.
+
+// Whether a key's name looks like a secret, in any spelling ("serial_number", "accessCode",
+// "deviceSn", "printer_sn", "snCode", "apiKey", "mac", ...). Better too many than one too few.
 static bool is_secret_key(const std::string &key)
 {
     std::string k;
     for (char c : key)
         if (c != '_' && c != '-')
             k += (char) std::tolower((unsigned char) c);
-    static const char *secrets[] = {"password", "token", "accesscode", "pincode", "extrainfo",
-                                    "username", "serial", "mainboard", "weburl"};
+    static const char *secrets[] = {"password", "token", "accesscode", "pincode", "extrainfo", "username", "serial",
+                                    "mainboard", "weburl", "secret", "credential", "auth", "key", "ssid", "macaddr"};
     for (const char *s : secrets)
         if (k.find(s) != std::string::npos)
             return true;
-    return k == "sn";
+    if (k == "sn" || k == "mac")
+        return true;
+    // A serial number under a short name.
+    return k.size() > 2 && (boost::algorithm::starts_with(k, "sn") || boost::algorithm::ends_with(k, "sn"));
 }
 
-static void drop_secret_keys(nlohmann::json &j)
+// The printer's own secret values, as the printer layer knows them: its serial number (also the
+// part of its id after "cloud_" or "lan_"), mainboard id, access code, PIN code, token, user name,
+// password and web URL. Values shorter than 4 characters are left out: they would match any text.
+static std::vector<std::string> secret_values(const PrinterNetworkInfo &p)
+{
+    const size_t                   underscore = p.printerId.find('_');
+    const std::string              id_suffix  = underscore == std::string::npos ? std::string() : p.printerId.substr(underscore + 1);
+    const std::vector<std::string> all        = {p.serialNumber, p.mainboardId, p.accessCode, p.pinCode, p.token,
+                                                 p.username,     p.password,    p.webUrl,     p.printerId, id_suffix};
+    std::vector<std::string>       values;
+    for (const std::string &v : all)
+        if (v.size() >= 4)
+            values.push_back(v);
+    return values;
+}
+
+static bool contains_any(const std::string &text, const std::vector<std::string> &values)
+{
+    for (const std::string &v : values)
+        if (boost::algorithm::icontains(text, v))
+            return true;
+    return false;
+}
+
+// Drops every key whose name looks like a secret or holds one of the values, and turns every
+// string holding one of the values into null.
+static void drop_secrets(nlohmann::json &j, const std::vector<std::string> &values)
 {
     if (j.is_array()) {
         for (nlohmann::json &item : j)
-            drop_secret_keys(item);
+            drop_secrets(item, values);
     } else if (j.is_object()) {
         for (auto it = j.begin(); it != j.end();) {
-            if (is_secret_key(it.key())) {
+            if (is_secret_key(it.key()) || contains_any(it.key(), values)) {
                 it = j.erase(it);
             } else {
-                drop_secret_keys(it.value());
+                drop_secrets(it.value(), values);
                 ++it;
             }
         }
+    } else if (j.is_string() && contains_any(j.get<std::string>(), values)) {
+        j = nullptr;
     }
 }
 
@@ -473,7 +507,7 @@ Response Controller::handle_get_printer_status(const std::string &api_id, const 
             nlohmann::json raw = nlohmann::json::parse(result->value(), nullptr, /*allow_exceptions=*/false);
             if (raw.is_discarded())
                 return printer_error(PrinterNetworkErrorCode::PRINTER_INVALID_RESPONSE);
-            drop_secret_keys(raw);
+            drop_secrets(raw, secret_values(p));
             it = last_raw.insert_or_assign(p.printerId, RawStatus{std::chrono::steady_clock::now(), raw}).first;
         }
         j["raw"]       = it->second.raw;

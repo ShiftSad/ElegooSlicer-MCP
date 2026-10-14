@@ -1020,7 +1020,8 @@ paths:
       description: |
         Also asks the printer to send its status again (at most once every 2 s per
         printer, without waiting for it); the answer updates the cache for the next call.
-        `raw=1` adds the SDK's raw status JSON (secret-named keys removed), read at most
+        `raw=1` adds the SDK's raw status JSON (keys named like a secret or holding one of the
+        printer's secret values removed, strings holding one set to null), read at most
         once every 2 s per printer; the SDK has it for cloud printers only.
       parameters:
         - { name: raw, in: query, required: false, schema: { type: string, enum: ["1", "true"] } }
