@@ -581,8 +581,11 @@ layer tool changes to a removed slot are dropped.
 Errors: `422 bad_count` (an integer from 1 to `max`; also when the printer preset has
 one slot per extruder, so the sidebar has no + / - buttons), `409 slot_in_use`,
 `409 unsaved_filament_changes` (the Filament tab has unsaved edits to a preset only a
-removed slot uses: the window would ask what to do with them), `409 preview_only`,
-`400 body_must_be_object | force_must_be_boolean | invalid_json`.
+removed slot uses: the window would ask what to do with them), `409
+print_settings_question` (the print settings disagree, e.g. spiral vase with several
+walls after a calibration test, and the Print tab's check that every + and - runs would
+ask about it; `detail` has the question: fix the settings with `PUT /config` first),
+`409 preview_only`, `400 body_must_be_object | force_must_be_boolean | invalid_json`.
 
 ### PUT /filaments/{slot}
 
@@ -763,7 +766,7 @@ so a second calibration in a row needs `discard_project` too. The
 only, and `vfa` leaves supports as they were. So afterwards a `PUT /config` that
 changes print settings can be refused with the window's spiral vase question until the
 print settings agree with it, which is when the window would ask too (see
-[Dialogs](#dialogs)).
+[Dialogs](#dialogs)), and `PUT /filaments` answers `409 print_settings_question`.
 
 `params` holds the dialog's fields; everything is optional and defaults to the
 dialog's own default. An unknown name, a wrong type or a value the dialog would refuse
@@ -807,6 +810,7 @@ things as they are; the entry then ends with `(answered No)`.
 | `PUT /config` | the Print/Filament tab's check of the new values corrects one and says so ("Too small layer height. Reset to 0.2.", ironing spacing, first layer height, XY compensation, elephant foot, seam slope start height, lock depth, max volumetric speed < 0.5) | the correction is made, notification + `skipped_dialogs` |
 | `PUT /config` | the Print tab's check asks a question: spiral vase needs one wall, no top layers, no infill, no support...; alternate extra wall with "ensure vertical shell thickness: All"; the Extrusion/Combined fuzzy skin modes need the Arachne wall generator | refused before anything is applied: `422 config_rejected` with the question in `errors._question`; send settings that agree, in the same request |
 | `PUT /config` of printer settings | the Printer tab's check, whenever its Extruder page is on screen: "The Retract before wipe option could be only 100% when using the Firmware Retraction mode ..." | refused before anything is applied, whether that page is open or not: `422 config_rejected` with the question in `errors._question`; send `wipe` off or `retract_before_wipe` at 100% with it |
+| `PUT /filaments` (adding or removing slots) | the Print tab's checks run again; settings that disagree make them ask one of the questions above | refused before anything changes: `409 print_settings_question` with the question in `detail` |
 | other routes that reload print or printer settings (`PUT /preset` to a preset saved with such a combination, per-object settings) | the same checks | boxes as above; a question is answered No (the setting that conflicts is turned off: spiral vase, firmware retraction...) |
 | `POST /model` | "Objects with zero volume removed"; "The file does not contain any geometry data." (then `422 load_failed`); an object over 10000 times the bed is scaled down with a note | notification + `skipped_dialogs` |
 | `POST /model` | "The object ... is too small, and maybe in meters or inches. Do you want to scale to millimeters?"; "Your object appears to be too large, do you want to scale it down ...?" | answered No: the file is loaded as it is; scale it with `POST /objects/{id}/transform` |

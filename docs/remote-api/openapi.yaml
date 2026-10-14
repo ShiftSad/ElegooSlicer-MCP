@@ -1019,7 +1019,9 @@ paths:
         "409":
           description: |
             A removed slot is in use, the Filament tab has unsaved edits to a preset only
-            a removed slot uses, or a G-code file is open.
+            a removed slot uses, a G-code file is open, or the print settings disagree
+            and the Print tab's check that + and - run would ask a question (`detail`
+            has it; fix the settings with PUT /config first).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1030,6 +1032,7 @@ paths:
                     used_by: [ { object_id: 832, name: "helmet", volume_id: 833, slot: 3, setting: "extruder" } ]
                 unsaved: { value: { error: "unsaved_filament_changes" } }
                 gcode:   { value: { error: "preview_only" } }
+                question: { value: { error: "print_settings_question", detail: "Spiral mode only works when wall loops is 1, ..." } }
         "422":
           description: Count out of range, or the printer preset has one slot per extruder (no + / - buttons).
           content:

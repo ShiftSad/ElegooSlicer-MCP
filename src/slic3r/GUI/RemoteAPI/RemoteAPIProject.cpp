@@ -297,6 +297,17 @@ Response Controller::handle_put_filaments(const std::string &body)
         if (!Sidebar::should_show_SEMM_buttons())
             return {{"error", "bad_count"},
                     {"detail", "this printer preset has a fixed filament count (single_extruder_multi_material is off)"}};
+        // Each + and - re-runs the Print tab's checks (TabPrint::update), and print
+        // settings that disagree (spiral vase with several walls, as the max volumetric
+        // speed and VFA calibrations leave them) make those checks ask a question. Its
+        // No answer would quietly turn a print setting off, so refuse instead (D8).
+        std::string asked;
+        for (const std::string &q : print_settings_questions(bundle->prints.get_edited_preset().config))
+            asked += (asked.empty() ? "" : "\n\n") + q;
+        if (!asked.empty())
+            return {{"error", "print_settings_question"}, {"detail", asked},
+                    {"hint", "the window would ask this when a slot is added or removed; "
+                             "make the print settings agree first (PUT /config), then retry"}};
 
         if (count < before) {
             const nlohmann::json users = slot_users(plater->model(), count + 1, before);
@@ -338,7 +349,7 @@ Response Controller::handle_put_filaments(const std::string &body)
         const std::string e = r["error"].get<std::string>();
         if (e == "bad_count")              return { 422, r };
         if (e == "filament_change_failed") return { 500, r };
-        return { 409, r }; // preview_only, slot_in_use, unsaved_filament_changes
+        return { 409, r }; // preview_only, slot_in_use, unsaved_filament_changes, print_settings_question
     }
     return { 200, r };
 }
