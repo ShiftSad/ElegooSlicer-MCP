@@ -15,7 +15,7 @@ Line numbers refer to ElegooSlicer **v1.5.3.5 (`3f1042e`)** unless prefixed (`fo
 | 3 (rest), 5 | **Done, built and tested** | 2026-10-14 | Filament slots, split, undo/redo, layer changes, calibration, CANVAS sync + mapping (GUI parity checked), purge breakdown, D8 modal guards (section 12). |
 | 4 — print control | **Done, tested against the fake CC2 only** | 2026-10-14 | Off by default; byte-identical upload vs the window's Print checked. Phase 4.4 (cube on the real CC2 with Victor) still to do. |
 | 6 — MCP server | **Done, vendored in `mcp/`** | 2026-10-14 | `git subtree` of orcaslicer-mcp `elegoo` (history kept). pytest 1438 passed / 4 skipped. `.mcpb` not packed (needs `npx`). |
-| 7 — CI/release | **Workflow written, not run** | 2026-10-14 | Branch `ci` (local only): needs Victor to enable Actions. No release (D11 open, Victor's go needed). |
+| 7 — CI/release | **CI green, merged** | 2026-10-14 | `build_elegoo_mcp.yml` merged into `remote-api` (Victor: "se é de graça ta liberado dar merge"; public repo, standard runners are free). Green run 38592205059. No release (D11 open, Victor's go needed). |
 
 ## 2. Workspace
 
@@ -404,7 +404,7 @@ QA round (2026-10-14 ~06:00, 5 reviewers + 5 adversarial verifiers on the merged
 - MCP `db53d29`: `get_upload_status`/`cancel_upload` never say "nothing is printing" while a cancel is pending; `already_ended`; `upload_in_progress` after a cancel says to wait; `split_object` waits 50 s and answers `split_unconfirmed`; `preview_filament_mapping` says which issues block `prepare_print`.
 After the fixes (`tools\build_incremental.cmd`, `tools\run_all_checks.sh`): e2e on 61/61, MCP e2e 24/24, project 42/42, dialogs 33/33, rotation 8/8, features 39/39, smoke 12/12, MCP 1B 22/22, runtime-check 37/0 failed (2 skipped: the 403 checks, print control on); MCP pytest 1442 passed, 4 skipped.
 
-Branch `ci` was rebuilt as `remote-api` + the workflow commits (+ `mcp/**` and `tools/remote-api/**` in `paths-ignore`), so merging it later brings only `.github/workflows/build_elegoo_mcp.yml`.
+Branch `ci` was rebuilt as `remote-api` + the workflow commits (+ `mcp/**` and `tools/remote-api/**` in `paths-ignore`); merged into `remote-api` with `--no-ff` on 2026-10-14, bringing only `.github/workflows/build_elegoo_mcp.yml`.
 
 Afternoon 2026-10-14 (Victor: "commita e push"): the test tools moved into `tools/remote-api/` (`58b1c9e63`); `ci` pushed, Actions enabled by Victor.
 - CI run 38578762396 failed at the very last link (`LNK1181 agora_rtm_sdk.dll.lib`): elegoolink's installed `elegoolink_targets.cmake` links that import library by absolute path inside `deps/build/dep_elegoolink-prefix/src/...`, which the workflow's cleanup step had deleted. Fix `e40c8e909` on `ci`: cache that folder with the prefix, no cleanup step (218 GB free anyway), check for the lib before the slicer build, cache key = `deps/` + `cmake/modules/` + `DEPS_CACHE_VERSION` (CI-only edits keep the cache).
@@ -412,4 +412,4 @@ Afternoon 2026-10-14 (Victor: "commita e push"): the test tools moved into `tool
 - Extracted under a ~150-character folder, the zip's first start fails with `CriticalException: Copying directory ... failed` (a profile file passes Windows' 260-character limit; the longest path inside the zip is 130 characters). The release notes' install step says to extract to a short path.
 - Battery from `tools/remote-api/` on the local build: all pass, e2e off 36/36. `phase1_setup.py` now drops `app.last_backup_path`; before that, the "restore the unsaved project?" prompt left by a killed test app failed 16 steps of the dialogs check (`c68af243f`).
 
-Still open: real-printer checks after 17/10 (model string, camera URL, tray numbering, type names such as "PLA+", Phase 4.4 cube print with Victor), `.mcpb` packing, D11 before any release, merging `ci` into `remote-api` (Victor's call).
+Still open: real-printer checks after 17/10 (model string, camera URL, tray numbering, type names such as "PLA+", Phase 4.4 cube print with Victor), `.mcpb` packing, D11 before any release. Actions caches are per branch: the first `remote-api` run builds the dependencies again (about 2 h 15 min); later runs reuse them (about 70 min).
