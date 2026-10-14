@@ -135,7 +135,7 @@
     },
     {
       "name": "auto_orient",
-      "description": "Auto-orient all objects for printing (async job; poll get_job_status until idle)."
+      "description": "Auto-orient objects for printing (async job; poll get_job_status until idle). With object_id only that object is turned, as selecting it and pressing Auto orient does in the window; without it, every object."
     },
     {
       "name": "list_plates",

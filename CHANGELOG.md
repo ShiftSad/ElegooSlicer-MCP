@@ -7,6 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+- `auto_orient` takes an optional `object_id` to orient only that object, as selecting it and pressing Auto orient does in the window. Without it every object is oriented, as before. This needs ElegooSlicer MCP with `orient_object` in the `get_status` capabilities; an older build would ignore the id and orient everything, so the tool refuses instead of sending it.
+
 ### Fixed
 - `load_model` reports a model file that doesn't exist as `file not found: <path>`, with a hint to check that the file exists and to pass an absolute path, when the slicer answers 404 `file_not_found`. Before, that 404 read as a missing route ("not available on this OrcaSlicer build (needs M4a)"). A bare 404 `not_found` still means the route is missing.
 - `check_placement` checks each object against the plate it sits on, moved by that plate's origin from the plate list. Before, an object on plate 2 or later was compared with the first plate's bed and reported off the bed. An object parked beside the bed, on no plate, is reported as not fitting, with a note that it won't be printed. Each object now reports its `plate`, `bed`, `ring_mm` and `brim_from`.

@@ -454,6 +454,27 @@ def _plates_err(e: ApiError) -> dict:
     return _m4_err(e, "fork v2.4.2-mcp.13 or later")
 
 
+def _elegoo_build(capability: str) -> str:
+    # ElegooSlicer MCP advertises each feature in get_status "capabilities", so name the
+    # capability rather than a version number.
+    return f"an ElegooSlicer MCP build that lists '{capability}' in get_status capabilities"
+
+
+def _elegoo_err(e: ApiError, capability: str) -> dict:
+    return _m4_err(e, _elegoo_build(capability))
+
+
+async def _missing_capability(c, capability: str) -> dict | None:
+    """The error to return when the slicer does not advertise `capability`, else None.
+
+    Needed where an older build would not answer 404 but silently do something else: an
+    older POST /orient ignores the body and turns every object."""
+    caps = (await c.get_status()).get("capabilities") or []
+    if capability in caps:
+        return None
+    return {"error": f"not available on this OrcaSlicer build (needs {_elegoo_build(capability)})"}
+
+
 @mcp.tool()
 async def list_objects() -> dict:
     """List objects in the project: id (stable), name, size_mm, transform (offset/rotation/scale)
@@ -541,11 +562,26 @@ async def arrange_plate() -> dict:
 
 
 @mcp.tool()
-async def auto_orient() -> dict:
-    """Auto-orient all objects for printing (async job; poll get_job_status until idle)."""
+async def auto_orient(
+    object_id: Annotated[int | None, Field(description=(
+        "Integer id of the one object to orient, from the 'id' field of list_objects. "
+        "Leave it out to orient every object."))] = None,
+) -> dict:
+    """Auto-orient objects for printing (async job; poll get_job_status until idle). With
+    object_id only that object is turned, as selecting it and pressing Auto orient does in
+    the window; without it, every object.
+
+    Orienting one object needs ElegooSlicer MCP ('orient_object' in get_status capabilities).
+    On an older build the call is refused before anything moves, because that build would
+    ignore object_id and orient every object. An unknown id returns unknown_object. Orienting
+    leaves the object's plate unsliced, so re-slice afterwards."""
     try:
         async with _client() as c:
-            return await c.orient()
+            if object_id is not None:
+                missing = await _missing_capability(c, "orient_object")
+                if missing:
+                    return missing
+            return await c.orient(object_id)
     except ApiError as e:
         return _m4b_err(e)
 

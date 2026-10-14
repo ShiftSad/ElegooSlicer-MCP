@@ -117,8 +117,11 @@ class OrcaClient:
     async def arrange(self) -> dict:
         return await self._request("POST", "/api/v1/arrange")
 
-    async def orient(self) -> dict:
-        return await self._request("POST", "/api/v1/orient")
+    async def orient(self, object_id: int | None = None) -> dict:
+        # No body orients every object, as before; {"object_id": id} orients only that one
+        # (ElegooSlicer MCP, capability "orient_object").
+        body = {"object_id": object_id} if object_id is not None else None
+        return await self._request("POST", "/api/v1/orient", json=body)
 
     async def job_status(self) -> dict:
         return await self._request("GET", "/api/v1/jobs/status")
