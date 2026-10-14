@@ -863,10 +863,17 @@ Response Controller::handle_put_config(const std::string &body)
         // elegoo-mcp (D8): when the Print tab takes changed values it re-checks them, and
         // some combinations make it ask a Yes/No question (spiral vase needs one wall...).
         // Ask the same checks about the staged copy now and refuse the batch with the
-        // question, instead of applying it and answering the question No.
-        if (targets[0].touched && !bundle->prints.get_edited_preset().config.diff(targets[0].cfg).empty()) {
+        // question, instead of applying it and answering the question No. The Printer
+        // tab's firmware-retraction question is checked the same way.
+        {
+            std::vector<std::string> questions;
+            if (targets[0].touched && !bundle->prints.get_edited_preset().config.diff(targets[0].cfg).empty())
+                questions = print_settings_questions(targets[0].cfg);
+            if (targets[2].touched && !bundle->printers.get_edited_preset().config.diff(targets[2].cfg).empty())
+                for (const std::string &q : printer_settings_questions(targets[2].cfg))
+                    questions.push_back(q);
             std::string asked;
-            for (const std::string &q : print_settings_questions(targets[0].cfg))
+            for (const std::string &q : questions)
                 asked += (asked.empty() ? "" : "\n\n") + q;
             if (!asked.empty())
                 errors["_question"] = asked + "\n\n(The window would ask this. Send settings that agree, in the same request.)";

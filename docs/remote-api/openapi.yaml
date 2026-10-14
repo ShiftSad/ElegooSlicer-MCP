@@ -73,7 +73,10 @@ paths:
         **Atomic:** if ANY key is unknown or fails validation, NOTHING is applied
         and the response is `422` with `error: config_rejected` and per-key
         reasons (PUT /objects/{id}/config and PUT /objects/{id}/volumes/{vid}/config
-        answer a refused key the same way). On full success the
+        answer a refused key the same way). Print or printer settings the window
+        would question (spiral vase with several walls, firmware retraction with
+        wipe...) are refused the same way, with the window's question under
+        `errors._question`. On full success the
         response is `200` with every applied key.
 
         Values may be JSON strings, numbers, or booleans; they are coerced to the

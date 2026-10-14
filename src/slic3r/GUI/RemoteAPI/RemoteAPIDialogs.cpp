@@ -95,6 +95,26 @@ std::vector<std::string> print_settings_questions(const DynamicPrintConfig &prin
     return dry_run.questions;
 }
 
+// The Printer tab's question (TabPrinter::toggle_options, asked whenever its Extruder page
+// is on screen): firmware retraction with wipe on and "retract before wipe" below 100%.
+// Its No answer turns firmware retraction off again. Every extruder variant is checked:
+// the slicer refuses firmware retraction with wipe on any of them anyway
+// (PrintConfig.cpp, use_firmware_retraction vs wipe), and the Yes answer fixes them all.
+std::vector<std::string> printer_settings_questions(const DynamicPrintConfig &printer_config)
+{
+    const auto *firmware = printer_config.option<ConfigOptionBool>("use_firmware_retraction");
+    const auto *wipe     = printer_config.option<ConfigOptionBools>("wipe");
+    const auto *before   = printer_config.option<ConfigOptionPercents>("retract_before_wipe");
+    if (firmware == nullptr || !firmware->value || wipe == nullptr || before == nullptr)
+        return {};
+    for (size_t i = 0; i < wipe->values.size() && i < before->values.size(); ++i)
+        if (wipe->values[i] && before->values[i] < 100.0)
+            // The window's text (Tab.cpp), so it reads the same in every language.
+            return {_u8L("The Retract before wipe option could be only 100% when using the Firmware Retraction mode.\n"
+                         "\nShall I set it to 100% in order to enable Firmware Retraction?")};
+    return {};
+}
+
 // --- arrange / orient jobs started by the API ---------------------------------------
 // These jobs run on a worker thread and finish on the GUI thread after the request has
 // returned. A failure then opened an error dialog: the job's own (ArrangeJob: "Arrange
