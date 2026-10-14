@@ -76,12 +76,13 @@ PrinterMmsManager::~PrinterMmsManager() {}
 // matches by standardized name (removes vendor/generic prefixes, replaces dashes with spaces)
 // if multiple candidates found, selects the one with highest priority (lowest priority number)
 
-void PrinterMmsManager::getMmsTrayFilamentId(const PrinterNetworkInfo& printerNetworkInfo, PrinterMmsGroup& mmsGroup)
+void PrinterMmsManager::getMmsTrayFilamentId(const PrinterNetworkInfo& printerNetworkInfo, PrinterMmsGroup& mmsGroup,
+                                             const std::vector<double>* nozzleDiameters)
 {
     std::vector<double> currentProjectNozzleDiameters = {0.4};
     try {
         auto& app = GUI::wxGetApp();
-        if(app.preset_bundle) {
+        if(nozzleDiameters == nullptr && app.preset_bundle) { // elegoo-mcp: else the caller passed them
             auto nozzleDiameterOpt = app.preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
             if(nozzleDiameterOpt && !nozzleDiameterOpt->values.empty()) {
                 currentProjectNozzleDiameters = nozzleDiameterOpt->values;
@@ -89,7 +90,9 @@ void PrinterMmsManager::getMmsTrayFilamentId(const PrinterNetworkInfo& printerNe
         }
     } catch(...) {
     }
-    
+    if (nozzleDiameters != nullptr && !nozzleDiameters->empty()) // elegoo-mcp: read by the caller on the GUI thread
+        currentProjectNozzleDiameters = *nozzleDiameters;
+
     // build merged preset map with all filament types (vendor specific, vendor generic, orca generic)
     auto mergedPresetMap = buildPresetFilamentMap(printerNetworkInfo, currentProjectNozzleDiameters);
 
@@ -243,7 +246,8 @@ bool PrinterMmsManager::isFilamentCompatible(
 
 
 
-PrinterNetworkResult<PrinterMmsGroup> PrinterMmsManager::getPrinterMmsInfo(const std::string& printerId)
+PrinterNetworkResult<PrinterMmsGroup> PrinterMmsManager::getPrinterMmsInfo(const std::string& printerId,
+                                                                           const std::vector<double>* nozzleDiameters)
 {
     PrinterNetworkInfo printerNetworkInfo = PrinterManager::getInstance()->getPrinterNetworkInfo(printerId);
     if(printerNetworkInfo.printerId.empty()) {
@@ -255,7 +259,7 @@ PrinterNetworkResult<PrinterMmsGroup> PrinterMmsManager::getPrinterMmsInfo(const
     }
     PrinterMmsGroup mmsGroup = mmsGroupResult.data.value();
 
-    getMmsTrayFilamentId(printerNetworkInfo, mmsGroup);
+    getMmsTrayFilamentId(printerNetworkInfo, mmsGroup, nozzleDiameters); // elegoo-mcp: nozzleDiameters
     
     // match filament id in system preset to mms tray
     // set tray index

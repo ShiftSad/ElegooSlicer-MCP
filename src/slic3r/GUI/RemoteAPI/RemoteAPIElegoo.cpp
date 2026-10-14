@@ -488,6 +488,245 @@ Response Controller::handle_get_printer_history(const std::string &api_id, const
     return { 200, {{"items", items}, {"total", result->value().totalFiles}} };
 }
 
+// --- CANVAS -------------------------------------------------------------------------
+
+namespace {
+
+// The last CANVAS reply of each printer, keyed by PrinterManager's printer id. The API
+// thread and the worker threads both use it, always under `mutex`.
+struct CanvasEntry
+{
+    bool                                  fetching { false };  // a worker is asking the printer now
+    bool                                  has_reply { false };
+    std::chrono::steady_clock::time_point replied_at;
+    PrinterNetworkErrorCode               code { PrinterNetworkErrorCode::SUCCESS };
+    PrinterMmsGroup                       group {};            // the reply, when code is SUCCESS
+};
+
+struct CanvasCache
+{
+    std::mutex                         mutex;
+    std::condition_variable            changed; // a worker stored a reply
+    std::map<std::string, CanvasEntry> entries;
+};
+
+struct CanvasReply
+{
+    PrinterNetworkErrorCode code;
+    PrinterMmsGroup         group;
+    int                     age_s; // seconds since the printer sent it
+};
+
+} // namespace
+
+// Created once and never freed: a worker still waiting for a slow printer when the app
+// exits must not find it destroyed.
+static CanvasCache &canvas_cache()
+{
+    static CanvasCache *cache = new CanvasCache();
+    return *cache;
+}
+
+// The CANVAS structs have no default values, and the printer layer never fills some of
+// their fields (unit temperature and humidity, the trays' bed temperatures and serial
+// number, the external spool vtTray), nor the group's flags when the printer sent no
+// unit data. Zero those as soon as a reply arrives, so nothing later can read garbage.
+static void clear_unset_canvas_fields(PrinterMmsGroup &group)
+{
+    if (group.mmsList.empty()) {
+        group.connected  = false;
+        group.connectNum = 0;
+        group.autoRefill = false;
+    }
+    group.vtTray = PrinterMmsTray{};
+    for (PrinterMms &unit : group.mmsList) {
+        unit.temperature = 0;
+        unit.humidity    = 0;
+        for (PrinterMmsTray &tray : unit.trayList) {
+            tray.minBedTemp   = 0;
+            tray.maxBedTemp   = 0;
+            tray.serialNumber = 0;
+        }
+    }
+}
+
+// Worker side of read_canvas: asks the printer and stores the reply (or the error) in the
+// printer's entry, also when the API request has stopped waiting for it, so the next
+// request can use it.
+// PrinterMmsManager::getPrinterMmsInfo is the call behind the GUI's CANVAS sync dialog
+// and send dialog: it asks the printer (MQTT), names the trays A1..A4, B1.. by unit
+// order and matches every loaded tray to a filament preset. It would read the nozzle
+// diameters from the GUI's printer preset itself; the caller read them on the GUI
+// thread instead.
+static void fetch_canvas(const std::string &printer_id, const std::vector<double> &nozzle_diameters)
+{
+    PrinterNetworkErrorCode code  = PrinterNetworkErrorCode::UNKNOWN_ERROR;
+    PrinterMmsGroup         group {};
+    try {
+        PrinterNetworkResult<PrinterMmsGroup> reply = PrinterMmsManager::getInstance()->getPrinterMmsInfo(printer_id, &nozzle_diameters);
+        code = reply.code;
+        if (reply.isSuccess() && reply.hasData()) {
+            group = reply.value();
+            clear_unset_canvas_fields(group);
+        }
+    } catch (...) {
+        // Keep UNKNOWN_ERROR: the entry below must be released whatever happened.
+    }
+    CanvasCache &cache = canvas_cache();
+    {
+        std::lock_guard<std::mutex> lock(cache.mutex);
+        CanvasEntry &entry = cache.entries[printer_id];
+        entry.fetching   = false;
+        entry.has_reply  = true;
+        entry.replied_at = std::chrono::steady_clock::now();
+        entry.code       = code;
+        entry.group      = group;
+    }
+    cache.changed.notify_all();
+}
+
+// The printer's CANVAS state. A reply younger than CANVAS_CACHE_S is reused, and while
+// one request is asking the printer, the other requests for that printer wait for its
+// answer instead of sending their own: the CC2 silently ignores requests for a while
+// when it gets 3 or more in a row. Errors are kept for CANVAS_CACHE_S too, which also
+// gives a printer that stopped answering a rest.
+// Throws std::runtime_error("printer_timeout") when no answer comes within timeout_s.
+static CanvasReply read_canvas(const std::string &printer_id, const std::vector<double> &nozzle_diameters, int timeout_s)
+{
+    using Clock = std::chrono::steady_clock;
+    const Clock::time_point deadline = Clock::now() + std::chrono::seconds(timeout_s);
+    CanvasCache &cache = canvas_cache();
+    std::unique_lock<std::mutex> lock(cache.mutex);
+    CanvasEntry &entry = cache.entries[printer_id]; // a std::map entry: the reference stays valid
+
+    if (!cache.changed.wait_until(lock, deadline, [&entry] { return !entry.fetching; }))
+        throw std::runtime_error("printer_timeout");
+    const bool fresh = entry.has_reply && Clock::now() - entry.replied_at < std::chrono::seconds(CANVAS_CACHE_S);
+    if (!fresh) {
+        entry.fetching = true; // released by fetch_canvas, even after a timeout here
+        lock.unlock();
+        const int left_s = (int) std::chrono::duration_cast<std::chrono::seconds>(deadline - Clock::now()).count();
+        run_on_worker([printer_id, nozzle_diameters] { fetch_canvas(printer_id, nozzle_diameters); }, left_s);
+        lock.lock();
+    }
+    const int age_s = (int) std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - entry.replied_at).count();
+    return { entry.code, entry.group, age_s };
+}
+
+static const char *tray_status_name(TrayStatus status)
+{
+    switch (status) {
+    case TRAY_STATUS_DISCONNECTED:              return "empty";
+    case TRAY_STATUS_PRELOADED:                 return "preloaded";
+    case TRAY_STATUS_LOADED:                    return "loaded";
+    case TRAY_STATUS_PRELOADED_UNKNOWN_FILAMENT:
+    case TRAY_STATUS_LOADED_UNKNOWN_FILAMENT:   return "unknown_filament";
+    case TRAY_STATUS_ERROR:                     return "error";
+    default:                                    return "unknown";
+    }
+}
+
+// "#rrggbb", normalised as the CANVAS sync does it (normalize_color in PlaterExt.cpp),
+// or null when the printer sent no colour.
+static nlohmann::json tray_color(const std::string &color)
+{
+    std::string c;
+    for (char ch : color)
+        if (!std::isspace((unsigned char) ch))
+            c += (char) std::tolower((unsigned char) ch);
+    if (c.empty())
+        return nullptr;
+    if (c[0] != '#')
+        c = "#" + c;
+    return c.substr(0, 7);
+}
+
+// The CANVAS reply as JSON. Units and trays keep the printer's order; a tray's id is the
+// name the GUI shows (A1..A4 for the first unit, B1.. for the second). The filament
+// fields of an empty tray are null. temperature_c, humidity, bed_temp and external_spool
+// are always null: the printer layer does not provide them.
+static nlohmann::json canvas_json(const PrinterMmsGroup &group)
+{
+    nlohmann::json units  = nlohmann::json::array();
+    nlohmann::json active = nullptr;
+    for (const PrinterMms &unit : group.mmsList) {
+        nlohmann::json trays = nlohmann::json::array();
+        for (size_t i = 0; i < unit.trayList.size(); ++i) {
+            const PrinterMmsTray &tray  = unit.trayList[i];
+            const bool            empty = tray.status == TRAY_STATUS_DISCONNECTED;
+            nlohmann::json nozzle_temp = nullptr;
+            if (!empty && (tray.minNozzleTemp > 0 || tray.maxNozzleTemp > 0))
+                nozzle_temp = {std::lround(tray.minNozzleTemp), std::lround(tray.maxNozzleTemp)};
+            trays.push_back({
+                {"id", string_or_null(tray.trayName)},
+                {"unit", unit.mmsId},
+                {"index", i},
+                {"status", tray_status_name(tray.status)},
+                {"type", empty ? nlohmann::json() : string_or_null(tray.filamentType)},
+                {"name", empty ? nlohmann::json() : string_or_null(tray.filamentName)},
+                {"vendor", empty ? nlohmann::json() : string_or_null(tray.vendor)},
+                {"color", empty ? nlohmann::json() : tray_color(tray.filamentColor)},
+                {"nozzle_temp", nozzle_temp},
+                {"bed_temp", nullptr},
+                // The filament preset the CANVAS dialog matched to this tray (empty when
+                // the tray is not loaded or nothing matched); the sync uses it.
+                {"matched_preset", string_or_null(tray.filamentPresetName)},
+                {"matched_alias", string_or_null(tray.filamentPresetAlias)},
+            });
+            if (unit.mmsId == group.activeMmsId && tray.trayId == group.activeTrayId)
+                active = {{"unit", unit.mmsId}, {"tray", string_or_null(tray.trayName)}};
+        }
+        units.push_back({
+            {"id", unit.mmsId},
+            {"name", string_or_null(unit.mmsName)},
+            {"model", string_or_null(unit.mmsModel)},
+            {"connected", unit.connected},
+            {"temperature_c", nullptr},
+            {"humidity", nullptr},
+            {"trays", trays},
+        });
+    }
+    return {
+        {"connected", group.connected},
+        {"auto_refill", group.autoRefill},
+        {"active", active},
+        {"units", units},
+        {"external_spool", nullptr},
+    };
+}
+
+// GET /printers/{id}/canvas
+Response Controller::handle_get_canvas(const std::string &api_id)
+{
+    PrinterNetworkInfo p;
+    if (!find_printer(api_id, p))
+        return { 404, {{"error", "printer_not_found"}} };
+    if (p.connectStatus != PRINTER_CONNECT_STATUS_CONNECTED)
+        return { 409, {{"error", "printer_offline"}} };
+    // The send dialog's own test (PrintSendDialogEx::getPrinterMmsInfo): a printer without
+    // multi-filament support has no CANVAS to ask.
+    if (!p.systemCapabilities.supportsMultiFilament)
+        return { 409, {{"error", "canvas_unsupported"}} };
+
+    // The tray matching only offers presets for the nozzle of the project's printer
+    // preset. That preset is GUI data: read it here, on the GUI thread, and hand it over.
+    nlohmann::json nozzles = run_on_ui([]() -> nlohmann::json {
+        nlohmann::json out = nlohmann::json::array();
+        const auto *opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+        if (opt != nullptr)
+            for (double d : opt->values)
+                out.push_back(d);
+        return out;
+    });
+
+    const CanvasReply reply = read_canvas(p.printerId, nozzles.get<std::vector<double>>(), CANVAS_TIMEOUT_S);
+    if (reply.code != PrinterNetworkErrorCode::SUCCESS)
+        return printer_error(reply.code);
+    nlohmann::json j = canvas_json(reply.group);
+    j["age_s"] = reply.age_s;
+    return { 200, j };
+}
+
 // --- route group --------------------------------------------------------------------
 
 // Every /api/v1/printers route (dispatch sends the whole prefix here).
@@ -515,6 +754,8 @@ Response Controller::route_elegoo(const Request &req)
                 return handle_get_printer_status(id, query);
             if (req.method == "GET" && (action == "tasks" || action == "files"))
                 return handle_get_printer_history(id, action, query);
+            if (req.method == "GET" && action == "canvas")
+                return handle_get_canvas(id);
         }
         return { 404, {{"error", "not_found"}} };
     } catch (const std::runtime_error &e) {

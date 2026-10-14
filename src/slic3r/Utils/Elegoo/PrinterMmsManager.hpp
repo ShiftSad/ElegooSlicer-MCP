@@ -17,8 +17,11 @@ public:
     PrinterMmsManager(const PrinterMmsManager&) = delete;
     PrinterMmsManager& operator=(const PrinterMmsManager&) = delete;
 
-    PrinterNetworkResult<PrinterMmsGroup> getPrinterMmsInfo(const std::string& printerId);
-  
+    // elegoo-mcp: nozzleDiameters, when given, replace the read of the edited printer preset
+    // (GUI data), so a caller off the GUI thread can read them on the GUI thread first.
+    PrinterNetworkResult<PrinterMmsGroup> getPrinterMmsInfo(const std::string& printerId,
+                                                            const std::vector<double>* nozzleDiameters = nullptr);
+
     void getFilamentMmsMapping(std::vector<PrintFilamentMmsMapping>& printFilamentMmsMapping, const PrinterMmsGroup& mmsGroup);
     void saveFilamentMmsMapping(std::vector<PrintFilamentMmsMapping>& printFilamentMmsMapping);
     void removeFilamentMmsMapping(const std::string& filamentType, const std::string& filamentAlias, const std::string& filamentColor);
@@ -26,7 +29,8 @@ public:
 private:
     PrinterMmsManager();
 
-    void getMmsTrayFilamentId(const PrinterNetworkInfo& printerNetworkInfo, PrinterMmsGroup& mmsGroup);
+    void getMmsTrayFilamentId(const PrinterNetworkInfo& printerNetworkInfo, PrinterMmsGroup& mmsGroup,
+                              const std::vector<double>* nozzleDiameters = nullptr); // elegoo-mcp: see getPrinterMmsInfo
     
     // JSON file operations
     nlohmann::json loadFilamentMmsMappingFromFile();

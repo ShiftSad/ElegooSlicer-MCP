@@ -113,6 +113,7 @@ private:
     Response handle_get_printer_status(const std::string &id, const std::string &query); // GET /printers/{id}/status
     Response handle_get_printer_history(const std::string &id, const std::string &what,  // GET /printers/{id}/tasks|files
                                         const std::string &query);
+    Response handle_get_canvas(const std::string &id);    // GET /printers/{id}/canvas
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);
