@@ -1001,7 +1001,12 @@ components:
         capabilities:
           type: array
           items: { type: string }
-          example: [status, config, slice, events, plates]
+          example: [status, config, slice, events, plates, orient_object, view, volumes, project_save, paint]
+          description: |
+            Feature flags. ElegooSlicer MCP adds `orient_object` (POST /orient with
+            object_id), `view` (POST /view and GET /status view), `volumes`
+            (/objects/{id}/volumes), `project_save` (POST /project/save) and `paint`
+            (POST /objects/{id}/paint).
         plates:
           type: object
           description: How many plates the project has and which one is current.

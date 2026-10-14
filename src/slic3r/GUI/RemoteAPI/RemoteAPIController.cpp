@@ -308,7 +308,9 @@ Response Controller::handle_status()
             {"orca_compatible_version", ORCA_COMPATIBLE_VERSION},
             {"mcp_build", ELEGOO_MCP_RELEASE},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates",
+                              // elegoo-mcp: routes in RemoteAPIModelOps.cpp
+                              "orient_object", "view", "volumes", "project_save", "paint"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
             {"objects", objects},
