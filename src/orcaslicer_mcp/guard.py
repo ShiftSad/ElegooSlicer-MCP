@@ -10,6 +10,8 @@ Some of those keys are not slicing settings at all:
   "send to printer" uploads, how it connects, and with which credentials.
 - printer_model / printer_technology: can switch OrcaSlicer onto code paths that run
   post_process on every slice.
+- ElegooSlicer's support_mms and support_wan_network: switch the CANVAS handling and the
+  cloud device path, i.e. how and where prints are sent.
 
 An assistant holding the API token is steerable by text it reads (model names, G-code,
 web pages), so these keys are refused here, before the request reaches OrcaSlicer. Writing
@@ -49,7 +51,14 @@ PHYSICAL_PRINTER_KEYS = frozenset({
     "printhost_ssl_ignore_revoke",
 })
 
-BLOCKED_EXACT = PHYSICAL_PRINTER_KEYS | {"post_process", "printer_model", "filename_format"}
+# ElegooSlicer-only printer switches: support_mms turns the CANVAS (multi-material) handling
+# on or off and support_wan_network the cloud (WAN) device path, so they decide how and where
+# prints are sent, like the connection keys above. ElegooSlicer MCP refuses them in the slicer
+# too.
+ELEGOO_PRINTER_KEYS = frozenset({"support_mms", "support_wan_network"})
+
+BLOCKED_EXACT = (PHYSICAL_PRINTER_KEYS | ELEGOO_PRINTER_KEYS
+                 | {"post_process", "printer_model", "filename_format"})
 
 # Keys ending in _gcode that are plain toggles, not G-code templates.
 _GCODE_SUFFIX_EXEMPT = frozenset({"emit_machine_limits_to_gcode"})

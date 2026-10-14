@@ -53,6 +53,26 @@ def test_printer_agent_and_flashforge_target_are_protected():
     assert guard.is_sensitive("flashforge_serial_number")
 
 
+def test_elegoo_device_switches_are_protected():
+    # ElegooSlicer's CANVAS and cloud switches decide how and where prints are sent.
+    assert guard.is_sensitive("support_mms")
+    assert guard.is_sensitive("support_wan_network")
+
+
+@respx.mock
+async def test_set_config_refuses_support_mms_change(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{BASE}/api/v1/config").mock(return_value=httpx.Response(
+        200, json={"config": {"support_mms": "1"}}))
+    put = respx.put(f"{BASE}/api/v1/config").mock(return_value=httpx.Response(200, json={}))
+    out = await srv.set_config({"support_mms": False})
+    assert "blocked_by_local_policy" in out["error"] and "support_mms" in out["error"]
+    assert not put.called
+    # Writing back the value it already has stays allowed (restores keep working).
+    put.mock(return_value=httpx.Response(200, json={"applied": ["support_mms"], "errors": {}}))
+    assert (await srv.set_config({"support_mms": True}))["applied"] == ["support_mms"]
+
+
 # --- value comparison mirrors the fork's json_value_to_config_string ----------
 
 def test_as_config_text_matches_fork_serialization():
