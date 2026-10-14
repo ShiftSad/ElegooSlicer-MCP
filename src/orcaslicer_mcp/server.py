@@ -763,7 +763,8 @@ async def paint_region(
         "degrees or more from vertical, the usual rule for needing support; 0 = every "
         "downward-facing face. Leave it out to paint every face in the box."))] = None,
     clear: Annotated[bool, Field(description=(
-        "True with no box: erase this layer's paint on the whole object."))] = False,
+        "True: erase this layer's paint on the whole object. Takes no box; to erase only "
+        "inside a box, use state='none' with box_min/box_max."))] = False,
 ) -> dict:
     """Paint support, seam or color onto the faces of one object inside a box, as the paint
     tools in the window do with a brush. A face is painted when its centre lies in the box
@@ -781,6 +782,13 @@ async def paint_region(
     if (box_min is None) != (box_max is None):
         return {"error": "box_needs_both_corners",
                 "hint": "Pass box_min and box_max together, or neither to paint the whole object."}
+    # The spec defines clear only for the whole object. Refuse it with a box rather than let
+    # the slicer guess: a model that wanted to erase one spot must not wipe every brush
+    # stroke on that layer.
+    if clear and box_min is not None:
+        return {"error": "clear_takes_no_box",
+                "hint": "clear=True erases the whole object's paint on this layer. To erase "
+                        "only inside the box, pass state='none' with box_min/box_max instead."}
     body: dict = {"layer": layer}
     if state is not None:
         body["state"] = state

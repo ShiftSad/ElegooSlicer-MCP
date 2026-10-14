@@ -332,3 +332,13 @@ async def test_paint_needs_an_elegoo_build(monkeypatch):
     respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
     out = await srv.paint_region(42, "seam", state="enforce")
     assert "ElegooSlicer MCP" in out["error"] and "'paint'" in out["error"]
+
+
+@respx.mock
+async def test_paint_clear_with_a_box_is_refused(monkeypatch):
+    # clear erases the whole layer; with a box the caller most likely meant state='none'.
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={}))
+    out = await srv.paint_region(42, "support", box_min=[0, 0, 0], box_max=[10, 10, 10], clear=True)
+    assert out["error"] == "clear_takes_no_box"
+    assert not route.called
