@@ -7965,6 +7965,8 @@ void Plater::priv::trigger_auto_reslice_now()
 {
     this->auto_reslice_pending = false;
 
+    // elegoo-mcp (D8): wrapped so that the end below runs after every early return.
+    auto reslice_if_needed = [this]() {
     AppConfig* cfg = wxGetApp().app_config;
     if (cfg == nullptr || !cfg->get_bool("auto_slice_after_change"))
         return;
@@ -7983,6 +7985,13 @@ void Plater::priv::trigger_auto_reslice_now()
         return;
 
     this->q->reslice();
+    };
+    reslice_if_needed();
+    // elegoo-mcp (D8): when no slice is running now, the mark an API change set for this auto
+    // slice (schedule_auto_reslice_if_needed) has no slice to go with: drop it, or the next slice
+    // the user starts would show its critical error as a notification instead of a dialog.
+    if (!this->background_process.running() && !this->m_is_slicing)
+        RemoteAPI::mark_api_slice(false);
 }
 
 int Plater::priv::auto_slice_delay_seconds() const
@@ -10389,6 +10398,7 @@ void Plater::priv::on_action_slice_plate(SimpleEvent&)
         Model::setExtruderParams(config, numExtruders);
         Model::setPrintSpeedTable(config, print_config);
         m_slice_all = false;
+        RemoteAPI::mark_api_slice(false); // elegoo-mcp (D8): the user's slice keeps its error dialog
         q->reslice();
         q->select_view_3D("Preview");
     }
@@ -10412,6 +10422,7 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
         m_cur_slice_plate = 0;
         //select plate
         q->select_plate(m_cur_slice_plate);
+        RemoteAPI::mark_api_slice(false); // elegoo-mcp (D8): the user's slice keeps its error dialog
         q->reslice();
         if (!m_is_publishing)
             q->select_view_3D("Preview");

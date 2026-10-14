@@ -219,6 +219,12 @@ std::deque<std::shared_ptr<UiTask>> s_deferred_ui_tasks;
 void UiTask::run()
 {
     if (cancelled->load()) return; // caller already returned 504; do nothing
+    // elegoo-mcp: ElegooSlicer is rebuilding its window (language change): the tabs, the printer
+    // links and the plater's panels are being torn down, so nothing may touch them now.
+    if (wxGetApp().is_recreating_gui()) {
+        promise->set_exception(std::make_exception_ptr(std::runtime_error("gui_rebuilding")));
+        return;
+    }
     if (s_backup_in_progress) {    // parked until set_backup_in_progress(false)
         s_deferred_ui_tasks.push_back(shared_from_this());
         return;
@@ -2639,6 +2645,8 @@ Response Controller::dispatch(const Request &req)
     } catch (const std::exception &e) {
         if (std::string(e.what()) == "ui_timeout")
             return { 504, {{"error", "ui_timeout"}} };
+        if (std::string(e.what()) == "gui_rebuilding") // elegoo-mcp: see UiTask::run
+            return { 503, {{"error", "gui_rebuilding"}, {"hint", "ElegooSlicer is rebuilding its window; retry in a few seconds"}} };
         return { 500, {{"error", "internal"}, {"detail", e.what()}} };
     }
 }
