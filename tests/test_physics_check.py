@@ -111,13 +111,29 @@ def test_zero_flow_demand_passes_temp_check():
     assert r.status == "pass"
 
 def test_subbase_temp_reports_zero_not_negative():
-    # limit 12 < demand 14.3, so the estimate is reported as a failure (within it, a warning)
     cfg = {"layer_height": "0.4", "line_width": "0.85", "nozzle_diameter": "0.8",
-           "filament_max_volumetric_speed": "12", "filament_type": "PLA",
+           "filament_max_volumetric_speed": "16", "filament_type": "PLA",
            "nozzle_temperature": "180", "inner_wall_speed": "45",
            "inner_wall_line_width": "0.88"}
     r = _by(run_checks(cfg), "temp_vs_flow")
     assert r.status == "fail" and "~0.0mm3/s" in r.detail
+
+
+def test_cold_nozzle_fails_even_within_the_preset_limit():
+    # PLA at 180C is below the 195C base, so the generic estimate is zero. The preset's
+    # limit (21) was set for a warmer nozzle and cannot vouch for this one: still blocked,
+    # although the demand (16.3 mm3/s) is within that limit and flow_ceiling passes.
+    cfg = {"layer_height": "0.2", "nozzle_diameter": "0.4", "line_width": "0.45",
+           "outer_wall_speed": "200", "filament_max_volumetric_speed": "21",
+           "filament_type": "PLA", "nozzle_temperature": "180"}
+    rs = run_checks(cfg)
+    assert _by(rs, "flow_ceiling").status == "pass"
+    r = _by(rs, "temp_vs_flow")
+    assert r.status == "fail" and "~0.0mm3/s" in r.detail
+    # At exactly the base temperature the estimate is still zero, so it still fails.
+    assert _by(run_checks(cfg | {"nozzle_temperature": "195"}), "temp_vs_flow").status == "fail"
+    # Just above it the preset's limit is trusted again (warning only).
+    assert _by(run_checks(cfg | {"nozzle_temperature": "196"}), "temp_vs_flow").status == "warn"
 
 def test_line_width_ratio_bounds():
     base = {"nozzle_diameter": "0.8", "layer_height": "0.4"}

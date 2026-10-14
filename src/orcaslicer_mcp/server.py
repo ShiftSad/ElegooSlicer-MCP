@@ -757,7 +757,8 @@ async def check_profile_physics(changes: dict | None = None) -> dict:
 
     The filament preset's own filament_max_volumetric_speed is the flow authority: when the
     demand is within it, the generic melt-rate-vs-temperature estimate (temp_vs_flow) only
-    warns, so a vendor profile tuned above that estimate is not blocked."""
+    warns, so a vendor profile tuned above that estimate is not blocked. A nozzle at or
+    below the material's base temperature (e.g. PLA 195C) still fails temp_vs_flow."""
     try:
         async with _client() as c:
             cfg = await c.get_config(None)

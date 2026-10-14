@@ -131,13 +131,16 @@ def run_checks(cfg: dict[str, str]) -> list[CheckResult]:
         if max_flow <= sustainable:
             out.append(CheckResult("temp_vs_flow", "pass",
                 f"{mat}@{temp:g}C sustains ~{sustainable:.1f}mm3/s; profile demands {max_flow:.1f}mm3/s"))
-        elif max_flow <= ceil:
+        elif max_flow <= ceil and temp > base:
             # The melt estimate is a generic rule of thumb for the material, while the
             # filament preset's own filament_max_volumetric_speed is set for that filament
             # (vendor presets calibrate it for their hotend). The demand is within that
             # declared limit, so the preset is the authority: warn, never block. Blocking
             # here stopped the stock Elegoo Centauri Carbon 2 profile (PLA 210C: estimate
             # 12.5, demand 18.9, preset limit 21).
+            # The exception is a nozzle at or below the material's base temperature, where
+            # the estimate is zero: the preset's limit was set for a warmer nozzle, so it
+            # cannot vouch for this one, and that case still fails below.
             out.append(CheckResult("temp_vs_flow", "warn",
                 f"generic {mat}@{temp:g}C estimate sustains ~{sustainable:.1f}mm3/s, below the "
                 f"profile's {max_flow:.1f}mm3/s; the filament preset's own limit "
