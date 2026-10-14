@@ -1239,6 +1239,9 @@ Response Controller::handle_slice()
             }, "slice.error");
             return {{"error", "slice_not_started"}};
         }
+        // elegoo-mcp (D8): a critical error of this slice comes after the reply; it goes to
+        // a notification and /slice/status, not a dialog (RemoteAPIDialogs.hpp).
+        mark_api_slice(true);
         return {{"started", true}};
     });
     if (r.contains("error")) {
@@ -1276,6 +1279,7 @@ Response Controller::handle_slice_cancel()
         bool was_slicing = slice_state().state == "slicing";
         if (plater != nullptr)
             plater->stop_background_slicing();
+        mark_api_slice(false); // elegoo-mcp (D8): no API slice is running any more
         set_slice_state([](SliceState &s) {
             s.state = "idle"; s.percent = -1; s.message = "cancelled";
             s.stats = nullptr; s.warnings = nlohmann::json::array();

@@ -39,6 +39,14 @@ bool skip_dialog(const std::string &text, bool error = false);
 // skip_dialog().
 bool api_question(const std::string &text);
 
+// Slices: POST /slice marks the slice it starts (mark_api_slice(true); POST
+// /slice/cancel clears the mark). Plater's slice-completed handler takes the mark once
+// per completed slice: true means POST /slice started that slice, so a critical error
+// goes to a notification and GET /slice/status instead of an error dialog that would
+// open after the request returned. A slice started in the window keeps its dialog.
+void mark_api_slice(bool started);
+bool take_api_slice();
+
 // --- For the API side (RemoteAPI*.cpp). GUI thread only.
 
 // What the hooks above skipped during one API request's GUI work. Created at the start

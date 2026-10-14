@@ -69,6 +69,18 @@ bool api_question(const std::string &text)
     return log->answer_yes;
 }
 
+// Set by POST /slice when it starts a slice, taken by the next slice-completed event.
+static bool s_api_slice = false; // GUI thread only
+
+void mark_api_slice(bool started) { s_api_slice = started; }
+
+bool take_api_slice()
+{
+    const bool api = s_api_slice;
+    s_api_slice    = false;
+    return api;
+}
+
 // Runs the Print tab's own checks (TabPrint::update -> update_print_fff_config) on a copy
 // of the staged print settings, in a quiet log: nothing is shown or changed, and the
 // questions the checks would ask are returned (spiral vase needs one wall, alternate

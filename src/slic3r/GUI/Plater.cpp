@@ -10099,6 +10099,9 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": ignore this event %1%") % evt.status();
         return;
     }
+    // elegoo-mcp (D8): whether POST /slice started this slice (see below).
+    const bool api_slice = RemoteAPI::take_api_slice();
+
     //BBS: add project slice logic
     bool is_finished = !m_slice_all || (m_cur_slice_plate == (partplate_list.get_plate_count() - 1));
 
@@ -10129,7 +10132,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     if (evt.error()) {
         auto message = evt.format_error_message();
         if (evt.critical_error()) {
-            if (q->m_tracking_popup_menu) {
+            if (api_slice) {
+                // elegoo-mcp (D8): started by the Remote API, which returned long ago: nobody may
+                // be there to close an error dialog. Show the error like a non-critical one;
+                // GET /slice/status reports it too.
+                notification_manager->push_slicing_error_notification(message.first, {});
+                notification_manager->set_slicing_progress_hidden();
+            } else if (q->m_tracking_popup_menu) {
                 // We don't want to pop-up a message box when tracking a pop-up menu.
                 // We postpone the error message instead.
                 q->m_tracking_popup_menu_error_message = message.first;
