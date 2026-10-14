@@ -218,7 +218,8 @@ async def test_mapping_table_and_problems(monkeypatch):
     lines = out["table_markdown"].splitlines()
     assert lines[2] == "| 1 | Elegoo PLA @ECC2 (PLA) | #ffffff | A1 PLA #ffffff | ok |"
     assert lines[3] == "| 3 | Elegoo PETG @ECC2 (PETG) | #00ff00 | none | no_tray |"
-    assert out["summary"].startswith("Plate 1: slot 3: no ready tray holds this filament")
+    # the window's numbering for the user (plate index 1 is "Plate 2"), as prepare_print's summary
+    assert out["summary"].startswith("Plate 2: slot 3: no ready tray holds this filament")
 
 
 @respx.mock
@@ -231,7 +232,7 @@ async def test_mapping_all_ok_on_an_unsliced_plate(monkeypatch):
              "tray": {"unit": "0", "tray": "A1", "type": "PLA", "color": "#ffffff"}, "issues": []}]}))
     out = await srv.preview_filament_mapping()
     assert "plate" not in route.calls.last.request.url.params
-    assert out["summary"].startswith("All 1 filament(s) of plate 0 have a ready matching tray.")
+    assert out["summary"].startswith("All 1 filament(s) of plate 1 have a ready matching tray.")
     assert "not sliced yet" in out["summary"]
 
 

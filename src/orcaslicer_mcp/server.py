@@ -2605,7 +2605,8 @@ async def preview_filament_mapping(
 
     Returns the slicer's reply ({plate, sliced, ok, filaments: [{slot, preset, type, color,
     weight_g, tray: {unit, tray, type, color} or null, issues}]}) plus table_markdown (slot ->
-    tray, one row each) and summary, to relay as given. issues: no_tray (the print could not
+    tray, one row each) and summary, to relay as given (it numbers plates from 1, as the window
+    does; plate is the 0-based index). issues: no_tray (the print could not
     start), type_mismatch, color_mismatch, tray_not_ready. ok is true when no filament has an
     issue. The filaments come from the slice when the plate is sliced (weight_g then set), else
     from what the plate's objects use. Fix problems by loading the right filament on the
@@ -2632,10 +2633,14 @@ async def preview_filament_mapping(
                     f"{tray_text} | {', '.join(issues) or 'ok'} |")
         problems += [f"slot {f.get('slot')}: {_MAPPING_ISSUES.get(i, i)}" for i in issues]
     count = len(rows) - 2
+    # The user sees plates numbered from 1, as the window and prepare_print's summary number
+    # them; the JSON keeps the API's 0-based index.
+    plate_no = out.get("plate")
+    plate_text = f"plate {plate_no + 1}" if isinstance(plate_no, int) else "the plate"
     if out.get("ok"):
-        summary = f"All {count} filament(s) of plate {out.get('plate')} have a ready matching tray."
+        summary = f"All {count} filament(s) of {plate_text} have a ready matching tray."
     else:
-        summary = f"Plate {out.get('plate')}: " + "; ".join(problems) + "."
+        summary = plate_text[0].upper() + plate_text[1:] + ": " + "; ".join(problems) + "."
     if not out.get("sliced"):
         summary += " The plate is not sliced yet, so this is from what its objects use."
     return {**out, "table_markdown": "\n".join(rows), "summary": summary}
