@@ -1,13 +1,14 @@
 // src/slic3r/GUI/RemoteAPI/RemoteAPIProject.cpp
 //
 // elegoo-mcp: project routes ElegooSlicer MCP adds to the Remote API: filament slots,
-// split, undo/redo and layer changes. Like
+// split, undo/redo, layer changes and the purge part of the slice breakdown. Like
 // RemoteAPIModelOps.cpp, every handler runs its GUI work inside run_on_ui and repeats
 // the steps of the matching GUI action, leaving out that action's dialogs: an API call
 // must never open a modal window, because nobody may be at the machine to close it.
 #include "RemoteAPIController.hpp"
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -871,6 +872,34 @@ Response Controller::handle_delete_layer_change(int plate, const std::string &ta
         return { 409, r }; // slicing, preview_only
     }
     return { 200, r };
+}
+
+// --- slice breakdown: purge ----------------------------------------------------------
+// stats.breakdown.purge of GET /slice/status: what changing filament costs, with the
+// numbers the preview's legend shows. The G-code processor counts the changes, adds
+// their time to the load/unload/tool-change totals (on the Centauri Carbon 2 the time of
+// each CANVAS change, M6211, is estimated in ElegooGCodeProcessorHelper.cpp) and keeps
+// the purged volume per filament (the legend's "Flushed" column). Those times sit on
+// tool-change moves, so no extrusion role of the breakdown includes them.
+nlohmann::json breakdown_purge_json(const GCodeProcessorResult &res)
+{
+    const PrintEstimatedStatistics &stats = res.print_statistics;
+    double flush_mm = 0., flush_g = 0.;
+    for (const auto &[filament, volume_mm3] : stats.flush_per_filament) { // 0-based filament index
+        // Same conversion as the legend (GCodeViewer, get_used_filament_from_volume).
+        const double diameter = filament < res.filament_diameters.size() ? res.filament_diameters[filament] : 1.75;
+        const double density  = filament < res.filament_densities.size() ? res.filament_densities[filament] : 0.;
+        if (diameter > 0.)
+            flush_mm += volume_mm3 / (PI * 0.25 * diameter * diameter);
+        flush_g += volume_mm3 * density * 0.001;
+    }
+    return {
+        {"filament_changes", stats.total_filament_changes},
+        // The legend's tool-change time (GCodeViewer: load + unload + tool change).
+        {"filament_change_time_s", stats.total_filament_load_time + stats.total_filament_unload_time + stats.total_tool_change_time},
+        {"flush_g", flush_g},
+        {"flush_mm", flush_mm},
+    };
 }
 
 }}} // namespace

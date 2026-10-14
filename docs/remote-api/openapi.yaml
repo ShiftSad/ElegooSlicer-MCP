@@ -1415,7 +1415,8 @@ components:
             (/objects/{id}/volumes), `project_save` (POST /project/save) and `paint`
             (POST /objects/{id}/paint).
             Also `filaments` (/filaments), `split` (POST /objects/{id}/split), `undo`
-            (POST /undo, /redo), `layer_changes` (/plates/{i}/layer_changes).
+            (POST /undo, /redo), `layer_changes` (/plates/{i}/layer_changes),
+            `breakdown_purge` (stats.breakdown.purge of GET /slice/status).
         plates:
           type: object
           description: How many plates the project has and which one is current.
@@ -1499,6 +1500,24 @@ components:
         filament_used_mm: { type: number, example: 1582 }
         filament_used_g: { type: number, example: 4.72 }
         total_cost: { type: number, example: 0.094 }
+        breakdown:
+          type: object
+          description: |
+            Per-feature breakdown (`roles`, ...). With the `breakdown_purge` capability it
+            also has `purge`.
+          properties:
+            purge: { $ref: "#/components/schemas/PurgeStats" }
+    PurgeStats:
+      type: object
+      description: |
+        What changing filament costs, as the preview's legend shows it. On the Centauri
+        Carbon 2 the start G-code's first filament load (M6211) counts in the time and
+        flush too, so a single-filament print reports that load with filament_changes 0.
+      properties:
+        filament_changes: { type: integer }
+        filament_change_time_s: { type: number, description: "Load + unload + tool change time; in the total, in no role." }
+        flush_g: { type: number }
+        flush_mm: { type: number }
     SliceWarning:
       type: object
       properties:

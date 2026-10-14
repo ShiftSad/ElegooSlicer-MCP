@@ -8,7 +8,7 @@
 #include <mutex>
 #include <set>
 
-namespace Slic3r { class Model; class DynamicPrintConfig; }
+namespace Slic3r { class Model; class DynamicPrintConfig; struct GCodeProcessorResult; }
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -22,6 +22,8 @@ void invalidate_object_plates(int obj_idx); // mark the plates holding the objec
 // every config write (unknown, sensitive and read-only keys are refused into errors).
 void stage_object_config(DynamicPrintConfig &cfg, const nlohmann::json &in,
                          nlohmann::json &applied, nlohmann::json &errors);
+// elegoo-mcp: stats.breakdown.purge of a slice result (RemoteAPIProject.cpp).
+nlohmann::json breakdown_purge_json(const GCodeProcessorResult &res);
 
 // Snapshot of the last/current slice, maintained on the GUI thread by wx event
 // subscriptions (Task 10), read by API threads under the mutex.

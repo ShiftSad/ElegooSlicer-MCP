@@ -700,6 +700,28 @@ included, as the slider's delete does. Reply: the plate's remaining list. Errors
 `404 unknown_plate | no_change_at_z`, `409 slicing | preview_only`,
 `400 missing_z | bad_z`.
 
+## Slice breakdown: purge
+
+Once a plate is sliced, `GET /slice/status` reports `stats.breakdown` (also at the top
+level as `breakdown`): the per-feature times and filament of the slice. Builds that
+list `breakdown_purge` in `capabilities` add what changing filament costs:
+
+```json
+"purge": { "filament_changes": 12, "filament_change_time_s": 1043.5,
+           "flush_g": 38.2, "flush_mm": 12804.1 }
+```
+- `filament_changes`: how many times the print changes filament.
+- `filament_change_time_s`: the time those changes take (filament load + unload + tool
+  change), the "Tool changes" time of the preview's legend. It is part of the total
+  time but of no feature in `roles`. On the Centauri Carbon 2 each CANVAS change
+  (`M6211`) is timed by ElegooSlicer's own estimate.
+- `flush_g`, `flush_mm`: filament purged by those changes, all filaments together (the
+  legend's "Flushed" column), from each filament's diameter and density.
+
+All four are 0 when nothing loads or changes filament. On the Centauri Carbon 2 the
+start G-code loads the first filament with an `M6211` that purges about 200 mm, so even
+a single-filament print reports that load's time and purge, with `filament_changes` 0.
+
 ## Notes & limits
 
 - **Single-client oriented.** The server uses one I/O thread and marshals most
