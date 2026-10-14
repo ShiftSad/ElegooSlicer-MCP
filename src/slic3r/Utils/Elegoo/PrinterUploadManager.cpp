@@ -37,19 +37,20 @@ void PrinterUploadManager::close()
 {
     BOOST_LOG_TRIVIAL(info) << "PrinterUploadManager::close";
     mIsInitialized = false;
-    std::vector<std::shared_ptr<UploadTaskData>> tasks = getAllUploadTasks();
-
-    for (auto& taskData : tasks) {
-        const std::string& taskId = taskData->info.taskId;
-        updateUploadTaskStatus(taskId, UploadTaskStatus::CANCELLED, PrinterNetworkErrorCode::OPERATION_CANCELLED);
+    // elegoo-mcp: take every task out of the map under the lock, then join only those.
+    // getUploadTask joins a finished task it took out itself, and two joins of one thread
+    // throw (a crash here, on the GUI thread). A transfer whose task is gone cancels itself
+    // at its next progress report (mIsInitialized is false, and the task is not found).
+    std::map<std::string, std::shared_ptr<UploadTaskData>> tasks;
+    {
+        std::lock_guard<std::mutex> lock(mUploadTasksMutex);
+        tasks.swap(mUploadTasks);
     }
 
-    for (auto& taskData : tasks) {
-        const std::string& taskId = taskData->info.taskId;
+    for (auto& [taskId, taskData] : tasks) {
         if (taskData->thread.joinable()) {
             taskData->thread.join();
         }
-        deleteUploadTask(taskId, taskData);
     }
     BOOST_LOG_TRIVIAL(info) << "PrinterUploadManager::close: tasks cancelled and deleted, count: " << tasks.size();
 }
@@ -133,15 +134,27 @@ PrinterNetworkResult<std::string> PrinterUploadManager::startAsyncUpload(const P
 
 PrinterNetworkResult<UploadTaskInfo> PrinterUploadManager::getUploadTask(const std::string& taskId)
 {
-    std::shared_ptr<UploadTaskData> taskData = getUploadTaskData(taskId);
-    if (taskData) {
-        UploadTaskInfo info = taskData->info;
-        bool shouldCleanup = (info.status == UploadTaskStatus::SUCCESS || info.status == UploadTaskStatus::FAILED);
-        if (shouldCleanup && taskData->thread.joinable()) {
-            taskData->thread.join();
-            deleteUploadTask(taskId, taskData);
+    // elegoo-mcp: copy the task under the lock (its transfer thread writes it under the lock),
+    // and take a finished task out of the map under that lock too, so that only the caller that
+    // took it out joins its thread (see close()). The Remote API reads a task every 500 ms.
+    std::shared_ptr<UploadTaskData> finished;
+    std::optional<UploadTaskInfo>   found;
+    {
+        std::lock_guard<std::mutex> lock(mUploadTasksMutex);
+        auto it = mUploadTasks.find(taskId);
+        if (it != mUploadTasks.end()) {
+            found = it->second->info;
+            if (found->status == UploadTaskStatus::SUCCESS || found->status == UploadTaskStatus::FAILED) {
+                finished = it->second;
+                mUploadTasks.erase(it);
+            }
         }
-        return PrinterNetworkResult<UploadTaskInfo>(PrinterNetworkErrorCode::SUCCESS, info);
+    }
+    if (found) {
+        if (finished && finished->thread.joinable()) {
+            finished->thread.join();
+        }
+        return PrinterNetworkResult<UploadTaskInfo>(PrinterNetworkErrorCode::SUCCESS, *found);
     }
 
     UploadTaskInfo emptyTask;
