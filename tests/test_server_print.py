@@ -170,6 +170,8 @@ async def test_start_refused_by_the_slicer():
         "error": "print_control_disabled", "hint": "Preferences > Remote API"}))
     out = await srv.start_print("plan-1", user_confirmed=True)
     assert out["error"] == "print_control_disabled" and out["hint"] == "Preferences > Remote API"
+    # the attempt used the plan up: a retry can never start a print twice
+    assert "plan-1" not in srv._PRINT_PLANS
     srv._PRINT_PLANS["plan-2"] = {"printer_id": "p1", "summary": "x", "expires_at": 1e18}
     respx.post(f"{F}/printers/p1/print").mock(return_value=httpx.Response(410, json={"error": "plan_expired"}))
     out = await srv.start_print("plan-2", user_confirmed=True)
@@ -264,6 +266,7 @@ def test_a_url_only_client_cannot_show_the_form():
 
 
 @pytest.mark.parametrize("reply,text", [
+    ({"status": "exporting", "progress": 0, "bytes": [0, 0], "message": ""}, "Preparing the file"),
     ({"status": "uploading", "progress": 40, "bytes": [4, 10], "message": ""}, "Sending the file to the printer: 40%."),
     ({"status": "success", "progress": 100, "bytes": [10, 10], "message": ""}, "starts printing it"),
     ({"status": "failed", "progress": 10, "bytes": [1, 10], "message": "disk full"}, "failed: disk full"),

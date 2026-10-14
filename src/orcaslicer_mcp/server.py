@@ -2791,7 +2791,8 @@ async def start_print(
     reply is confirmation_required with the summary to show them.
 
     Returns {"upload_id", "summary", "next"}: follow the transfer with get_upload_status(upload_id),
-    then the print with get_printer_status or wait_for_printer. A plan starts at most one print.
+    then the print with get_printer_status or wait_for_printer. A plan starts at most one print and
+    is used up by the attempt, even one that fails: after an error, prepare again and ask again.
     Errors: unknown_plan (also after this server restarted), plan_expired (prepare again and ask
     again), print_control_disabled (403), printer_busy, printer_offline, secondary_instance (409).
     Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
@@ -2837,7 +2838,9 @@ async def get_upload_status(
     except ApiError as e:
         return _printer_err(e, "print_control")
     status = out.get("status")
-    if status in ("exporting", "uploading"):
+    if status == "exporting":
+        summary = "Preparing the file to send."
+    elif status == "uploading":
         summary = f"Sending the file to the printer: {out.get('progress', 0)}%."
     elif status == "success":
         summary = ("The printer has the file and starts printing it. Follow it with "
