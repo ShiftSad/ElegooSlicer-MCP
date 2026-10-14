@@ -214,6 +214,24 @@ async def test_start_refused_by_the_slicer():
     assert out["error"] == "plan_expired" and "ask again" in out["hint"]
 
 
+@respx.mock
+async def test_start_that_times_out():
+    srv._PRINT_PLANS["plan-1"] = {"printer_id": "p1", "summary": "x", "expires_at": 1e18}
+    route = respx.post(f"{F}/printers/p1/print").mock(side_effect=httpx.ReadTimeout("slow"))
+    out = await srv.start_print("plan-1", user_confirmed=True)
+    # The slicer starts the transfer just before it answers: the print may be on its way.
+    assert out["error"] == "start_unconfirmed" and "may have started" in out["message"]
+    assert "get_printer_status" in out["hint"] and "plan-1" not in srv._PRINT_PLANS
+    assert route.calls.last.request.extensions["timeout"]["read"] == 50.0
+    # The slicer's own timeouts come before it sends anything, and the plan is used up.
+    for token in ("printer_timeout", "ui_timeout"):
+        srv._PRINT_PLANS["plan-2"] = {"printer_id": "p1", "summary": "x", "expires_at": 1e18}
+        respx.post(f"{F}/printers/p1/print").mock(return_value=httpx.Response(504, json={"error": token}))
+        out = await srv.start_print("plan-2", user_confirmed=True)
+        assert out["error"] == token and "nothing was sent" in out["message"]
+        assert "prepare_print again" in out["hint"]
+
+
 # --- start_print with a client that can ask the user (MCP elicitation) -------------------------------
 
 

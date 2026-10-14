@@ -2368,6 +2368,16 @@ _PRINTER_ERRORS = {
                     "'tray': 'A1'}, for a ready tray and a slot the plate prints with."),
 }
 
+# start_print's own wait for the slicer ran out. The slicer starts the transfer as the last step
+# before it answers, so the print may be on its way: the model must look, not prepare again.
+_START_UNCONFIRMED = {"error": "start_unconfirmed",
+                      "message": "ElegooSlicer did not answer in time: the print may have started "
+                                 "anyway.",
+                      "hint": "Do not prepare it again yet. get_printer_status shows whether the "
+                              "printer is receiving the file or printing, and prepare_print answers "
+                              "upload_in_progress with the transfer's upload_id (follow it with "
+                              "get_upload_status)."}
+
 # A pause, resume or stop the printer did not confirm in time may still have happened.
 _CONTROL_TIMEOUT = {"error": "printer_timeout",
                     "message": "The printer did not confirm in time: the command may still have been "
@@ -2829,8 +2839,10 @@ async def start_print(
     then the print with get_printer_status or wait_for_printer. A plan starts at most one print and
     is used up by the attempt, even one that fails: after an error, prepare again and ask again.
     Errors: unknown_plan (also after this server restarted), plan_expired (prepare again and ask
-    again), print_control_disabled (403), printer_busy, printer_offline, secondary_instance (409).
-    Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
+    again), print_control_disabled (403), printer_busy, printer_offline, secondary_instance (409),
+    printer_timeout (nothing was sent), start_unconfirmed (ElegooSlicer did not answer in time and
+    the print may have started: check get_printer_status before anything else). Needs
+    ElegooSlicer MCP ('print_control' in get_status capabilities)."""
     if plan_id not in _PRINT_PLANS:
         return {"error": "unknown_plan", "message": "This server prepared no print with that plan_id.",
                 "hint": _PRINTER_ERRORS["unknown_plan"][1]}
@@ -2850,7 +2862,17 @@ async def start_print(
         async with _client() as c:
             out = await c.start_print(plan["printer_id"], plan_id)
     except ApiError as e:
-        return _printer_err(e, "print_control")
+        token = e.body.get("error") if isinstance(e.body, dict) else None
+        if isinstance(e, UiTimeout) and not token:
+            return dict(_START_UNCONFIRMED)
+        out = _printer_err(e, "print_control")
+        if token in ("printer_timeout", "ui_timeout"):
+            # The slicer gave up on the printer or its window before sending anything, but this
+            # plan is used up: trying once more, as for other printer timeouts, can't work.
+            out["message"] = ("ElegooSlicer did not get an answer in time from the printer or its "
+                              "window: nothing was sent.")
+            out["hint"] = _PRINTER_ERRORS["plan_expired"][1]
+        return out
     return {**out, "summary": plan["summary"],
             "next": "ElegooSlicer is sending the file. Call get_upload_status(upload_id) until its "
                     "status is success; then the printer starts (wait_for_printer('printing'))."}

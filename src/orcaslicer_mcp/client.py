@@ -278,8 +278,11 @@ class OrcaClient:
                                            json=options)
 
     async def start_print(self, printer_id: str, plan_id: str) -> dict:
+        # The slicer checks the printer and the plate again before it answers, each step with its
+        # own 10 s limit (about 30 s at worst), so wait longer than usual, but stay under Claude
+        # Desktop's ~60 s tool-call limit.
         return await self._printer_request("POST", self._printer_path(printer_id, "print"),
-                                           json={"plan_id": plan_id})
+                                           json={"plan_id": plan_id}, timeout=50.0)
 
     async def get_upload(self, upload_id: str) -> dict:
         return await self._printer_request("GET", f"/api/v1/uploads/{quote(str(upload_id), safe='')}")
