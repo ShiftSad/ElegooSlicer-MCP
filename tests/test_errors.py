@@ -32,3 +32,11 @@ def test_404_route_level_is_route_missing():
         e = error_from_status(404, body)
         assert isinstance(e, NotFound)
         assert e.route_missing is True
+
+
+def test_404_file_not_found_is_not_route_missing():
+    # POST /model answers this for a path that does not exist; the route is there.
+    e = error_from_status(404, {"error": "file_not_found", "path": "C:/x.stl"})
+    assert isinstance(e, NotFound)
+    assert str(e) == "file_not_found"
+    assert e.route_missing is False

@@ -29,3 +29,24 @@ async def test_load_model_not_available(monkeypatch):
         return_value=httpx.Response(404, json={"error": "not_found"}))
     out = await srv.load_model("/tmp/x.stl")
     assert "M4a" in out["error"]
+
+
+@respx.mock
+async def test_load_model_missing_file_says_file_not_found(monkeypatch):
+    _env(monkeypatch)
+    path = "C:/models/missing.stl"
+    respx.post("http://x:13130/api/v1/model").mock(
+        return_value=httpx.Response(404, json={"error": "file_not_found", "path": path}))
+    out = await srv.load_model(path)
+    assert out["error"] == f"file not found: {path}"
+    assert "absolute path" in out["hint"]
+    assert "M4a" not in out["error"]
+
+
+@respx.mock
+async def test_load_model_other_resource_404_keeps_its_message(monkeypatch):
+    _env(monkeypatch)
+    respx.post("http://x:13130/api/v1/model").mock(
+        return_value=httpx.Response(404, json={"error": "unknown_plate"}))
+    out = await srv.load_model("C:/models/part.stl")
+    assert out == {"error": "unknown_plate"}

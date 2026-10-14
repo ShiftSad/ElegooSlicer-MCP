@@ -56,7 +56,9 @@ def error_from_status(status: int, body: dict) -> ApiError:
     if status == 404:
         # The fork's dispatch fallback answers {"error":"not_found"} (or nothing) for a
         # route that doesn't exist; resource-level 404s carry a specific token such as
-        # unknown_object / unknown_preset. Keep them distinguishable (F7).
+        # unknown_object / unknown_preset / file_not_found (POST /model with a path that
+        # does not exist). Keep them distinguishable (F7): only the bare "not_found" (or
+        # no token at all) means the route is missing.
         err = body.get("error")
         if err and err != "not_found":
             return NotFound(err)

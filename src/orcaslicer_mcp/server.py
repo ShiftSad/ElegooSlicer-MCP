@@ -870,6 +870,14 @@ async def load_model(path: str) -> dict:
     try:
         async with _client() as c:
             return await c.load_model(path)
+    except NotFound as e:
+        # The slicer answers 404 file_not_found when the path does not exist on its host.
+        # Say so plainly: reporting it as a missing route sent users hunting for a newer build.
+        if str(e) == "file_not_found":
+            return {"error": f"file not found: {path}",
+                    "hint": "Check that the file exists on the OrcaSlicer host and pass an "
+                            "absolute path (on Windows, e.g. C:\\Users\\me\\models\\part.stl)."}
+        return _m4a_err(e)
     except ApiError as e:
         return _m4a_err(e)
 
