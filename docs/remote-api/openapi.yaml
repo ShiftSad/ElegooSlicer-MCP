@@ -181,6 +181,68 @@ paths:
       responses:
         "101": { description: Switching Protocols (WebSocket handshake accepted). }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /model:
+    post:
+      summary: Load a model file onto the plate
+      operationId: loadModel
+      description: |
+        Loads a `.stl`, `.obj`, `.3mf`, `.step` or `.stp` file from a path on the
+        machine running the slicer, as an import in the window does. A missing file
+        answers `404 file_not_found` with the path; a bare `404 not_found` only ever
+        means an unknown route. The GUI-thread timeout is 120s here (not 10s), so
+        a large STEP can finish tessellating.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: { type: string, description: "Absolute path of the model file." }
+            example: { path: "C:/models/part.stl" }
+      responses:
+        "200":
+          description: Model loaded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  loaded: { type: boolean, enum: [true] }
+                  objects:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index: { type: integer }
+                        name: { type: string }
+                        size_mm: { $ref: "#/components/schemas/Vec3" }
+              example: { loaded: true, objects: [ { index: 0, name: "part.stl", size_mm: [20, 20, 10] } ] }
+        "400":
+          description: Missing `path`, or malformed JSON.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                missing_path: { value: { error: "missing_path" } }
+                bad_json:     { value: { error: "invalid_json" } }
+        "404":
+          description: The file does not exist. The body echoes the path that was asked for.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "file_not_found", path: "C:/models/part.stl" }
+        "422":
+          description: Unsupported file type, or the slicer could not load the file.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                format: { value: { error: "unsupported_format", detail: "remote load supports .stl, .obj, .3mf, .step, .stp" } }
+                failed: { value: { error: "load_failed" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
   /plates:
     get:
       summary: List the plates

@@ -1256,8 +1256,11 @@ Response Controller::handle_load_model(const std::string &body)
     // STEP (and mesh import of a very large STL) can exceed 10 s, and the load
     // would still complete on the GUI thread after a ui_timeout was returned.
     nlohmann::json r = run_on_ui([path, is_step]() -> nlohmann::json {
+        // elegoo-mcp: "file_not_found" + the path, not the generic "not_found": a 404
+        // "not_found" is what an unknown route answers, and the MCP client reads it as
+        // "this endpoint is missing on this build" instead of "your path is wrong".
         if (!boost::filesystem::exists(path))
-            return {{"error", "not_found"}};
+            return {{"error", "file_not_found"}, {"path", path}};
         Plater *plater = wxGetApp().plater();
         // Use the stored deflection defaults instead of StepMeshDialog and skip
         // the non-UTF8 name warning while loading; restore the user's flags after.
@@ -1288,7 +1291,7 @@ Response Controller::handle_load_model(const std::string &body)
     std::string fn = boost::filesystem::path(path).filename().string();
     if (r.contains("error")) {
         api_notify("Couldn't load " + fn, true);
-        if (r["error"] == "not_found") return { 404, r };
+        if (r["error"] == "file_not_found") return { 404, r };
         return { 422, r };
     }
     api_notify("Added " + fn + " to the plate");

@@ -42,6 +42,7 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/slice` | Start slicing the current plate |
 | GET | `/slice/status` | Current/last slice state + stats + warnings |
 | WS | `/events?token=…` | Live event stream |
+| POST | `/model` | Load a model file onto the plate |
 | GET | `/plates` | List the plates: index, name, current, locked, objects on each |
 | POST | `/plates` | Add a plate (`{"select": true}` by default) |
 | POST | `/plates/{i}/select` | Make plate `i` the current one |
@@ -198,6 +199,22 @@ Each message is a JSON object with an `event` field:
 
 > `slice.*` events carry `stats` (on done) but not the slice `warnings` array —
 > call `GET /slice/status` for warnings.
+
+### POST /model
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"path": "C:/models/part.stl"}' http://localhost:13130/api/v1/model
+```
+```json
+{ "loaded": true, "objects": [ { "index": 0, "name": "part.stl", "size_mm": [20, 20, 10] } ] }
+```
+Loads a `.stl`, `.obj`, `.3mf`, `.step` or `.stp` file from a path on the machine
+running the slicer, as an import in the window does. Errors: `400 missing_path`,
+`404 file_not_found` (the file does not exist; the body echoes the path:
+`{"error":"file_not_found","path":"C:/models/part.stl"}`), `422 unsupported_format |
+load_failed`, `400 invalid_json`. A bare `404 not_found` only ever means an unknown
+route, never a missing file.
 
 ## Plates
 
