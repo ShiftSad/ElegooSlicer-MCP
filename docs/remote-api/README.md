@@ -57,6 +57,9 @@ Base URL: `http://<host>:13130/api/v1`
 | DELETE | `/objects/{id}/volumes/{vid}` | Remove a volume |
 | POST | `/project/save` | Save the project as a .3mf (current file, or a new path) |
 | POST | `/objects/{id}/paint` | Paint support / seam / color on the triangles inside a box |
+| GET | `/filaments` | List the filament slots: preset, type, colour, used on the current plate |
+| PUT | `/filaments` | Set the number of filament slots (the sidebar's + / - buttons) |
+| PUT | `/filaments/{slot}` | Set one slot's filament preset and/or colour |
 
 ### GET /status
 
@@ -515,6 +518,76 @@ marked unsliced and the change can be undone in the window. Errors:
 `422 bad_layer | bad_state | bad_slot | bad_box | bad_overhang | clear_takes_no_box`,
 `404 unknown_object | no_instance`, `400 body_must_be_object | clear_must_be_boolean |
 invalid_json`.
+
+## Filament slots
+
+The sidebar's filament list. Slots are numbered from 1, like the object list's filament
+column and the `extruder` setting (`0` there means "the default"). `GET /status` lists
+`filaments` in `capabilities`. While a G-code file or an exported `.gcode.3mf` is open
+the changes are refused with `409 preview_only` (the window would first ask to close
+that file).
+
+### GET /filaments
+
+```json
+{ "count": 2, "max": 32, "slots": [
+  { "slot": 1, "preset": "Elegoo PLA @ECC2", "type": "PLA", "color": "#00c1ae", "used_on_current_plate": true },
+  { "slot": 2, "preset": "Elegoo PLA @ECC2", "type": "PLA", "color": "#ed1c24", "used_on_current_plate": false } ] }
+```
+`color` is the slot's colour as `#rrggbb`; `used_on_current_plate` is true when an
+object, part, height range, colour paint or a layer tool change of the current plate
+prints with that slot.
+
+### PUT /filaments
+
+```bash
+curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"count": 4}' http://localhost:13130/api/v1/filaments
+```
+Adds or removes slots at the end of the list, one at a time, with the sidebar's own
++ and - buttons: a new slot copies the last slot's preset and gets the next colour of
+the window's palette (and its flush volumes are calculated, as the + button does); a
+removed slot is the last one. Every plate is marked unsliced. The reply is the same as
+`GET /filaments`.
+
+Removing a slot that something still prints with answers
+`409 {"error": "slot_in_use", "used_by": [...]}` and removes nothing, unless the body
+has `"force": true`. Each `used_by` entry names the object (`object_id`, `name`), the
+part when it is one (`volume_id`), the `slot` and the `setting` that uses it (`extruder`,
+`support_filament`, `outer_wall_filament_id`... or `color_paint`), plus `height_range`
+for a height-range setting. With `force` the window's delete runs as it is: objects and
+parts on a removed slot move to filament 1, support and per-feature filament settings
+(`support_filament`, `outer_wall_filament_id`...) on it go back to "default", colour
+paint in a removed colour is erased (that area prints with the part's filament) and
+layer tool changes to a removed slot are dropped.
+
+Errors: `422 bad_count` (an integer from 1 to `max`; also when the printer preset has
+one slot per extruder, so the sidebar has no + / - buttons), `409 slot_in_use`,
+`409 unsaved_filament_changes` (the Filament tab has unsaved edits to a preset only a
+removed slot uses: the window would ask what to do with them), `409 preview_only`,
+`400 body_must_be_object | force_must_be_boolean | invalid_json`.
+
+### PUT /filaments/{slot}
+
+```bash
+curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"preset": "Elegoo PETG @ECC2", "color": "#1e90ff"}' http://localhost:13130/api/v1/filaments/2
+```
+Reply: the slot, as in `GET /filaments`. `preset` goes through the steps of the slot's
+combo box in the sidebar and `color` through its colour picker, without their dialogs:
+- `preset`: a filament preset name (as in `GET /presets`) compatible with the selected
+  printer. A newly picked preset brings its default colour, as in the combo box, unless
+  `color` is given too.
+- `color`: `#rrggbb`.
+
+The flush volumes are recalculated as the window's "Auto flush after changing..."
+preference says: after a colour change unless it is `disabled`, after a preset change
+only when it is `all`. A change marks every plate unsliced. With a single slot the
+combo box also switches the Filament tab, which would ask about unsaved edits there:
+then `409 unsaved_filament_changes`. Errors: `404 unknown_slot` (with `count`),
+`422 unknown_preset | incompatible_preset | bad_color`, `409 preview_only |
+unsaved_filament_changes`, `400 missing_fields | preset_must_be_string |
+bad_slot_index | invalid_json`.
 
 ## Notes & limits
 

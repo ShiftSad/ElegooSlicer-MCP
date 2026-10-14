@@ -966,6 +966,136 @@ paths:
                 clear_box: { value: { error: "clear_takes_no_box" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /filaments:
+    get:
+      summary: List the filament slots
+      operationId: getFilaments
+      description: |
+        The sidebar's filament list. Slots are 1-based, like the `extruder` setting.
+      responses:
+        "200":
+          description: Filament slots.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FilamentList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+    put:
+      summary: Set the number of filament slots
+      operationId: setFilamentCount
+      description: |
+        Adds or removes slots at the end of the list with the sidebar's + and - buttons,
+        one at a time, and marks every plate unsliced. Removing a slot that an object,
+        part, height range or colour paint prints with is refused (`409 slot_in_use`,
+        with `used_by`) unless `force` is true; then the window's delete runs as it is
+        (those users move to filament 1, paint in a removed colour is erased, layer tool
+        changes to a removed slot are dropped) and per-feature filament settings on a
+        removed slot go back to default.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [count]
+              properties:
+                count: { type: integer, minimum: 1, maximum: 32 }
+                force: { type: boolean, default: false }
+            example: { count: 4 }
+      responses:
+        "200":
+          description: The slots after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FilamentList" }
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: |
+            A removed slot is in use, the Filament tab has unsaved edits to a preset only
+            a removed slot uses, or a G-code file is open.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                in_use:
+                  value:
+                    error: slot_in_use
+                    used_by: [ { object_id: 832, name: "helmet", volume_id: 833, slot: 3, setting: "extruder" } ]
+                unsaved: { value: { error: "unsaved_filament_changes" } }
+                gcode:   { value: { error: "preview_only" } }
+        "422":
+          description: Count out of range, or the printer preset has one slot per extruder (no + / - buttons).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "bad_count" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /filaments/{slot}:
+    put:
+      summary: Set one slot's filament preset and/or colour
+      operationId: setFilamentSlot
+      description: |
+        `preset` goes through the steps of the slot's combo box in the sidebar (a newly
+        picked preset brings its default colour unless `color` is given), `color`
+        through its colour picker, without their dialogs. The flush volumes are
+        recalculated as the "Auto flush after changing..." preference says. A change
+        marks every plate unsliced.
+      parameters:
+        - { name: slot, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preset: { type: string, description: "Filament preset name, compatible with the selected printer." }
+                color: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+            example: { preset: "Elegoo PETG @ECC2", color: "#1e90ff" }
+      responses:
+        "200":
+          description: The slot after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FilamentSlot" }
+        "400":
+          description: Neither field given, or a malformed body or slot index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "missing_fields" }
+        "404":
+          description: No such slot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_slot", count: 2 }
+        "409":
+          description: |
+            A G-code file is open, or (single slot) the Filament tab has unsaved edits the
+            switch would ask about.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                unsaved: { value: { error: "unsaved_filament_changes" } }
+                gcode:   { value: { error: "preview_only" } }
+        "422":
+          description: Unknown or incompatible preset, or a bad colour.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                unknown:      { value: { error: "unknown_preset" } }
+                incompatible: { value: { error: "incompatible_preset" } }
+                color:        { value: { error: "bad_color" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -1008,6 +1138,20 @@ components:
         size_mm: { $ref: "#/components/schemas/Vec3" }
         position_mm: { $ref: "#/components/schemas/Vec3", description: "World centre of the bounding box, first copy." }
         config: { type: object, additionalProperties: { type: string }, description: "The volume's own overrides." }
+    FilamentSlot:
+      type: object
+      properties:
+        slot: { type: integer, description: "1-based." }
+        preset: { type: string }
+        type: { type: string, example: PLA }
+        color: { type: string, example: "#00c1ae" }
+        used_on_current_plate: { type: boolean }
+    FilamentList:
+      type: object
+      properties:
+        count: { type: integer }
+        max: { type: integer, example: 32 }
+        slots: { type: array, items: { $ref: "#/components/schemas/FilamentSlot" } }
     Status:
       type: object
       properties:
@@ -1025,6 +1169,7 @@ components:
             object_id), `view` (POST /view and GET /status view), `volumes`
             (/objects/{id}/volumes), `project_save` (POST /project/save) and `paint`
             (POST /objects/{id}/paint).
+            Also `filaments` (/filaments).
         plates:
           type: object
           description: How many plates the project has and which one is current.

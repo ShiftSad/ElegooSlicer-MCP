@@ -105,6 +105,13 @@ private:
     Response handle_save_project(const std::string &body);   // POST /project/save
     Response handle_paint(uint64_t id, const std::string &body); // POST /objects/{id}/paint
 
+    // elegoo-mcp: project routes, defined in RemoteAPIProject.cpp. route_project answers
+    // the requests it owns and returns nothing for every other request.
+    std::optional<Response> route_project(const Request &req);
+    Response handle_get_filaments();                                  // GET /filaments
+    Response handle_put_filaments(const std::string &body);           // PUT /filaments {"count"}
+    Response handle_put_filament_slot(int slot, const std::string &body); // PUT /filaments/{slot}
+
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);
     // plates: make the stored slice state describe the current plate (GUI thread).
