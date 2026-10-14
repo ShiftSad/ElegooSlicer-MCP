@@ -1,11 +1,12 @@
 {
-  "identifier": "maxellis-orcaslicer-mcp",
+  "identifier": "shiftsad-elegooslicer-mcp",
   "version": "0.1.17",
-  "name": "OrcaSlicer MCP",
-  "description": "Work a running OrcaSlicer with AI: load models, arrange the plate, tune settings, slice, and understand the result through slice breakdowns, setting explanations, and physics checks. Talks to OrcaSlicer on localhost or a host you configure and, for the printer tools, makes read-only requests to your printer; no cloud calls from this server.",
+  "name": "ElegooSlicer MCP",
+  "description": "Work a running ElegooSlicer (MCP build) with AI: load models, arrange the plate, tune settings, set up multi-colour prints, slice, and understand the result through slice breakdowns, setting explanations, and physics checks. Talks to the slicer on localhost or a host you configure; no cloud calls from this server.",
   "category": "developer",
   "tags": [
     "mcp",
+    "elegooslicer",
     "orcaslicer",
     "3d-printing",
     "slicer",
@@ -13,27 +14,23 @@
     "model-context-protocol"
   ],
   "connectionType": "local",
-  "author": "maxellis",
+  "author": "maxellis, shiftsad",
   "github": {
-    "url": "https://github.com/MaxEllis/orcaslicer-mcp",
+    "url": "https://github.com/ShiftSad/ElegooSlicer-MCP",
     "language": "Python",
     "license": "AGPL-3.0"
-  },
-  "artifacts": {
-    "pypi": {
-      "packageName": "orcaslicer-mcp",
-      "version": "0.1.17"
-    }
   },
   "deploymentOptions": [
     {
       "installationMethod": "uvx",
       "isRecommended": true,
-      "description": "Run straight from PyPI with uv; no install step.",
+      "description": "Run from the ElegooSlicer-MCP repository with uv (needs git); not on PyPI.",
       "connection": {
         "type": "stdio",
         "command": "uvx",
         "args": [
+          "--from",
+          "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp",
           "orcaslicer-mcp"
         ],
         "configSchema": {
@@ -44,18 +41,15 @@
           "properties": {
             "ORCA_API_TOKEN": {
               "type": "string",
-              "description": "Remote API token from the OrcaSlicer MCP build (Preferences -> Remote API)"
+              "description": "Remote API token from the ElegooSlicer MCP build (Preferences -> Remote API)"
             },
             "ORCA_API_URL": {
               "type": "string",
               "default": "http://127.0.0.1:13130",
-              "description": "OrcaSlicer Remote API address"
+              "description": "ElegooSlicer MCP Remote API address"
             }
           }
         }
-      },
-      "installationDetails": {
-        "packageName": "orcaslicer-mcp"
       },
       "systemDependencies": []
     }
@@ -399,6 +393,6 @@
     }
   ],
   "overview": {
-    "summary": "MCP server that lets Claude or any MCP client operate a real, running OrcaSlicer: load models, arrange plates, tune ~800 settings with a physics sanity gate, slice, and read per-feature results back. Requires the OrcaSlicer MCP build (fork with an embedded, token-authenticated local control API)."
+    "summary": "MCP server that lets Claude or any MCP client operate a real, running ElegooSlicer: load models, arrange plates, set up multi-colour prints, tune ~850 settings with a physics sanity gate, slice, and read per-feature results back. Requires the ElegooSlicer MCP build (ElegooSlicer with an embedded, token-authenticated local control API)."
   }
 }
