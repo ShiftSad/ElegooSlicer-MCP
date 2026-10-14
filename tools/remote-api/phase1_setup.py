@@ -2,8 +2,11 @@
 
 Usage: py -3 -I tools/remote-api/phase1_setup.py <datadir> [port]
 
-- enables the Remote API (localhost only) with a fresh token, written to <datadir>/api_token.txt
+- enables the Remote API (localhost only) with the token in <datadir>/api_token.txt (made on the
+  first run, then reused)
 - marks the Beginner Guide as shown (its modal would block the GUI during unattended tests)
+- forgets the last project backup, so a test app that was killed does not make the next start
+  ask "Previous unsaved project detected, do you want to restore it?" (another modal)
 - installs the Elegoo Centauri Carbon 2 (0.4 nozzle) printer model, like the setup wizard would
 - recomputes the "# MD5 checksum" line ElegooSlicer appends to the .conf
 
@@ -29,6 +32,7 @@ token = open(token_path).read().strip() if os.path.exists(token_path) else secre
 
 app = conf.setdefault("app", {})
 app["beginner_guide_shown"] = True
+app.pop("last_backup_path", None)  # the Troubleshoot dialog's reset drops it the same way
 app["remote_api_enabled"] = True
 app["remote_api_bind_lan"] = False
 app["remote_api_notify"] = True

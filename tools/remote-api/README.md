@@ -27,7 +27,7 @@ inside this repository with `uv sync --extra dev` in `mcp\` (it creates `mcp\.ve
 |---|---|
 | `build.cmd` | sets up VS 2022 Build Tools, its CMake 3.31 and the portable Perl, then runs `build_release_windows.bat` with the given arguments (`onlydeps`, `dlweb slicer`, ...) at below-normal priority on 24 threads (`BUILD_PRIORITY`, `BUILD_AFFINITY`) |
 | `build_incremental.cmd` | rebuilds and installs `build\ElegooSlicer` without CMake's configure step (about a minute after a few `.cpp` edits, instead of ~15) |
-| `phase1_setup.py <datadir> [port]` | prepares a TEST data dir: CC2 printer model, Remote API on 127.0.0.1 with a fresh token in `<datadir>\api_token.txt` |
+| `phase1_setup.py <datadir> [port]` | prepares a TEST data dir: CC2 printer model, Remote API on 127.0.0.1 with the token in `<datadir>\api_token.txt` (made on the first run), no startup prompts (Beginner Guide, restore of a killed session's backup) |
 | `set_print_control.py <datadir> on\|off` | toggles "Allow sending and controlling prints" in that data dir (app closed) |
 | `fakecc2\` | the fake CC2 (MQTT, HTTP upload, discovery, camera); see its README |
 | `phase1_rotation_check.py`, `phase1b_features_check.py`, `phase2_project_check.py`, `phase5_dialogs_check.py` | runtime checks of the generic routes |
