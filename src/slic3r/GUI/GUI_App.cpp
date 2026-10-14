@@ -7520,6 +7520,16 @@ void GUI_App::start_remote_api()
         return m_remote_api_controller->dispatch(req);
     });
     m_remote_api_server->start(cfg);
+    // elegoo-mcp: Server::start() only logs a failed bind. Tell the user as well: with
+    // several ElegooSlicer windows open, only the one that got the port serves the API.
+    if (!m_remote_api_server->running()) {
+        BOOST_LOG_TRIVIAL(warning) << "remote-api: port " << cfg.port << " in use, API is off in this instance";
+        if (plater_ != nullptr)
+            plater_->get_notification_manager()->push_notification(
+                NotificationType::CustomNotification, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                "Remote API port " + std::to_string(cfg.port) +
+                    " is in use (another ElegooSlicer window or app has it). The API is off in this window.");
+    }
 }
 
 void GUI_App::stop_remote_api()

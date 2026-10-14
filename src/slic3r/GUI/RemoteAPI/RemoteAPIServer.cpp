@@ -177,9 +177,20 @@ void Server::start(const Config &cfg)
         tcp::endpoint endpoint(address, static_cast<unsigned short>(m_cfg.port));
         m_acceptor = std::make_unique<tcp::acceptor>(*m_ioc);
         m_acceptor->open(endpoint.protocol());
+#ifdef _WIN32
+        // elegoo-mcp: on Windows SO_REUSEADDR lets a second process bind a port that is
+        // already listening, so a second ElegooSlicer instance would silently shadow the
+        // first one instead of failing. SO_EXCLUSIVEADDRUSE makes that bind() fail, which
+        // is what start_remote_api() reports as "port in use". Windows can rebind a
+        // listener right after close even with connections in TIME_WAIT (tested on
+        // Windows 11), so the TIME_WAIT reason below does not apply here.
+        using exclusive_address_use = net::detail::socket_option::boolean<SOL_SOCKET, SO_EXCLUSIVEADDRUSE>;
+        m_acceptor->set_option(exclusive_address_use(true));
+#else
         // SO_REUSEADDR: rebind while a prior socket lingers in TIME_WAIT.
         // Without it, a rapid kill+relaunch silently fails to bind 13130.
         m_acceptor->set_option(net::socket_base::reuse_address(true));
+#endif
         m_acceptor->bind(endpoint);
         m_acceptor->listen(net::socket_base::max_listen_connections);
     } catch (const std::exception &e) {
