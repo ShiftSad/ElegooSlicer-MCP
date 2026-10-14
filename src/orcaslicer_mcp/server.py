@@ -741,6 +741,65 @@ async def set_part_filament(
 
 
 @mcp.tool()
+async def paint_region(
+    object_id: Annotated[int, _OBJECT_ID],
+    layer: Annotated[Literal["support", "seam", "color"], Field(description=(
+        "Which paint: 'support' (support enforcer/blocker painting), 'seam' (where the seam "
+        "may go) or 'color' (which filament prints each face, for multi-material)."))],
+    state: Annotated[Literal["enforce", "block", "none"] | None, Field(description=(
+        "For support and seam. 'enforce': support here, or put the seam here. 'block': no "
+        "support here, or keep the seam away. 'none': erase that paint."))] = None,
+    slot: Annotated[int | None, Field(description=(
+        "For color: the 1-based filament slot to paint with, as numbered in the window."))] = None,
+    box_min: Annotated[list[float] | None, Field(description=(
+        "[x, y, z] in mm, the low corner of the box to paint, in the same world coordinates "
+        "as list_objects (the bed surface is z = 0). Give box_max with it; leave both out to "
+        "paint the whole object."))] = None,
+    box_max: Annotated[list[float] | None, Field(description=(
+        "[x, y, z] in mm, the high corner of the box to paint."))] = None,
+    max_overhang_deg: Annotated[float | None, Field(description=(
+        "Only paint faces that point down: a face counts when its normal points at least this "
+        "many degrees below horizontal. 90 = only flat undersides; 45 = overhangs of 45 "
+        "degrees or more from vertical, the usual rule for needing support; 0 = every "
+        "downward-facing face. Leave it out to paint every face in the box."))] = None,
+    clear: Annotated[bool, Field(description=(
+        "True with no box: erase this layer's paint on the whole object."))] = False,
+) -> dict:
+    """Paint support, seam or color onto the faces of one object inside a box, as the paint
+    tools in the window do with a brush. A face is painted when its centre lies in the box
+    (and, with max_overhang_deg, when it faces down steeply enough). Returns
+    {"painted_triangles": n, "layer": ...}.
+
+    Use it to force support under one overhang, block support in a spot that doesn't need it,
+    pin the seam to the back of a part, or paint a region in another filament. Find the box
+    from list_objects (bounding box) or list_parts and check the result with render_plate.
+    painted_triangles 0 means no face matched: widen the box or the angle. Painted support
+    is used when support is on (enable_support); with a '(manual)' support_type only painted
+    areas get support. The paint is saved with the project, and the object's plate is left
+    unsliced, so re-slice. Errors: bad_layer, bad_state or bad_slot (422), unknown_object.
+    Needs ElegooSlicer MCP ('paint' in get_status capabilities)."""
+    if (box_min is None) != (box_max is None):
+        return {"error": "box_needs_both_corners",
+                "hint": "Pass box_min and box_max together, or neither to paint the whole object."}
+    body: dict = {"layer": layer}
+    if state is not None:
+        body["state"] = state
+    if slot is not None:
+        body["slot"] = slot
+    if box_min is not None:
+        body["box_mm"] = [box_min, box_max]
+    if max_overhang_deg is not None:
+        body["max_overhang_deg"] = max_overhang_deg
+    if clear:
+        body["clear"] = True
+    try:
+        async with _client() as c:
+            return await c.paint(object_id, body)
+    except ApiError as e:
+        return _elegoo_err(e, "paint")
+
+
+@mcp.tool()
 async def list_plates() -> dict:
     """List the plates in the project: each one's 0-based index, name, whether it is the
     current plate (the one slice, get_gcode, render_plate and get_job_status act on), lock
@@ -1837,6 +1896,8 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "set_part_filament": ("Set a part's filament", False, False),
     "remove_part": ("Remove a part from an object", False, True),
     "save_project": ("Save project as .3mf (can replace a file)", False, True),
+    # Painting replaces whatever paint was there, including the user's own brush work.
+    "paint_region": ("Paint support, seam or color on a region", False, True),
     "remember": ("Save a note", False, False),
     "load_model": ("Load a model file", False, False),
     "select_preset": ("Select preset", False, False),

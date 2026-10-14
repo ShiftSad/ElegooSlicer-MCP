@@ -271,3 +271,61 @@ async def test_save_project_needs_an_elegoo_build(monkeypatch):
     respx.post(f"{BASE}/project/save").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
     out = await srv.save_project("C:/a.3mf")
     assert "ElegooSlicer MCP" in out["error"] and "'project_save'" in out["error"]
+
+
+# --- paint_region -------------------------------------------------------------
+
+
+@respx.mock
+async def test_paint_support_in_a_box_with_an_overhang_filter(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={
+        "painted_triangles": 120, "layer": "support"}))
+    out = await srv.paint_region(42, "support", state="enforce", box_min=[100, 100, 0],
+                                 box_max=[140, 140, 10], max_overhang_deg=45)
+    assert out == {"painted_triangles": 120, "layer": "support"}
+    assert _sent(route) == {"layer": "support", "state": "enforce",
+                            "box_mm": [[100, 100, 0], [140, 140, 10]], "max_overhang_deg": 45}
+
+
+@respx.mock
+async def test_paint_color_on_the_whole_object(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={
+        "painted_triangles": 900, "layer": "color"}))
+    await srv.paint_region(42, "color", slot=2)
+    assert _sent(route) == {"layer": "color", "slot": 2}
+
+
+@respx.mock
+async def test_paint_clear_a_layer(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={
+        "painted_triangles": 0, "layer": "seam"}))
+    await srv.paint_region(42, "seam", clear=True)
+    assert _sent(route) == {"layer": "seam", "clear": True}
+
+
+@respx.mock
+async def test_paint_needs_both_box_corners(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={}))
+    out = await srv.paint_region(42, "support", state="block", box_min=[0, 0, 0])
+    assert out["error"] == "box_needs_both_corners"
+    assert not route.called
+
+
+@respx.mock
+async def test_paint_bad_state_422(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(422, json={"error": "bad_state"}))
+    out = await srv.paint_region(42, "support", state="maybe")
+    assert out["error"] == "bad_state"
+
+
+@respx.mock
+async def test_paint_needs_an_elegoo_build(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
+    out = await srv.paint_region(42, "seam", state="enforce")
+    assert "ElegooSlicer MCP" in out["error"] and "'paint'" in out["error"]

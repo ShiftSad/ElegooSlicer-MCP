@@ -135,6 +135,10 @@ class OrcaClient:
     async def delete_volume(self, obj_id: int, vol_id: int) -> dict:
         return await self._request("DELETE", f"/api/v1/objects/{obj_id}/volumes/{vol_id}")
 
+    async def paint(self, obj_id: int, body: dict) -> dict:
+        # ElegooSlicer MCP, capability "paint": support/seam/color painting of a region.
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/paint", json=body)
+
     async def transform_object(self, obj_id: int, translate=None, rotate=None, scale=None) -> dict:
         body = {}
         if translate is not None:

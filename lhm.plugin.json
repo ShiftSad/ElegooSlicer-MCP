@@ -162,6 +162,10 @@
       "description": "Print one part with another filament, like picking it in the object list's filament column. Shortcut for set_part_config with {\"extruder\": slot}."
     },
     {
+      "name": "paint_region",
+      "description": "Paint support, seam or color onto the faces of one object inside a box, as the paint tools in the window do with a brush. A face is painted when its centre lies in the box (and, with max_overhang_deg, when it faces down steeply enough). Returns {\"painted_triangles\": n, \"layer\": ...}."
+    },
+    {
       "name": "list_plates",
       "description": "List the plates in the project: each one's 0-based index, name, whether it is the current plate (the one slice, get_gcode, render_plate and get_job_status act on), lock state, build volume and the objects it holds."
     },
