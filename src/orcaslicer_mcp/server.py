@@ -2366,6 +2366,39 @@ _PRINTER_ERRORS = {
     "bad_mapping": ("The mapping isn't usable (detail says why).",
                     "Give each entry as get_canvas names the tray, e.g. {'slot': 1, 'unit': '0', "
                     "'tray': 'A1'}, for a ready tray and a slot the plate prints with."),
+    # prepare_print's checks of the plate and the project, as the window's Print button makes them.
+    "unknown_plate": ("There is no plate with that index.", "list_plates shows the plates (0-based)."),
+    "plate_not_current": ("Only the plate selected in ElegooSlicer's window can be printed "
+                          "(current is that plate's index).",
+                          "Select it with select_plate, slice it with slice_and_wait, then call "
+                          "prepare_print again."),
+    "not_printable": ("The plate is sliced, but ElegooSlicer would not print it (reason: "
+                      "toolpath_outside = something is outside the printable area, "
+                      "gcode_check_failed = the G-code check failed, filament_not_printable = a "
+                      "filament can't be printed on this printer).",
+                      "get_slice_warnings shows the problem; fix it, slice again, then prepare again."),
+    "preview_only": ("ElegooSlicer has a G-code file open, not a project it sliced: only G-code it "
+                     "sliced from a project can be printed from here.",
+                     "Open or create a project (load_model) and slice it."),
+    "not_elegoolink_profile": ("The active printer profile doesn't send prints through "
+                               "ElegooSlicer's printer link, so the window's Print button would not "
+                               "send to this printer either.",
+                               "Select the printer's own Elegoo profile (select_preset), slice again, "
+                               "then prepare again."),
+    "printer_model_mismatch": ("The project's printer profile is for another model "
+                               "(project_model) than this printer (printer_model): the G-code is "
+                               "made for that model.",
+                               "Select a profile for the printer's model (select_preset), slice "
+                               "again, then prepare again; or prepare for another printer."),
+    "upload_format_unsupported": ("The printer profile sends .gcode.3mf files (use_3mf), which "
+                                  "printing from here doesn't support.",
+                                  "Send this print from ElegooSlicer's window instead."),
+    "unsupported_option": ("The printer doesn't have the option named in option, so it can't be "
+                           "turned on.", "Leave that option out."),
+    "filename_format_error": ("The print settings' file name template (filename_format) can't be "
+                              "filled in (detail says why).",
+                              "Fix filename_format with set_config, slice again, then prepare "
+                              "again."),
 }
 
 # start_print's own wait for the slicer ran out. The slicer starts the transfer as the last step
@@ -2752,7 +2785,10 @@ def _plan_sentence(s: dict) -> str:
 @mcp.tool()
 async def prepare_print(
     printer: Annotated[str | None, _PRINTER] = None,
-    plate: Annotated[int | None, _PLATE_OR_CURRENT] = None,
+    plate: Annotated[int | None, Field(description=(
+        "0-based plate index from list_plates. Only the plate selected in ElegooSlicer's window "
+        "can be printed, as with the window's Print button: for another one, select_plate and "
+        "slice_and_wait first. Leave it out for the current plate."))] = None,
     bed_side: Annotated[Literal["A", "B"] | None, Field(description=(
         "Which side of the Centauri Carbon 2's build plate faces up, as the Print dialog asks. "
         "Leave it out for the dialog's last choice."))] = None,
@@ -2768,9 +2804,11 @@ async def prepare_print(
         "'A1'}], with unit and tray as get_canvas names them. Leave it out for the Print dialog's "
         "own choice, which preview_filament_mapping shows."))] = None,
 ) -> dict:
-    """Prepare printing a sliced plate on an Elegoo printer, WITHOUT starting it. ElegooSlicer
-    checks that the plate is sliced, that the printer is connected and idle and that every
-    filament has a CANVAS tray, and returns a plan. Nothing is sent to the printer.
+    """Prepare printing the current, sliced plate on an Elegoo printer, WITHOUT starting it.
+    ElegooSlicer checks what its Print button checks (the plate is the one selected in the window,
+    sliced and printable, the printer profile matches the printer's model), that the printer is
+    connected and idle and that every filament has a CANVAS tray, and returns a plan. Nothing is
+    sent to the printer.
 
     Returns {"plan_id", "expires_in_s", "summary", "details"}. summary is one sentence: printer,
     file, plate, time, filament, layers, bed side, leveling, timelapse, auto refill, the tray of
@@ -2782,10 +2820,12 @@ async def prepare_print(
     Options left out take the Print dialog's last choices; details holds the slicer's full plan
     (mapping lists each filament with its tray, warnings each warning with a code). Errors:
     print_control_disabled (403: printing from the assistant is off in ElegooSlicer's
-    Preferences; tell the user and stop there), not_sliced, printer_offline, printer_busy (with
-    status), upload_in_progress, canvas_disconnected, secondary_instance (409),
-    mapping_incomplete (422, with issues per slot), bad_mapping. Needs ElegooSlicer MCP
-    ('print_control' in get_status capabilities)."""
+    Preferences; tell the user and stop there), not_sliced, plate_not_current, not_printable,
+    preview_only, not_elegoolink_profile, printer_model_mismatch, upload_format_unsupported,
+    printer_offline, printer_busy (with status), upload_in_progress, canvas_disconnected,
+    canvas_unsupported, secondary_instance (409), mapping_incomplete (422, with issues per slot),
+    bad_mapping, unsupported_option, filename_format_error, unknown_plate (404); each comes with
+    what to do. Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
     options: dict = {}
     for key, value in (("plate", plate), ("bed_side", bed_side), ("leveling", leveling),
                        ("timelapse", timelapse), ("auto_refill", auto_refill), ("mapping", mapping)):

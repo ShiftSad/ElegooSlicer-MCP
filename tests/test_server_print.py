@@ -152,6 +152,33 @@ async def test_prepare_errors_of_the_slicer():
     assert "preview_filament_mapping" in out["hint"] and "POST" not in out["hint"]
 
 
+@pytest.mark.parametrize("status,body,tool", [
+    (409, {"error": "plate_not_current", "plate": 2, "current": 0,
+           "hint": "select the plate (POST /plates/{i}/select), slice it, then prepare again"}, "select_plate"),
+    (409, {"error": "not_printable", "plate": 0, "reason": "toolpath_outside"}, "get_slice_warnings"),
+    (409, {"error": "preview_only", "hint": "open or create a project and slice it"}, "load_model"),
+    (409, {"error": "not_elegoolink_profile",
+           "hint": "select an Elegoo printer profile whose printer is connected through ElegooLink"}, "select_preset"),
+    (409, {"error": "printer_model_mismatch", "printer_model": "Elegoo Centauri Carbon 2",
+           "project_model": "Elegoo Centauri Carbon"}, "select_preset"),
+    (409, {"error": "upload_format_unsupported", "detail": "the printer profile sends .gcode.3mf files"}, "window"),
+    (422, {"error": "unsupported_option", "option": "timelapse"}, "Leave that option out"),
+    (422, {"error": "filename_format_error", "detail": "bad placeholder"}, "set_config"),
+    (404, {"error": "unknown_plate"}, "list_plates"),
+])
+@respx.mock
+async def test_prepare_refusals_of_the_plate_say_which_tool_fixes_them(status, body, tool):
+    listing()
+    respx.post(f"{F}/printers/p1/print/prepare").mock(return_value=httpx.Response(status, json=body))
+    out = await srv.prepare_print(plate=body.get("plate"))
+    assert out["error"] == body["error"] and out["message"] and tool in out["hint"]
+    assert "POST" not in out["hint"] and not srv._PRINT_PLANS
+    # the slicer's details stay
+    for key in ("current", "reason", "printer_model", "project_model", "option", "detail"):
+        if key in body:
+            assert out[key] == body[key]
+
+
 def test_plan_sentence_with_little_information():
     assert srv._plan_sentence({}) == "Print the plate on the printer."
     assert srv._plan_sentence({"printer": {"id": "p1", "name": "CC2"}, "file_name": "a.gcode",
