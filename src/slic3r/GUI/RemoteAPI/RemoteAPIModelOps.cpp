@@ -429,6 +429,17 @@ Response Controller::handle_save_project(const std::string &body)
     // Big projects take a while to write (thumbnails + meshes): allow 120 s, not 10.
     nlohmann::json r = run_on_ui([path, overwrite]() -> nlohmann::json {
         Plater  *plater = wxGetApp().plater();
+        // The window greys out Save and Save As while a G-code file or an exported
+        // .gcode.3mf is open (MainFrame::can_save / can_save_as). Then the project name
+        // is that file's, so a save would replace the sliced file with a plain project,
+        // and with a path it would write an almost empty one. Refuse as POST /view does.
+        if (plater->only_gcode_mode() || plater->using_exported_file())
+            return {{"error", "preview_only"}};
+        // The other half of can_save_as. For the brim-ears tool the call also writes the
+        // ears being edited into the model, so the file gets them.
+        if (plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(false))
+            return {{"error", "gizmo_editing"}};
+
         wxString filename;
         if (path.empty()) {
             // The project's own file: saving over it is what "Save" means.
@@ -470,7 +481,7 @@ Response Controller::handle_save_project(const std::string &body)
         const std::string e = r["error"].get<std::string>();
         if (e == "not_3mf" || e == "bad_path") return { 422, r };
         if (e == "save_failed")                return { 500, r };
-        return { 409, r }; // project_unnamed, file_exists
+        return { 409, r }; // preview_only, gizmo_editing, project_unnamed, file_exists
     }
     return { 200, r };
 }

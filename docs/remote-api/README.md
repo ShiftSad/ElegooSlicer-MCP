@@ -464,7 +464,10 @@ project was never saved). With `path` it saves there, like Save As, and the proj
 takes that name: the path must be absolute, in an existing folder, and end in `.3mf`
 (`422 not_3mf | bad_path`); an existing file is replaced only with `"overwrite": true`
 (`409 file_exists`). The project is marked saved and its crash-recovery backup is
-dropped, as in the window. Waits up to 120 s for big projects. Errors also:
+dropped, as in the window. Waits up to 120 s for big projects. Like the window's
+greyed-out Save, it refuses while a G-code file or an exported `.gcode.3mf` is open
+(`409 preview_only`: saving would overwrite that sliced file with a plain project) and
+while a tool in the 3D view is mid-edit (`409 gizmo_editing`). Errors also:
 `500 save_failed`, `400 body_must_be_object | path_must_be_string |
 overwrite_must_be_boolean | invalid_json`.
 

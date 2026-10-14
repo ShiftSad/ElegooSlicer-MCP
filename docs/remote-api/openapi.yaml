@@ -827,7 +827,9 @@ paths:
         Uses the window's Save code without its dialogs. Without `path` it saves over
         the current project file. With `path` (absolute, existing folder, `.3mf`) it
         saves there like Save As and the project takes that name; an existing file is
-        replaced only with `overwrite: true`. Waits up to 120 s.
+        replaced only with `overwrite: true`. Waits up to 120 s. Refused, as the
+        window's Save is, while a G-code file or an exported .gcode.3mf is open
+        (`preview_only`) or a tool in the 3D view is mid-edit (`gizmo_editing`).
       requestBody:
         required: false
         content:
@@ -856,13 +858,17 @@ paths:
                 overwrite:  { value: { error: "overwrite_must_be_boolean" } }
                 bad_json:   { value: { error: "invalid_json" } }
         "409":
-          description: No current project file to save over, or the target exists.
+          description: |
+            No current project file to save over, the target exists, a G-code file
+            is open (preview only), or a 3D-view tool is mid-edit.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               examples:
                 unnamed: { value: { error: "project_unnamed" } }
                 exists:  { value: { error: "file_exists" } }
+                gcode:   { value: { error: "preview_only" } }
+                editing: { value: { error: "gizmo_editing" } }
         "422":
           description: Not a .3mf path, or not an absolute path in an existing folder.
           content:
