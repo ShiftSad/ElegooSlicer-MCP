@@ -245,7 +245,10 @@ running the slicer, as an import in the window does. Errors: `400 missing_path`,
 `404 file_not_found` (the file does not exist; the body echoes the path:
 `{"error":"file_not_found","path":"C:/models/part.stl"}`), `422 unsupported_format |
 load_failed`, `400 invalid_json`. A bare `404 not_found` only ever means an unknown
-route, never a missing file.
+route, never a missing file. Where the window would show a message or ask a question
+while loading (an object in meters, too large, without geometry...), the file is
+loaded as it is and the reply lists the message under `skipped_dialogs` (see
+[Dialogs](#dialogs)).
 
 ## Plates
 
@@ -798,6 +801,10 @@ things as they are; the entry then ends with `(answered No)`.
 | `PUT /config` | the Print tab's check asks a question: spiral vase needs one wall, no top layers, no infill, no support...; alternate extra wall with "ensure vertical shell thickness: All"; the Extrusion/Combined fuzzy skin modes need the Arachne wall generator | refused before anything is applied: `422 config_rejected` with the question in `errors._question`; send settings that agree, in the same request |
 | other routes that reload print settings (`PUT /preset` to a preset saved with such a combination, per-object settings) | the same checks | boxes as above; a question is answered No (the setting that conflicts is turned off) |
 | `PUT /config` while the printer tab's Extruder page is open in the window | "The Retract before wipe option could be only 100% when using the Firmware Retraction mode ..." | answered No (firmware retraction is turned off) |
+| `POST /model` | "Objects with zero volume removed"; "The file does not contain any geometry data." (then `422 load_failed`); an object over 10000 times the bed is scaled down with a note | notification + `skipped_dialogs` |
+| `POST /model` | "The object ... is too small, and maybe in meters or inches. Do you want to scale to millimeters?"; "Your object appears to be too large, do you want to scale it down ...?" | answered No: the file is loaded as it is; scale it with `POST /objects/{id}/transform` |
+| `POST /model` | an OBJ file with colours: the window asks which filament prints each colour | loaded without its colours (the dialog's Cancel), with a `skipped_dialogs` note |
+| `POST /model` | several objects at different heights: "load as a single object with multiple parts?" | loaded as separate objects, the dialog's No (as in MaxEllis/OrcaSlicer; no `skipped_dialogs` entry) |
 
 ## Notes & limits
 
