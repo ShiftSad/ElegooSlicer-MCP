@@ -1,11 +1,11 @@
 {
  "_meta": {
   "source": "PrintConfig.cpp",
-  "source_git_sha": "43b86fc7",
-  "extracted": "2026-07-19",
-  "setting_count": 807,
-  "with_label": 704,
-  "with_label_and_tooltip": 653,
+  "source_git_sha": "3f1042e9e",
+  "extracted": "2026-10-14",
+  "setting_count": 858,
+  "with_label": 751,
+  "with_label_and_tooltip": 699,
   "unparsed_keys": [
    "absolute_correction",
    "area_fill",
@@ -91,6 +91,7 @@
    "support_max_bridge_length",
    "support_max_bridges_on_pillar",
    "support_max_pillar_link_distance",
+   "support_mms",
    "support_object_elevation",
    "support_object_skip_flush",
    "support_pillar_connection_mode",
@@ -99,6 +100,7 @@
    "support_points_density_relative",
    "support_points_minimal_distance",
    "support_small_pillar_diameter_percent",
+   "support_wan_network",
    "supports_enable",
    "travel_speed_z",
    "wipe_tower_x",
@@ -139,7 +141,7 @@
   "type": "coPercent",
   "min": 1,
   "max": 100,
-  "mode": "comAdvanced",
+  "mode": "comDevelop",
   "enum_values": null,
   "enum_labels": null,
   "default": "50"
@@ -156,6 +158,34 @@
   "enum_values": null,
   "enum_labels": null,
   "default": null
+ },
+ "activate_air_filtration_during_print": {
+  "label": null,
+  "category": null,
+  "tooltip": "Enable this to override the fan speed set in custom G-code during print.",
+  "unit": null,
+  "type": "coBools",
+  "min": null,
+  "max": null,
+  "mode": "comSimple",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null,
+  "full_label": "During print"
+ },
+ "activate_air_filtration_on_completion": {
+  "label": null,
+  "category": null,
+  "tooltip": "Enable this to override the fan speed set in custom G-code after print completion.",
+  "unit": null,
+  "type": "coBools",
+  "min": null,
+  "max": null,
+  "mode": "comSimple",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null,
+  "full_label": "On completion"
  },
  "activate_chamber_temp_control": {
   "label": "Activate temperature control",
@@ -248,10 +278,23 @@
   "enum_labels": null,
   "default": null
  },
+ "additional_fan_full_speed_layer": {
+  "label": "Full fan speed at layer",
+  "category": null,
+  "tooltip": "Auxiliary fan speed will be ramped up linearly from layer \"For the first\" to maximum at layer \"Full fan speed at layer\".\n\"Full fan speed at layer\" will be ignored if lower than \"For the first\", in which case the fan will run at maximum allowed speed at layer \"For the first\" + 1.",
+  "unit": null,
+  "type": "coInts",
+  "min": 0,
+  "max": 1000,
+  "mode": "comSimple",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
  "align_infill_direction_to_model": {
   "label": "Align infill direction to model",
   "category": "Strength",
-  "tooltip": "Aligns infill and surface fill directions to follow the model's orientation on the build plate. When enabled, fill directions rotate with the model to maintain optimal strength characteristics.",
+  "tooltip": "Aligns infill, bridge, ironing and surface fill directions to follow the model's orientation on the build plate.\nWhen enabled, directions rotate with the model to maintain optimal strength characteristics.",
   "unit": null,
   "type": "coBool",
   "min": null,
@@ -472,7 +515,7 @@
  "bed_exclude_area": {
   "label": "Bed exclude area",
   "category": null,
-  "tooltip": "Unprintable area in XY plane. For example, X1 Series printers use the front left corner to cut filament during filament change. The area is expressed as polygon by points in following format: \"XxY, XxY, ...\"",
+  "tooltip": "Unprintable area in XY plane. The area is expressed as polygon by points in following format: \"XxY, XxY, ...\"",
   "unit": null,
   "type": "coPoints",
   "min": null,
@@ -485,7 +528,7 @@
  "bed_mesh_max": {
   "label": "Bed mesh max",
   "category": null,
-  "tooltip": "This option sets the max point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be set appropriately. OrcaSlicer ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max points. This information can usually be obtained from your printer manufacturer. The default setting is (99999, 99999), which means there are no limits, thus allowing probing across the entire bed.",
+  "tooltip": "This option sets the max point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be set appropriately. ElegooSlicer ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max points. This information can usually be obtained from your printer manufacturer. The default setting is (99999, 99999), which means there are no limits, thus allowing probing across the entire bed.",
   "unit": "mm",
   "type": "coPoint",
   "min": null,
@@ -498,7 +541,7 @@
  "bed_mesh_min": {
   "label": "Bed mesh min",
   "category": null,
-  "tooltip": "This option sets the min point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be set appropriately. OrcaSlicer ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max points. This information can usually be obtained from your printer manufacturer. The default setting is (-99999, -99999), which means there are no limits, thus allowing probing across the entire bed.",
+  "tooltip": "This option sets the min point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be set appropriately. ElegooSlicer ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max points. This information can usually be obtained from your printer manufacturer. The default setting is (-99999, -99999), which means there are no limits, thus allowing probing across the entire bed.",
   "unit": "mm",
   "type": "coPoint",
   "min": null,
@@ -539,6 +582,19 @@
    "By Highest Temp"
   ],
   "default": "BedTempFormula::btfHighestTemp"
+ },
+ "bed_texture_area": {
+  "label": "Bed texture area",
+  "category": null,
+  "tooltip": null,
+  "unit": null,
+  "type": "coPoints",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
  },
  "before_layer_change_gcode": {
   "label": "Before layer change G-code",
@@ -659,6 +715,19 @@
   "enum_labels": null,
   "default": "100"
  },
+ "bottom_surface_filament_id": {
+  "label": "Bottom surface",
+  "category": "Extruders",
+  "tooltip": "Filament to print bottom surface.\n\"Default\" uses the active object/part filament.",
+  "unit": null,
+  "type": "coInt",
+  "min": 0,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0"
+ },
  "bottom_surface_pattern": {
   "label": "Bottom surface pattern",
   "category": "Strength",
@@ -706,11 +775,11 @@
  "bridge_angle": {
   "label": "External bridge infill direction",
   "category": "Strength",
-  "tooltip": "Bridging angle override. If left to zero, the bridging angle will be calculated automatically. Otherwise the provided angle will be used for external bridges. Use 180° for zero angle.",
+  "tooltip": "External Bridging angle override.\nIf left to zero, the bridging angle will be calculated automatically for each specific bridge.\nOtherwise the provided angle will be used according to:\n - The absolute coordinates\n - The absolute coordinates + Model rotation: If Align infill direction to model is enabled\n - The optimal automatic angle + this value: If 'Relative Bridge Angle' is enabled\n\nUse 180° for zero absolute angle.",
   "unit": "°",
   "type": "coFloat",
   "min": 0,
-  "max": null,
+  "max": 180,
   "mode": "comAdvanced",
   "enum_values": null,
   "enum_labels": null,
@@ -719,11 +788,11 @@
  "bridge_density": {
   "label": "External bridge density",
   "category": "Strength",
-  "tooltip": "Controls the density (spacing) of external bridge lines. Default is 100%.\n\nLower density external bridges can help improve reliability as there is more space for air to circulate around the extruded bridge, improving its cooling speed. Minimum is 10%.\n\nHigher densities can produce smoother bridge surfaces, as overlapping lines provide additional support during printing. Maximum is 120%.\nNote: Bridge density that is too high can cause warping or overextrusion.",
+  "tooltip": "Controls the density (spacing) of external bridge lines.\nTheoretically, 100% means a solid bridge, but due to the tendency of bridge extrusions to sag, 100% may not be sufficient.\n\n- Higher than 100% density (Recommended Max 125%):\n  - Pros: Produces smoother bridge surfaces, as overlapping lines provide additional support during printing.\n  - Cons: Can cause overextrusion, which may reduce lower and upper surface quality and increase the risk of warping.\n\n- Lower than 100% density (Min 10%):\n  - Pros: Can create a string-like first layer. Faster and with better cooling because there is more space for air to circulate around the extruded bridge.\n  - Cons: May lead to sagging and poorer surface finish.",
   "unit": "%",
   "type": "coPercent",
   "min": 10,
-  "max": 120,
+  "max": 125,
   "mode": "comAdvanced",
   "enum_values": null,
   "enum_labels": null,
@@ -732,7 +801,7 @@
  "bridge_flow": {
   "label": "Bridge flow ratio",
   "category": "Quality",
-  "tooltip": "Decrease this value slightly (for example 0.9) to reduce the amount of material for bridge, to improve sag.\n\nThe actual bridge flow used is calculated by multiplying this value with the filament flow ratio, and if set, the object's flow ratio.",
+  "tooltip": "This value governs the thickness of the external (visible) bridge layer.\nValues above 1.0: Increase the amount of material while maintaining line spacing. This can improve line contact and strength.\nValues below 1.0: Reduce the amount of material while adjusting line spacing to maintain contact. This can improve sagging.\n\nThe actual bridge flow used is calculated by multiplying this value with the filament flow ratio, and if set, the object's flow ratio.",
   "unit": null,
   "type": "coFloat",
   "min": 0,
@@ -741,6 +810,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "1"
+ },
+ "bridge_line_width": {
+  "label": "Bridge",
+  "category": "Quality",
+  "tooltip": "Line width of the Bridge. If expressed as a %, it will be computed over the nozzle diameter.\nRecommended to use with a higher Bridge density or Bridge flow ratio.\n\nThe maximum value is 100% or the nozzle diameter.\nIf set to 0, the line width will match the Internal solid infill width.",
+  "unit": "mm or %",
+  "type": "coFloatOrPercent",
+  "min": 0,
+  "max": 100,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "100., true"
  },
  "bridge_no_support": {
   "label": "Don't support bridges",
@@ -806,6 +888,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "125"
+ },
+ "brim_flow_ratio": {
+  "label": "Brim flow ratio",
+  "category": "Support",
+  "tooltip": "This factor affects the amount of material for brims.\n\nThe actual brim flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.\n\nNote: The resulting value will not be affected by the first-layer flow ratio.",
+  "unit": null,
+  "type": "coFloat",
+  "min": 0,
+  "max": 2,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "1"
  },
  "brim_object_gap": {
   "label": "Brim-object gap",
@@ -901,6 +996,20 @@
   "enum_labels": null,
   "default": "Vec2d(100,100)"
  },
+ "chamber_minimal_temperature": {
+  "label": "Minimal",
+  "category": null,
+  "tooltip": "This is the chamber temperature at which printing should start, while the chamber continues heating toward the \"Target\" chamber temperature. For example, set the Target to 60 and the Minimal to 50 to begin printing once the chamber reaches 50°C, without waiting for the full 60°C.\n\nIt sets a G-code variable named chamber_minimal_temperature, which can be passed to your print start macro or a heat soak macro, like this: PRINT_START (other variables) CHAMBER_MIN_TEMP=[chamber_minimal_temperature].\n\nUnlike the \"Target\" chamber temperature, this option does not emit any M141/M191 commands; it only exposes the value to your custom G-code. It should not exceed the \"Target\" chamber temperature.",
+  "unit": "\\u2103",
+  "type": "coInts",
+  "min": 0,
+  "max": "max_temp",
+  "mode": null,
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null,
+  "full_label": "Chamber minimal temperature"
+ },
  "chamber_temperature": {
   "label": "Chamber temperature",
   "category": null,
@@ -954,6 +1063,19 @@
   "enum_labels": null,
   "default": null
  },
+ "close_additional_fan_first_x_layers": {
+  "label": "For the first",
+  "category": null,
+  "tooltip": "Set special auxiliary cooling fan for the first certain layers.",
+  "unit": "layers",
+  "type": "coInts",
+  "min": 0,
+  "max": 1000,
+  "mode": "comSimple",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
  "close_fan_the_first_x_layers": {
   "label": "No cooling for the first",
   "category": null,
@@ -966,6 +1088,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": null
+ },
+ "combine_brims": {
+  "label": "Combine brims",
+  "category": "Support",
+  "tooltip": "Combine multiple brims into one when they are close to each other. This can improve brim adhesion.",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
  },
  "compatible_machine_expression_group": {
   "label": null,
@@ -1061,7 +1196,7 @@
  "config_compatibility": {
   "label": "Forward-compatibility rule when loading configurations from config files and project files (3MF, AMF).",
   "category": null,
-  "tooltip": "This version of OrcaSlicer may not understand configurations produced by the newest OrcaSlicer versions. For example, newer OrcaSlicer may extend the list of supported firmware flavors. One may decide to bail out or to substitute an unknown value with a default silently or verbosely.",
+  "tooltip": "This version of ElegooSlicer may not understand configurations produced by the newest ElegooSlicer versions. For example, newer ElegooSlicer may extend the list of supported firmware flavors. One may decide to bail out or to substitute an unknown value with a default silently or verbosely.",
   "unit": null,
   "type": "coEnum",
   "min": null,
@@ -1195,12 +1330,12 @@
    "High Temp Plate",
    "Textured PEI Plate",
    "Textured Cool Plate",
-   "SuperTack Plate"
+   "Supertack Plate"
   ],
   "enum_labels": [
    "Smooth Cool Plate",
    "Engineering Plate",
-   "Smooth High Temp Plate",
+   "Smooth PEI Plate / High Temp Plate",
    "Textured PEI Plate",
    "Textured Cool Plate",
    "Cool Plate (SuperTack)"
@@ -1396,7 +1531,7 @@
   "unit": "mm",
   "type": "coFloat",
   "min": "0.f",
-  "max": "0.5f",
+  "max": "0.3f",
   "mode": "comAdvanced",
   "enum_values": null,
   "enum_labels": null,
@@ -1741,19 +1876,6 @@
   "enum_labels": null,
   "default": null
  },
- "e_position": {
-  "label": "Absolute E position",
-  "category": null,
-  "tooltip": "Current position of the extruder axis. Only used with absolute extruder addressing.",
-  "unit": null,
-  "type": "coFloats",
-  "min": null,
-  "max": null,
-  "mode": null,
-  "enum_values": null,
-  "enum_labels": null,
-  "default": null
- },
  "e_restart_extra": {
   "label": "Extra de-retraction",
   "category": null,
@@ -1805,6 +1927,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "1"
+ },
+ "elefant_foot_layers_density": {
+  "label": "Elephant foot layers density",
+  "category": "Quality",
+  "tooltip": "Density of internal solid infill for Elephant foot layers compensation.\nThe initial value for the second layer is set.\nSubsequent layers become linearly denser by the height specified in elefant_foot_compensation_layers.",
+  "unit": "%",
+  "type": "coPercent",
+  "min": 50,
+  "max": 100,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "100"
  },
  "elefant_foot_min_width": {
   "label": null,
@@ -1867,6 +2002,19 @@
    "Apply to all"
   ],
   "default": "eblDisabled"
+ },
+ "enable_filament_dynamic_map": {
+  "label": "Enable filament dynamic map",
+  "category": null,
+  "tooltip": "Enable dynamic filament mapping during print.",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comDevelop",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
  },
  "enable_filament_ramming": {
   "label": "Enable filament ramming",
@@ -2655,6 +2803,19 @@
   "enum_labels": null,
   "default": null
  },
+ "filament_change_extrusion_role_gcode": {
+  "label": "Change extrusion role G-code (filament)",
+  "category": null,
+  "tooltip": "This G-code is inserted when the extrusion role is changed for the active filament.",
+  "unit": null,
+  "type": "coStrings",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
  "filament_change_length": {
   "label": "Filament ramming length",
   "category": null,
@@ -2694,6 +2855,19 @@
   "enum_labels": null,
   "default": null
  },
+ "filament_cooling_before_tower": {
+  "label": "Wipe tower cooling",
+  "category": null,
+  "tooltip": "Temperature drop before entering filament tower",
+  "unit": "\\u2103",
+  "type": "coFloats",
+  "min": null,
+  "max": null,
+  "mode": "comDevelop",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
  "filament_cooling_final_speed": {
   "label": "Speed of the last cooling move",
   "category": null,
@@ -2726,7 +2900,7 @@
   "tooltip": "Filament is cooled by being moved back and forth in the cooling tubes. Specify desired number of these moves.",
   "unit": null,
   "type": "coInts",
-  "min": null,
+  "min": 0,
   "max": 20,
   "mode": "comAdvanced",
   "enum_values": null,
@@ -2817,7 +2991,7 @@
   "tooltip": "The material may have volumetric change after switching between molten and crystalline states. This setting changes all extrusion flow of this filament in G-code proportionally. The recommended value range is between 0.95 and 1.05. You may be able to tune this value to get a nice flat surface if there is slight overflow or underflow.",
   "unit": null,
   "type": "coFloats",
-  "min": null,
+  "min": 0,
   "max": 2,
   "mode": "comAdvanced",
   "enum_values": null,
@@ -3006,7 +3180,7 @@
  "filament_minimal_purge_on_wipe_tower": {
   "label": "Minimal purge on wipe tower",
   "category": null,
-  "tooltip": "After a tool change, the exact position of the newly loaded filament inside the nozzle may not be known, and the filament pressure is likely not yet stable. Before purging the print head into an infill or a sacrificial object, Orca Slicer will always prime this amount of material into the wipe tower to produce successive infill or sacrificial object extrusions reliably.",
+  "tooltip": "After a tool change, the exact position of the newly loaded filament inside the nozzle may not be known, and the filament pressure is likely not yet stable. Before purging the print head into an infill or a sacrificial object, ElegooSlicer will always prime this amount of material into the wipe tower to produce successive infill or sacrificial object extrusions reliably.",
   "unit": "mm³",
   "type": "coFloats",
   "min": 0,
@@ -3503,6 +3677,32 @@
   ],
   "default": "flsAuto"
  },
+ "first_x_layer_fan_speed": {
+  "label": "Fan speed",
+  "category": null,
+  "tooltip": "Special auxiliary cooling fan speed, effective only for the first x layers.",
+  "unit": "%",
+  "type": "coFloats",
+  "min": 0,
+  "max": 100,
+  "mode": "comSimple",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
+ "flashforge_serial_number": {
+  "label": "Serial Number",
+  "category": null,
+  "tooltip": "Flashforge local API requires the printer serial number.",
+  "unit": null,
+  "type": "coString",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
  "flush_into_infill": {
   "label": "Flush into objects' infill",
   "category": "Flush options",
@@ -3546,7 +3746,7 @@
   "label": "Flush multiplier",
   "category": null,
   "tooltip": "The actual flushing volumes is equal to the flush multiplier multiplied by the flushing volumes in the table.",
-  "unit": null,
+  "unit": "",
   "type": "coFloats",
   "min": null,
   "max": null,
@@ -3606,6 +3806,7 @@
   "enum_values": [
    "none",
    "external",
+   "hole",
    "all",
    "allwalls",
    "disabled_fuzzy"
@@ -3613,6 +3814,7 @@
   "enum_labels": [
    "Painted only",
    "Contour",
+   "Hole",
    "Contour and hole",
    "All walls",
    "Disabled"
@@ -3631,6 +3833,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "0"
+ },
+ "fuzzy_skin_layers_between_ripple_offset": {
+  "label": "Layers between ripple offset",
+  "category": "Others",
+  "tooltip": "Specifies how many consecutive layers share the same ripple phase before the offset is applied.\nFor example:\n- 1 = Layer 1 is printed with the base ripple pattern, then layer 2 is shifted by the configured offset, then layer 3 returns to the base pattern, and so on.\n- 3 = Layers 1 to 3 are printed with the base ripple pattern, then layers 4 to 6 are shifted by the configured offset, then layers 7 to 9 return to the base pattern, etc.",
+  "unit": null,
+  "type": "coInt",
+  "min": 1,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "1"
  },
  "fuzzy_skin_mode": {
   "label": "Fuzzy skin generator mode",
@@ -3656,7 +3871,7 @@
  "fuzzy_skin_noise_type": {
   "label": "Fuzzy skin noise type",
   "category": "Others",
-  "tooltip": "Noise type to use for fuzzy skin generation:\nClassic: Classic uniform random noise.\nPerlin: Perlin noise, which gives a more consistent texture.\nBillow: Similar to perlin noise, but clumpier.\nRidged Multifractal: Ridged noise with sharp, jagged features. Creates marble-like textures.\nVoronoi: Divides the surface into voronoi cells, and displaces each one by a random amount. Creates a patchwork texture.",
+  "tooltip": "Noise type to use for fuzzy skin generation:\nClassic: Classic uniform random noise.\nPerlin: Perlin noise, which gives a more consistent texture.\nBillow: Similar to perlin noise, but clumpier.\nRidged Multifractal: Ridged noise with sharp, jagged features. Creates marble-like textures.\nVoronoi: Divides the surface into voronoi cells, and displaces each one by a random amount. Creates a patchwork texture.\nRipple: Uniform ripple pattern that ripples left and right of the original path. Repeating pattern, woven appearance.",
   "unit": null,
   "type": "coEnum",
   "min": null,
@@ -3667,14 +3882,16 @@
    "perlin",
    "billow",
    "ridgedmulti",
-   "voronoi"
+   "voronoi",
+   "ripple"
   ],
   "enum_labels": [
    "Classic",
    "Perlin",
    "Billow",
    "Ridged Multifractal",
-   "Voronoi"
+   "Voronoi",
+   "Ripple"
   ],
   "default": "NoiseType::Classic"
  },
@@ -3717,6 +3934,32 @@
   "enum_labels": null,
   "default": "0.3f"
  },
+ "fuzzy_skin_ripple_offset": {
+  "label": "Ripple offset",
+  "category": "Others",
+  "tooltip": "Shifts the ripple phase forward along the print path by the specified percentage of a wavelength each layer period.\n- 0% keeps every layer identical.\n- 50% shifts the pattern by half a wavelength, effectively inverting the phase.\n- 100% shifts the pattern by a full wavelength, returning to the original phase.\n\nThe shift is applied once every number of layers set by Layers between ripple offset, so layers within the same group are printed identically.",
+  "unit": "%",
+  "type": "coPercent",
+  "min": 0,
+  "max": 100,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "50"
+ },
+ "fuzzy_skin_ripples_per_layer": {
+  "label": "Number of ripples per layer",
+  "category": "Others",
+  "tooltip": "Controls how many full cycles of ripples will be added per layer.",
+  "unit": null,
+  "type": "coInt",
+  "min": 1,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "15"
+ },
  "fuzzy_skin_scale": {
   "label": "Fuzzy skin feature size",
   "category": "Others",
@@ -3737,7 +3980,7 @@
   "unit": "mm",
   "type": "coFloat",
   "min": 0,
-  "max": 1,
+  "max": 2,
   "mode": "comSimple",
   "enum_values": null,
   "enum_labels": null,
@@ -3842,12 +4085,14 @@
    "marlin",
    "klipper",
    "reprapfirmware",
+   "repetier",
    "marlin2"
   ],
   "enum_labels": [
    "Marlin(legacy)",
    "Klipper",
    "RepRapFirmware",
+   "Repetier",
    "Marlin 2"
   ],
   "default": "gcfMarlinLegacy"
@@ -3890,6 +4135,32 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "{0}"
+ },
+ "gyroid_optimized": {
+  "label": "Z-buckling bias optimization (experimental)",
+  "category": "Strength",
+  "tooltip": "Tightens the gyroid wave along the Z (vertical) axis at low infill density to shorten the effective vertical column length and improve Z-axis compression buckling resistance. Filament use is preserved. No effect at ~30% sparse infill density and above. Only applies when Sparse infill pattern is set to Gyroid.",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": null,
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
+ },
+ "has_filament_switcher": {
+  "label": "Has filament switcher",
+  "category": null,
+  "tooltip": "Printer has a filament switcher hardware (e.g., AMS).",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comDevelop",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
  },
  "has_scarf_joint_seam": {
   "label": null,
@@ -4089,7 +4360,7 @@
  "host_type": {
   "label": "Host Type",
   "category": null,
-  "tooltip": "Orca Slicer can upload G-code files to a printer host. This field must contain the kind of the host.",
+  "tooltip": "ElegooSlicer can upload G-code files to a printer host. This field must contain the kind of the host.",
   "unit": null,
   "type": "coEnum",
   "min": null,
@@ -4109,12 +4380,14 @@
    "obico",
    "flashforge",
    "simplyprint",
-   "elegoolink"
+   "elegoolink",
+   "3dprinteros",
+   "moonraker"
   ],
   "enum_labels": [
    "PrusaLink",
    "PrusaConnect",
-   "Octo/Klipper",
+   "OctoPrint",
    "Duet",
    "FlashAir",
    "AstroBox",
@@ -4125,7 +4398,9 @@
    "Obico",
    "Flashforge",
    "SimplyPrint",
-   "Elegoo Link"
+   "Elegoo Link",
+   "3DPrinterOS",
+   "Moonraker (Klipper)"
   ],
   "default": "htOctoPrint"
  },
@@ -4212,7 +4487,7 @@
  "infill_anchor": {
   "label": "Sparse infill anchor length",
   "category": "Strength",
-  "tooltip": "Connect an infill line to an internal perimeter with a short segment of an additional perimeter. If expressed as percentage (example: 15%) it is calculated over infill extrusion width. Orca Slicer tries to connect two close infill lines to a short perimeter segment. If no such perimeter segment shorter than infill_anchor_max is found, the infill line is connected to a perimeter segment at just one side and the length of the perimeter segment taken is limited to this parameter, but no longer than anchor_length_max.\nSet this parameter to zero to disable anchoring perimeters connected to a single infill line.",
+  "tooltip": "Connect an infill line to an internal perimeter with a short segment of an additional perimeter. If expressed as percentage (example: 15%) it is calculated over infill extrusion width. ElegooSlicer tries to connect two close infill lines to a short perimeter segment. If no such perimeter segment shorter than infill_anchor_max is found, the infill line is connected to a perimeter segment at just one side and the length of the perimeter segment taken is limited to this parameter, but no longer than anchor_length_max.\nSet this parameter to zero to disable anchoring perimeters connected to a single infill line.",
   "unit": "mm or %",
   "type": "coFloatOrPercent",
   "min": null,
@@ -4239,7 +4514,7 @@
  "infill_anchor_max": {
   "label": "Maximum length of the infill anchor",
   "category": "Strength",
-  "tooltip": "Connect an infill line to an internal perimeter with a short segment of an additional perimeter. If expressed as percentage (example: 15%) it is calculated over infill extrusion width. Orca Slicer tries to connect two close infill lines to a short perimeter segment. If no such perimeter segment shorter than this parameter is found, the infill line is connected to a perimeter segment at just one side and the length of the perimeter segment taken is limited to infill_anchor, but no longer than this parameter.\nIf set to 0, the old algorithm for infill connection will be used, it should create the same result as with 1000 & 0.",
+  "tooltip": "Connect an infill line to an internal perimeter with a short segment of an additional perimeter. If expressed as percentage (example: 15%) it is calculated over infill extrusion width. ElegooSlicer tries to connect two close infill lines to a short perimeter segment. If no such perimeter segment shorter than this parameter is found, the infill line is connected to a perimeter segment at just one side and the length of the perimeter segment taken is limited to infill_anchor, but no longer than this parameter.\nIf set to 0, the old algorithm for infill connection will be used, it should create the same result as with 1000 & 0.",
   "unit": null,
   "type": "coFloatOrPercent",
   "min": null,
@@ -4536,6 +4811,32 @@
   "enum_labels": null,
   "default": "30"
  },
+ "initial_layer_travel_acceleration": {
+  "label": "First layer travel",
+  "category": null,
+  "tooltip": "Travel acceleration of first layer.\nThe percentage value is relative to Travel Acceleration.",
+  "unit": "mm/s² or %",
+  "type": "coFloatOrPercent",
+  "min": 0,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "100, true"
+ },
+ "initial_layer_travel_jerk": {
+  "label": "First layer travel",
+  "category": null,
+  "tooltip": "Travel jerk of first layer.\nThe percentage value is relative to Travel Jerk.",
+  "unit": "mm/s or %",
+  "type": "coFloatOrPercent",
+  "min": 0,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "100, true"
+ },
  "initial_layer_travel_speed": {
   "label": "First layer travel speed",
   "category": "Speed",
@@ -4574,6 +4875,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "10000"
+ },
+ "inner_wall_filament_id": {
+  "label": "Inner walls",
+  "category": "Extruders",
+  "tooltip": "Filament to print inner walls.\n\"Default\" uses the active object/part filament.",
+  "unit": null,
+  "type": "coInt",
+  "min": 0,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0"
  },
  "inner_wall_flow_ratio": {
   "label": "Inner wall flow ratio",
@@ -4639,6 +4953,84 @@
   "enum_values": null,
   "enum_labels": null,
   "default": null
+ },
+ "input_shaping_damp_x": {
+  "label": "X",
+  "category": null,
+  "tooltip": "Damping ratio for the X axis input shaper.\nZero will use the firmware damping ratio.\nTo disable input shaping, use the Disable type.\nRRF: X and Y values are equal.",
+  "unit": null,
+  "type": "coFloat",
+  "min": 0,
+  "max": 1,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0.1"
+ },
+ "input_shaping_damp_y": {
+  "label": "Y",
+  "category": null,
+  "tooltip": "Damping ratio for the Y axis input shaper.\nZero will use the firmware damping ratio.\nTo disable input shaping, use the Disable type.",
+  "unit": null,
+  "type": "coFloat",
+  "min": 0,
+  "max": 1,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0.1"
+ },
+ "input_shaping_emit": {
+  "label": "Emit input shaping",
+  "category": null,
+  "tooltip": "Override firmware input shaping settings.\nIf disabled, firmware settings are used.",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
+ },
+ "input_shaping_freq_x": {
+  "label": "X",
+  "category": null,
+  "tooltip": "Resonant frequency for the X axis input shaper.\nZero will use the firmware frequency.\nTo disable input shaping, use the Disable type.\nRRF: X and Y values are equal.",
+  "unit": "Hz",
+  "type": "coFloat",
+  "min": 0,
+  "max": 1000,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0"
+ },
+ "input_shaping_freq_y": {
+  "label": "Y",
+  "category": null,
+  "tooltip": "Resonant frequency for the Y axis input shaper.\nZero will use the firmware frequency.\nTo disable input shaping, use the Disable type.",
+  "unit": "Hz",
+  "type": "coFloat",
+  "min": 0,
+  "max": 1000,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0"
+ },
+ "input_shaping_type": {
+  "label": "Input shaper type",
+  "category": null,
+  "tooltip": "Choose the input shaper algorithm.\nDefault uses the firmware default settings.\nDisable turns off input shaping in the firmware.",
+  "unit": null,
+  "type": "coEnum",
+  "min": null,
+  "max": null,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "InputShaperType::Default"
  },
  "interface_shells": {
   "label": "Interface shells",
@@ -4734,11 +5126,11 @@
  "internal_bridge_angle": {
   "label": "Internal bridge infill direction",
   "category": "Strength",
-  "tooltip": "Internal bridging angle override. If left to zero, the bridging angle will be calculated automatically. Otherwise the provided angle will be used for internal bridges. Use 180° for zero angle.\n\nIt is recommended to leave it at 0 unless there is a specific model need not to.",
+  "tooltip": "Internal Bridging angle override.\nIf left to zero, the bridging angle will be calculated automatically for each specific bridge.\nOtherwise the provided angle will be used according to:\n - The absolute coordinates\n - The absolute coordinates + Model rotation: If Align infill direction to model is enabled\n - The optimal automatic angle + this value: If 'Relative Bridge Angle' is enabled\n\nUse 180° for zero absolute angle.",
   "unit": "°",
   "type": "coFloat",
   "min": 0,
-  "max": null,
+  "max": 180,
   "mode": "comAdvanced",
   "enum_values": null,
   "enum_labels": null,
@@ -4747,11 +5139,11 @@
  "internal_bridge_density": {
   "label": "Internal bridge density",
   "category": "Strength",
-  "tooltip": "Controls the density (spacing) of internal bridge lines. 100% means solid bridge. Default is 100%.\n\nLower density internal bridges can help reduce top surface pillowing and improve internal bridge reliability as there is more space for air to circulate around the extruded bridge, improving its cooling speed.\n\nThis option works particularly well when combined with the second internal bridge over infill option, further improving internal bridging structure before solid infill is extruded.",
+  "tooltip": "Controls the density (spacing) of internal bridge lines.\nInternal bridges act as intermediate support between sparse infill and top solid infill and can strongly affect top surface quality.\n\n- Higher than 100% density (Recommended Max 125%):\n  - Pros: Improves internal bridge strength and support under top layers, reducing sagging and improving top-surface finish.\n  - Cons: Increases material use and print time; excessive density may cause overextrusion and internal stresses.\n\n- Lower than 100% density (Min 10%):\n  - Pros: Can reduce pillowing and improve cooling (more airflow through the bridge), and may speed up printing.\n  - Cons: May reduce internal support, increasing the risk of sagging and top surface defects.\n\nThis option works particularly well when combined with the second internal bridge over infill option to improve bridging further before solid infill is extruded.",
   "unit": "%",
   "type": "coPercent",
   "min": 10,
-  "max": 100,
+  "max": 125,
   "mode": "comAdvanced",
   "enum_values": null,
   "enum_labels": null,
@@ -4773,7 +5165,7 @@
  "internal_bridge_flow": {
   "label": "Internal bridge flow ratio",
   "category": "Quality",
-  "tooltip": "This value governs the thickness of the internal bridge layer. This is the first layer over sparse infill. Decrease this value slightly (for example 0.9) to improve surface quality over sparse infill.\n\nThe actual internal bridge flow used is calculated by multiplying this value with the bridge flow ratio, the filament flow ratio, and if set, the object's flow ratio.",
+  "tooltip": "This value governs the thickness of the internal bridge layer. This is the first layer over sparse infill so increasing it may increase strength and upper layer quality.\nValues above 1.0: Increase the amount of material while maintaining line spacing. This can improve line contact and strength.\nValues below 1.0: Reduce the amount of material while adjusting line spacing to maintain contact. This can improve sagging.\n\nThe actual bridge flow used is calculated by multiplying this value with the filament flow ratio, and if set, the object's flow ratio.",
   "unit": null,
   "type": "coFloat",
   "min": 0,
@@ -4795,6 +5187,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "150, true"
+ },
+ "internal_solid_filament_id": {
+  "label": "Internal solid infill",
+  "category": "Extruders",
+  "tooltip": "Filament to print internal solid infill.\n\"Default\" uses the active object/part filament.",
+  "unit": null,
+  "type": "coInt",
+  "min": 0,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0"
  },
  "internal_solid_infill_acceleration": {
   "label": "Internal solid infill",
@@ -4904,6 +5309,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "false"
+ },
+ "ironing_expansion": {
+  "label": "Ironing expansion",
+  "category": "Quality",
+  "tooltip": "Expand or contract the ironing area.",
+  "unit": "mm",
+  "type": "coFloat",
+  "min": -100,
+  "max": 100,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0"
  },
  "ironing_fan_speed": {
   "label": "Ironing fan speed",
@@ -5116,6 +5534,45 @@
   "enum_labels": null,
   "default": null
  },
+ "lightning_overhang_angle": {
+  "label": "Lightning overhang angle",
+  "category": "Strength",
+  "tooltip": "Maximum overhang angle for Lightning infill support propagation.",
+  "unit": "°",
+  "type": "coFloat",
+  "min": 5,
+  "max": 85,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "45"
+ },
+ "lightning_prune_angle": {
+  "label": "Prune angle",
+  "category": "Strength",
+  "tooltip": "Controls how aggressively short or unsupported Lightning branches are pruned.\nThis angle is converted internally to a per-layer distance.",
+  "unit": "°",
+  "type": "coFloat",
+  "min": 5,
+  "max": 85,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "45"
+ },
+ "lightning_straightening_angle": {
+  "label": "Straightening angle",
+  "category": "Strength",
+  "tooltip": "Maximum straightening angle used to simplify Lightning branches.",
+  "unit": "°",
+  "type": "coFloat",
+  "min": 5,
+  "max": 85,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "45"
+ },
  "line_width": {
   "label": "Default",
   "category": "Quality",
@@ -5233,6 +5690,19 @@
   "enum_labels": null,
   "default": "\"cached_data\""
  },
+ "logfile": {
+  "label": "Log file",
+  "category": null,
+  "tooltip": "Redirects debug logging to file.",
+  "unit": null,
+  "type": "coInt",
+  "min": null,
+  "max": null,
+  "mode": null,
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
  "long_retractions_when_cut": {
   "label": "Long retraction when cut (beta)",
   "category": null,
@@ -5334,7 +5804,7 @@
   "unit": "mm",
   "type": "coFloats",
   "min": "0.f",
-  "max": "0.5f",
+  "max": "0.3f",
   "mode": "comAdvanced",
   "enum_values": null,
   "enum_labels": null,
@@ -6370,6 +6840,19 @@
   "enum_labels": null,
   "default": "500"
  },
+ "outer_wall_filament_id": {
+  "label": "Outer walls",
+  "category": "Extruders",
+  "tooltip": "Filament to print outer walls.\n\"Default\" uses the active object/part filament.",
+  "unit": null,
+  "type": "coInt",
+  "min": 0,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0"
+ },
  "outer_wall_flow_ratio": {
   "label": "Outer wall flow ratio",
   "category": "Advanced",
@@ -6755,6 +7238,32 @@
   "enum_labels": null,
   "default": "2.0"
  },
+ "parallel_printheads_bed_exclude_areas": {
+  "label": "Parallel printheads bed exclude areas",
+  "category": null,
+  "tooltip": "Ordered list of bed exclude areas by parallel printhead count. Item 1 applies to one printhead, item 2 to two printheads, and so on. Leave an item empty for no excluded area.",
+  "unit": null,
+  "type": "coStrings",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
+ "parallel_printheads_count": {
+  "label": "Parallel printheads count",
+  "category": null,
+  "tooltip": "Set the number of parallel printheads for machines like OrangeStorm Giga printer.",
+  "unit": null,
+  "type": "coInt",
+  "min": 1,
+  "max": 4,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
  "parking_pos_retraction": {
   "label": "Filament parking position",
   "category": null,
@@ -6768,6 +7277,19 @@
   "enum_labels": null,
   "default": "92."
  },
+ "part_cooling_fan_min_pwm": {
+  "label": "Minimum non-zero part cooling fan speed",
+  "category": null,
+  "tooltip": "Some part-cooling fans cannot start spinning when commanded below a certain PWM duty cycle. When set above 0, any non-zero part-cooling fan command will be raised to at least this percentage so the fan reliably starts. A fan command of 0 (fan off) is always honoured exactly. This clamp is applied after every other fan calculation (first-layer ramp, layer-time interpolation, overhang/bridge/support-interface/ironing overrides), so scaling still operates within the range [this value, 100%].\nIf your firmware already disables the fan below a threshold (for example Klipper's [fan] off_below: 0.10 shuts the fan off whenever the commanded duty cycle is below 10%), this option and the firmware threshold should ideally be set to the same value. Matching them (e.g. off_below: 0.10 in Klipper and 10% here) guarantees the slicer never emits a non-zero value that the firmware would silently drop, and the fan never receives a value below the one you know it can actually spool at.\nSet to 0 to deactivate.",
+  "unit": "%",
+  "type": "coInt",
+  "min": 0,
+  "max": 100,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0"
+ },
  "pellet_flow_coefficient": {
   "label": "Pellet flow coefficient",
   "category": null,
@@ -6776,7 +7298,7 @@
   "type": "coFloats",
   "min": 0,
   "max": null,
-  "mode": null,
+  "mode": "comDevelop",
   "enum_values": null,
   "enum_labels": null,
   "default": null
@@ -6784,12 +7306,12 @@
  "pellet_modded_printer": {
   "label": "Pellet Modded Printer",
   "category": null,
-  "tooltip": "Enable this option if your printer uses pellets instead of filaments.",
+  "tooltip": "Enable this option if your printer uses pellets instead of filaments",
   "unit": null,
   "type": "coBool",
   "min": null,
   "max": null,
-  "mode": "comSimple",
+  "mode": "comDevelop",
   "enum_values": null,
   "enum_labels": null,
   "default": "false"
@@ -6849,7 +7371,7 @@
  "post_process": {
   "label": "Post-processing Scripts",
   "category": null,
-  "tooltip": "If you want to process the output G-code through custom scripts, just list their absolute paths here. Separate multiple scripts with a semicolon. Scripts will be passed the absolute path to the G-code file as the first argument, and they can access the Orca Slicer config settings by reading environment variables.",
+  "tooltip": "If you want to process the output G-code through custom scripts, just list their absolute paths here. Separate multiple scripts with a semicolon. Scripts will be passed the absolute path to the G-code file as the first argument, and they can access the ElegooSlicer config settings by reading environment variables.",
   "unit": null,
   "type": "coStrings",
   "min": null,
@@ -7152,7 +7674,7 @@
  "print_host": {
   "label": "Hostname, IP or URL",
   "category": null,
-  "tooltip": "Orca Slicer can upload G-code files to a printer host. This field should contain the hostname, IP address or URL of the printer host instance. Print host behind HAProxy with basic auth enabled can be accessed by putting the user name and password into the URL in the following format: https://username:password@your-octopi-address/",
+  "tooltip": "ElegooSlicer can upload G-code files to a printer host. This field should contain the hostname, IP address or URL of the printer host instance. Print host behind HAProxy with basic auth enabled can be accessed by putting the user name and password into the URL in the following format: https://username:password@your-octopi-address/",
   "unit": null,
   "type": "coString",
   "min": null,
@@ -7439,7 +7961,7 @@
  "printhost_apikey": {
   "label": "API Key / Password",
   "category": null,
-  "tooltip": "Orca Slicer can upload G-code files to a printer host. This field should contain the API Key or the password required for authentication.",
+  "tooltip": "ElegooSlicer can upload G-code files to a printer host. This field should contain the API Key or the password required for authentication.",
   "unit": null,
   "type": "coString",
   "min": null,
@@ -7546,6 +8068,19 @@
   "enum_labels": null,
   "default": null
  },
+ "process_change_extrusion_role_gcode": {
+  "label": "Change extrusion role G-code (process)",
+  "category": null,
+  "tooltip": "This G-code is inserted when the extrusion role is changed. It runs after the machine and filament extrusion role G-code.",
+  "unit": null,
+  "type": "coString",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
+ },
  "purge_in_prime_tower": {
   "label": "Purge in prime tower",
   "category": null,
@@ -7562,7 +8097,7 @@
  "raft_contact_distance": {
   "label": "Raft contact Z distance",
   "category": "Support",
-  "tooltip": "Z gap between object and raft. Ignored for soluble interface.",
+  "tooltip": "Z gap between raft and object. If Support Top Z Distance is 0, this value is ignored and the object is printed in direct contact with the raft (no gap).",
   "unit": "mm",
   "type": "coFloat",
   "min": 0,
@@ -7654,6 +8189,19 @@
   "label": "Reduce infill retraction",
   "category": null,
   "tooltip": "Don't retract when the travel is entirely within an infill area. That means the oozing can't been seen. This can reduce times of retraction for complex model and save printing time, but make slicing and G-code generating slower. Note that z-hop is also not performed in areas where retraction is skipped.",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
+ },
+ "relative_bridge_angle": {
+  "label": "Relative bridge angle",
+  "category": "Strength",
+  "tooltip": "When enabled, the bridge angle values are added to the automatically calculated bridge direction instead of overriding it.",
   "unit": null,
   "type": "coBool",
   "min": null,
@@ -8072,9 +8620,9 @@
   "tooltip": "This factor affects the amount of material for scarf joints.",
   "unit": null,
   "type": "coFloat",
-  "min": null,
+  "min": 0,
   "max": 2,
-  "mode": "comDevelop",
+  "mode": "comExpert",
   "enum_values": null,
   "enum_labels": null,
   "default": "1"
@@ -8323,7 +8871,7 @@
  "single_instance": {
   "label": "Single instance mode",
   "category": null,
-  "tooltip": "If enabled, the command line arguments are sent to an existing instance of GUI OrcaSlicer, or an existing OrcaSlicer window is activated. Overrides the \"single_instance\" configuration value from application preferences.",
+  "tooltip": "If enabled, the command line arguments are sent to an existing instance of GUI ElegooSlicer, or an existing ElegooSlicer window is activated. Overrides the \"single_instance\" configuration value from application preferences.",
   "unit": null,
   "type": "coBool",
   "min": null,
@@ -8665,7 +9213,7 @@
  "slowdown_for_curled_perimeters": {
   "label": "Slow down for curled perimeters",
   "category": "Speed",
-  "tooltip": "Enable this option to slow down printing in areas where perimeters may have curled upwards. For example, additional slowdown will be applied when printing overhangs on sharp corners like the front of the Benchy hull, reducing curling which compounds over multiple layers.\n\nIt is generally recommended to have this option switched on unless your printer cooling is powerful enough or the print speed slow enough that perimeter curling does not happen. If printing with a high external perimeter speed, this parameter may introduce slight artifacts when slowing down due to the large variance in print speeds. If you notice artifacts, ensure your pressure advance is tuned correctly.\n\nNote: When this option is enabled, overhang perimeters are treated like overhangs, meaning the overhang speed is applied even if the overhanging perimeter is part of a bridge. For example, when the perimeters are 100% overhanging, with no wall supporting them from underneath, the 100% overhang speed will be applied.",
+  "tooltip": "Enable this option to slow down printing in areas where perimeters may have curled upwards.\nFor example, additional slowdown will be applied when printing overhangs on sharp corners like the front of the Benchy hull, reducing curling which compounds over multiple layers.\n\nIt is generally recommended to have this option switched on unless your printer cooling is powerful enough or the print speed is slow enough that perimeter curling does not happen. \nIf printing with a high external perimeter speed, this parameter may introduce wall artifacts when slowing down, due to the potentially large variance in print speeds causing the extruder to be unable to keep up with the requested flow change.\nRoot cause of these artifacts is most likely PA tuning being slightly off, especially when combined with a high PA smooth time.\n\nRecommendations when enabling this option:\n1. Reduce Pressure Advance smooth time to 0.015 - 0.02 so the extruder reacts quickly to the speed changes.\n2. Increase the minimum print speeds to limit the magnitude of the slowdown and reduce the variance between fast and slow segments.\n3. If artifacts still appear, enable Extrusion Rate Smoothing (ERS) to further smooth the flow transitions.\n\nNote: When this option is enabled, overhang perimeters are treated like overhangs, meaning the overhang speed is applied even if the overhanging perimeter is part of a bridge.\nFor example, when the perimeters are 100% overhanging, with no wall supporting them from underneath, the 100% overhang speed will be applied.",
   "unit": null,
   "type": "coBool",
   "min": null,
@@ -8740,19 +9288,6 @@
   "enum_labels": null,
   "default": "45"
  },
- "solid_infill_filament": {
-  "label": "Solid infill",
-  "category": "Extruders",
-  "tooltip": "Filament to print solid infill.",
-  "unit": null,
-  "type": "coInt",
-  "min": 1,
-  "max": null,
-  "mode": "comAdvanced",
-  "enum_values": null,
-  "enum_labels": null,
-  "default": "1"
- },
  "solid_infill_rotate_template": {
   "label": "Solid infill rotation template",
   "category": "Strength",
@@ -8792,18 +9327,18 @@
   "enum_labels": null,
   "default": "20"
  },
- "sparse_infill_filament": {
+ "sparse_infill_filament_id": {
   "label": "Infill",
   "category": "Extruders",
-  "tooltip": "Filament to print internal sparse infill.",
+  "tooltip": "Filament to print internal sparse infill.\n\"Default\" uses the active object/part filament.",
   "unit": null,
   "type": "coInt",
-  "min": 1,
+  "min": 0,
   "max": null,
   "mode": "comAdvanced",
   "enum_values": null,
   "enum_labels": null,
-  "default": "1"
+  "default": "0"
  },
  "sparse_infill_flow_ratio": {
   "label": "Sparse infill flow ratio",
@@ -9190,7 +9725,7 @@
  "support_bottom_z_distance": {
   "label": "Bottom Z distance",
   "category": "Support",
-  "tooltip": "The Z gap between the bottom support interface and object.",
+  "tooltip": "Z gap between the object and the support bottom. If Support Top Z Distance is 0 and the bottom has interface layers, this value is ignored and the support is printed in direct contact with the object (no gap).",
   "unit": "mm",
   "type": "coFloat",
   "min": 0,
@@ -9221,7 +9756,7 @@
   "type": "coBool",
   "min": null,
   "max": null,
-  "mode": "comDevelop",
+  "mode": "comAdvanced",
   "enum_values": null,
   "enum_labels": null,
   "default": "true"
@@ -9268,7 +9803,7 @@
  "support_filament": {
   "label": "Support/raft base",
   "category": "Support",
-  "tooltip": "Filament to print support base and raft. \"Default\" means no specific filament for support and current filament is used.",
+  "tooltip": "Filament to print support base and raft.\n\"Default\" means no specific filament for support and current filament is used.",
   "unit": null,
   "type": "coInt",
   "min": 0,
@@ -9350,7 +9885,7 @@
  "support_interface_filament": {
   "label": "Support/raft interface",
   "category": "Support",
-  "tooltip": "Filament to print support interface. \"Default\" means no specific filament for support interface and current filament is used.",
+  "tooltip": "Filament to print support interface.\n\"Default\" means no specific filament for support interface and current filament is used.",
   "unit": null,
   "type": "coInt",
   "min": 0,
@@ -9596,6 +10131,19 @@
   "enum_labels": null,
   "default": "10.0"
  },
+ "support_mms": {
+  "label": null,
+  "category": null,
+  "tooltip": null,
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
+ },
  "support_multi_bed_types": {
   "label": "Support multi bed types",
   "category": null,
@@ -9673,6 +10221,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "false"
+ },
+ "support_parallel_printheads": {
+  "label": "Support parallel printheads",
+  "category": null,
+  "tooltip": "Enable printer settings for machines that can use multiple printheads in parallel.",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": null
  },
  "support_pillar_connection_mode": {
   "label": null,
@@ -9818,7 +10379,7 @@
  "support_threshold_angle": {
   "label": "Threshold angle",
   "category": "Support",
-  "tooltip": "Support will be generated for overhangs whose slope angle is below the threshold.",
+  "tooltip": "Support will be generated for overhangs whose slope angle is below the threshold. The smaller this value is, the steeper the overhang that can be printed without support.\nNote: If set to 0, normal supports use the Threshold overlap instead, while tree supports fall back to a default value of 30.",
   "unit": "°",
   "type": "coInt",
   "min": 0,
@@ -9844,7 +10405,7 @@
  "support_top_z_distance": {
   "label": "Top Z distance",
   "category": "Support",
-  "tooltip": "The Z gap between the top support interface and object.",
+  "tooltip": "Z gap between the support's top and object.",
   "unit": "mm",
   "type": "coFloat",
   "min": 0,
@@ -9876,6 +10437,19 @@
    "Tree (manual)"
   ],
   "default": "stNormalAuto"
+ },
+ "support_wan_network": {
+  "label": null,
+  "category": null,
+  "tooltip": null,
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
  },
  "supports_enable": {
   "label": null,
@@ -10001,7 +10575,7 @@
  "thick_bridges": {
   "label": "Thick external bridges",
   "category": "Quality",
-  "tooltip": "If enabled, bridges are more reliable, can bridge longer distances, but may look worse. If disabled, bridges look better but are reliable just for shorter bridged distances.",
+  "tooltip": "If enabled, bridge extrusion uses a line height equal to the nozzle diameter.\nThis increases bridge strength and reliability, allowing longer spans, but may worsen appearance.\nIf disabled, bridges may look better but are generally reliable only for shorter spans.",
   "unit": null,
   "type": "coBool",
   "min": null,
@@ -10014,7 +10588,7 @@
  "thick_internal_bridges": {
   "label": "Thick internal bridges",
   "category": "Quality",
-  "tooltip": "If enabled, thick internal bridges will be used. It's usually recommended to have this feature turned on. However, consider turning it off if you are using large nozzles.",
+  "tooltip": "If enabled, internal bridge extrusion uses a line height equal to the nozzle diameter.\nThis increases internal bridge strength and reliability when printed over sparse infill, but may worsen appearance.\nIf disabled, internal bridges may look better but can be less reliable over sparse infill.",
   "unit": null,
   "type": "coBool",
   "min": null,
@@ -10120,6 +10694,19 @@
   "enum_labels": null,
   "default": null
  },
+ "tool_change_on_wipe_tower": {
+  "label": "Tool change on wipe tower",
+  "category": null,
+  "tooltip": "Force the toolhead to travel to the wipe tower before issuing the tool change command (Tx). Only relevant for multi-extruder (multi-toolhead) printers using a Type 2 wipe tower. By default Orca skips the travel on multi-toolhead machines because the firmware handles the head swap, which can result in the Tx command being issued above the printed part. Enable this option if you want the tool change to always be issued above the wipe tower instead.",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
+ },
  "top_bottom_infill_wall_overlap": {
   "label": "Top/Bottom solid infill/wall overlap",
   "category": "Strength",
@@ -10199,6 +10786,19 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "100"
+ },
+ "top_surface_filament_id": {
+  "label": "Top surface",
+  "category": "Extruders",
+  "tooltip": "Filament to print top surface.\n\"Default\" uses the active object/part filament.",
+  "unit": null,
+  "type": "coInt",
+  "min": 0,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0"
  },
  "top_surface_jerk": {
   "label": "Top surface",
@@ -10647,6 +11247,19 @@
   "enum_labels": null,
   "default": null
  },
+ "use_3mf": {
+  "label": "Use 3MF instead of G-code",
+  "category": null,
+  "tooltip": "Enable this if the printer accepts a 3MF file as the print job. When enabled, ElegooSlicer sends the sliced file as a .gcode.3mf, instead of a plain .gcode file.",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comAdvanced",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
+ },
  "use_firmware_retraction": {
   "label": "Use firmware retraction",
   "category": null,
@@ -10715,41 +11328,26 @@
  "wall_direction": {
   "label": "Wall loop direction",
   "category": "Quality",
-  "tooltip": "The direction which the wall loops are extruded when looking down from the top.\n\nBy default all walls are extruded in counter-clockwise, unless Reverse on even is enabled. Set this to any option other than Auto will force the wall direction regardless of the Reverse on even.\n\nThis option will be disabled if spiral vase mode is enabled.",
+  "tooltip": "The direction which the contour wall loops are extruded when looking down from the top.\nHoles are printed in the opposite direction to the contour to maintain alignment with layers whose contour polygons are incomplete and change direction, also partially forming the contour of a hole.\n\nThis option will be disabled if spiral vase mode is enabled.",
   "unit": null,
   "type": "coEnum",
   "min": null,
   "max": null,
   "mode": "comAdvanced",
   "enum_values": [
-   "auto",
    "ccw",
    "cw"
   ],
   "enum_labels": [
-   "Auto",
    "Counter clockwise",
    "Clockwise"
   ],
-  "default": "WallDirection::Auto"
+  "default": "WallDirection::CounterClockwise"
  },
  "wall_distribution_count": {
   "label": "Wall distribution count",
   "category": "Quality",
   "tooltip": "The number of walls, counted from the center, over which the variation needs to be spread. Lower values mean that the outer walls don't change in width.",
-  "unit": null,
-  "type": "coInt",
-  "min": 1,
-  "max": null,
-  "mode": "comAdvanced",
-  "enum_values": null,
-  "enum_labels": null,
-  "default": "1"
- },
- "wall_filament": {
-  "label": "Walls",
-  "category": "Extruders",
-  "tooltip": "Filament to print walls.",
   "unit": null,
   "type": "coInt",
   "min": 1,
@@ -10790,6 +11388,32 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "2"
+ },
+ "wall_maximum_deviation": {
+  "label": "Maximum wall deviation",
+  "category": "Quality",
+  "tooltip": "The maximum deviation allowed when reducing the resolution for the 'Maximum wall resolution' setting. If you increase this, the print will be less accurate, but the G-Code will be smaller. 'Maximum wall deviation' limits 'Maximum wall resolution', so if the two conflict, 'Maximum wall deviation' takes precedence.",
+  "unit": "mm",
+  "type": "coFloat",
+  "min": "0.005f",
+  "max": "0.05f",
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0.025f"
+ },
+ "wall_maximum_resolution": {
+  "label": "Maximum wall resolution",
+  "category": "Quality",
+  "tooltip": "This value determines the smallest wall line segment length in mm. The smaller you set this value, the more accurate and precise the walls will be.",
+  "unit": "mm",
+  "type": "coFloat",
+  "min": 0.005,
+  "max": "0.5f",
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0.5f"
  },
  "wall_sequence": {
   "label": "Walls printing order",
@@ -10958,7 +11582,7 @@
  "wipe_tower_extra_rib_length": {
   "label": "Extra rib length",
   "category": null,
-  "tooltip": "Positive values can increase the size of the rib wall, while negative values can reduce the size. However, the size of the rib wall can not be smaller than that determined by the cleaning volume.",
+  "tooltip": "Positive values can increase the size of the rib wall, while negative values can reduce the size.However, the size of the rib wall can not be smaller than that determined by the cleaning volume.",
   "unit": "mm",
   "type": "coFloat",
   "min": null,
@@ -11097,7 +11721,7 @@
    "Cone",
    "Rib"
   ],
-  "default": "wtwRectangle"
+  "default": "wtwRib"
  },
  "wipe_tower_x": {
   "label": null,
@@ -11264,6 +11888,58 @@
   "enum_values": null,
   "enum_labels": null,
   "default": "0"
+ },
+ "zaa_dont_alternate_fill_direction": {
+  "label": "Don't alternate fill direction",
+  "category": "Quality",
+  "tooltip": "Disable alternating fill direction when using Z contouring.",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
+ },
+ "zaa_enabled": {
+  "label": "Z contouring enabled",
+  "category": "Quality",
+  "tooltip": "Enable Z-layer contouring (aka Z-layer anti-aliasing).",
+  "unit": null,
+  "type": "coBool",
+  "min": null,
+  "max": null,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "false"
+ },
+ "zaa_min_z": {
+  "label": "Minimum Z height",
+  "category": "Quality",
+  "tooltip": "Minimum Z-layer height.\nAlso controls the slicing plane.",
+  "unit": "mm",
+  "type": "coFloat",
+  "min": 0,
+  "max": 100,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "0.05"
+ },
+ "zaa_minimize_perimeter_height": {
+  "label": "Minimize wall height angle",
+  "category": "Quality",
+  "tooltip": "Reduce the height of top-surface perimeters to match the model edge height.\nAffects perimeters with a slope less than this angle (degrees).\nA reasonable value is 35. Set to 0 to disable.",
+  "unit": "°",
+  "type": "coFloat",
+  "min": 0,
+  "max": 90,
+  "mode": "comExpert",
+  "enum_values": null,
+  "enum_labels": null,
+  "default": "35"
  },
  "zhop": {
   "label": "Current Z-hop",
