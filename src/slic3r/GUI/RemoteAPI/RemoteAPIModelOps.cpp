@@ -480,14 +480,16 @@ Response Controller::handle_save_project(const std::string &body)
 //    "state": "enforce" | "block" | "none"   (support, seam)
 //    "slot": n                               (color: 1-based filament slot),
 //    "box_mm": [[x0,y0,z0], [x1,y1,z1]]      (optional, world mm),
-//    "max_overhang_deg": a                   (optional, 0 < a <= 90),
+//    "max_overhang_deg": a                   (optional, 0 <= a <= 90),
 //    "clear": true                           (optional)}
 // Paints whole triangles of the object's solid parts into the store the paint gizmos
 // use (ModelVolume::supported_facets / seam_facets / mmu_segmentation_facets, through
 // a TriangleSelector). A triangle is painted when its centroid, in world coordinates
 // of the object's first copy, is inside the box (no box: every triangle) and, with
-// max_overhang_deg, when it faces down at most that many degrees from horizontal -
-// the test of the support gizmo's "paint on overhangs only". "clear" first erases
+// max_overhang_deg, when its normal points down at least that many degrees below
+// horizontal (unit normal n: n.z < 0 and -n.z >= sin(a)). So 90 keeps only flat
+// undersides, 45 the usual overhangs that need support, 0 every downward face; this
+// is the rule the spec and the MCP's paint_region tool state. "clear" first erases
 // that layer on the whole object; with no state/slot it only erases.
 Response Controller::handle_paint(uint64_t id, const std::string &body)
 {
@@ -542,8 +544,8 @@ Response Controller::handle_paint(uint64_t id, const std::string &body)
     double max_overhang_deg = 0.;
     if (in.contains("max_overhang_deg")) {
         max_overhang_deg = in["max_overhang_deg"].is_number() ? in["max_overhang_deg"].get<double>() : -1.;
-        if (!(max_overhang_deg > 0. && max_overhang_deg <= 90.))
-            return { 422, {{"error", "bad_overhang"}, {"detail", "0 < max_overhang_deg <= 90"}} };
+        if (!(max_overhang_deg >= 0. && max_overhang_deg <= 90.))
+            return { 422, {{"error", "bad_overhang"}, {"detail", "0 <= max_overhang_deg <= 90, degrees below horizontal"}} };
         has_overhang = true;
     }
 
@@ -571,7 +573,9 @@ Response Controller::handle_paint(uint64_t id, const std::string &body)
         plater->take_snapshot("Paint " + layer);
 
         const Transform3d instance_matrix = mo->instances.front()->get_matrix();
-        const double      cos_limit       = -std::cos(max_overhang_deg * PI / 180.);
+        // The 1e-6 slack keeps 90 working on a rotated copy, whose flat undersides
+        // come out a hair off -Z from float rounding (1e-6 is under 0.1 degree there).
+        const double      sin_limit       = std::sin(max_overhang_deg * PI / 180.) - 1e-6;
         int painted = 0;
         for (ModelVolume *mv : mo->volumes) {
             if (!mv->is_model_part()) continue; // the gizmos paint solid parts only
@@ -601,9 +605,9 @@ Response Controller::handle_paint(uint64_t id, const std::string &body)
                     Vec3d normal = (b - a).cross(c - a);
                     if (mirrored) normal = -normal;
                     const double length = normal.norm();
-                    // Same rule as TriangleSelector::select_patch: the normal must be
-                    // within max_overhang_deg of straight down.
-                    if (length <= 0. || normal.z() / length >= cos_limit)
+                    // The normal must point down (vertical walls never count) and at
+                    // least max_overhang_deg below horizontal.
+                    if (length <= 0. || normal.z() >= 0. || -normal.z() / length < sin_limit)
                         continue;
                 }
                 selector.set_facet(f, state);

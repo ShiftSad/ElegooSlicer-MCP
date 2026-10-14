@@ -471,9 +471,9 @@ overwrite_must_be_boolean | invalid_json`.
 ### POST /objects/{id}/paint
 
 ```bash
-# support enforcers under the downward faces of the lower 10 mm
+# support enforcers under the overhangs (45 degrees or steeper) of the lower 10 mm
 curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
-  -d '{"layer":"support","state":"enforce","box_mm":[[0,0,0],[256,256,10]],"max_overhang_deg":30}' \
+  -d '{"layer":"support","state":"enforce","box_mm":[[0,0,0],[256,256,10]],"max_overhang_deg":45}' \
   http://localhost:13130/api/v1/objects/832/paint
 ```
 ```json
@@ -487,11 +487,11 @@ retouched) in the window's Support painting, Seam painting and Color painting to
 - `box_mm` (optional): `[[x0,y0,z0],[x1,y1,z1]]` in world mm. A triangle is painted
   when its centroid, measured on the object's first copy, is inside the box (edges
   included). Without a box every triangle of the object is a candidate.
-- `max_overhang_deg` (optional, `0 < a <= 90`): only triangles facing **down** and
-  tilted at most `a` degrees from horizontal are painted, i.e. whose outward normal
-  is within `a` degrees of straight down (-Z). It is the test of the support tool's
-  "paint on overhangs only" with `a` as the threshold angle: 90 keeps every
-  downward-facing triangle, 30 only the flatter overhangs.
+- `max_overhang_deg` (optional, `0 <= a <= 90`): only triangles whose outward normal
+  points **down** at least `a` degrees below horizontal are painted: with the
+  world-space unit normal `n`, `n.z < 0` and `-n.z >= sin(a)`. 90 keeps only flat
+  undersides, 45 the usual overhangs that need support, 0 every face that points down
+  at all (vertical walls never count).
 - `clear` (optional): `true` first erases that layer on the whole object; without
   `state`/`slot` that is all it does.
 
