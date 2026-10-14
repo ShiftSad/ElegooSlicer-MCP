@@ -1976,6 +1976,9 @@ Response Controller::handle_delete_object(uint64_t id)
         int idx = find_object_index(plater->model(), id);
         if (idx < 0) { api_notify("Object not found", true); return {{"error", "unknown_object"}}; }
         std::string oname = plater->model().objects[idx]->name;
+        // elegoo-mcp: one undo step, named as the window's delete names it
+        // (Plater::priv::delete_object_from_model, which is not called: it can open a dialog).
+        Plater::TakeSnapshot snapshot(plater, "Delete Object" + (oname.empty() ? std::string() : ": " + oname));
         plater->remove((size_t) idx);
         api_notify("Removed '" + oname + "'");
         return {{"deleted", true}, {"id", id}, {"count", plater->model().objects.size()}};
@@ -2008,6 +2011,10 @@ Response Controller::handle_transform_object(uint64_t id, const std::string &bod
         ModelObject *mo = plater->model().objects[idx];
         if (mo->instances.empty()) return {{"error", "no_instance"}};
         ModelInstance *mi = mo->instances.front();
+        // elegoo-mcp: one undo step, as a drag in the window takes before it changes anything
+        // (GLCanvas3D::do_move / do_rotate / do_scale, with the labels of the move, rotate and
+        // scale tools). Without it POST /undo undid the step before this one instead.
+        plater->take_snapshot(has_r ? "Gizmo-Rotate" : (has_s ? "Set Scale" : "Move Object"));
         // elegoo-mcp: lowest point of the copy before this request, for the drop below.
         const double min_z_before = mo->instance_bounding_box(0).min.z();
         if (has_t) mi->set_offset(mi->get_offset() + tr);
@@ -2067,6 +2074,7 @@ Response Controller::handle_duplicate_object(uint64_t id)
         ModelObject *mo = model.objects[idx];
         if (mo->instances.empty()) return {{"error", "no_instance"}};
         const ModelInstance *src = mo->instances.front();
+        Plater::TakeSnapshot snapshot(plater, "Increase Instances"); // elegoo-mcp: one undo step, as Plater::increase_instances
         Vec3d off = src->get_offset() + Vec3d(10.0, 10.0, 0.0);
         mo->add_instance(off, src->get_scaling_factor(), src->get_rotation(), src->get_mirror());
         // plates: give the new copy to the plate it landed on (see handle_transform_object).
