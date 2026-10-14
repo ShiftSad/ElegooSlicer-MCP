@@ -318,7 +318,6 @@ void PrintSendDialogEx::setupIPCHandlers()
 IPCResult PrintSendDialogEx::preparePrintTask(const std::string& printerId)
 {
     nlohmann::json printTask     = json::object();
-    auto           preset_bundle = wxGetApp().preset_bundle;
 
     const Print&   print     = mPlater->get_partplate_list().get_current_fff_print();
     const auto&    stats     = print.print_statistics();
@@ -368,16 +367,52 @@ IPCResult PrintSendDialogEx::preparePrintTask(const std::string& printerId)
         printInfo["thumbnail"] = wxBase64Encode(buffer.GetData(), len).ToStdString();
     }
 
+    mMmsGroup = PrinterMmsGroup();
+    // elegoo-mcp: the filament list is built by getPlateFilamentList (below), shared with the
+    // Remote API; the code moved there unchanged.
+    mPrintFilamentList = getPlateFilamentList(mPlater->get_partplate_list().get_curr_plate(),
+                                              wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_used_filaments());
+
+    auto        cfg               = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    std::string printerModel      = "";
+    auto        printerModelValue = cfg.option<ConfigOptionString>("printer_model");
+    if (printerModelValue) {
+        printerModel = printerModelValue->value;
+    }
+    printInfo["currentProjectPrinterModel"] = printerModel;
+    mHasMms = false;
+    nlohmann::json filamentList = json::array();
+    for (auto& filament : mPrintFilamentList) {
+        filamentList.push_back(convertPrintFilamentMmsMappingToJson(filament));
+    }
+
+    printInfo["filamentList"] = filamentList;
+
+    IPCResult result;
+    result.data    = printInfo;
+    result.code    = 0;
+    result.message = getErrorMessage(PrinterNetworkErrorCode::SUCCESS);
+    return result;
+}
+
+// elegoo-mcp: moved here from preparePrintTask unchanged, except that the plate and its used
+// filaments (1-based) are parameters and the list is returned. preparePrintTask passes the
+// current plate; the Remote API (GET /printers/{id}/canvas/mapping) any plate, so both map the
+// same filaments to CANVAS trays. GUI thread.
+std::vector<PrintFilamentMmsMapping> PrintSendDialogEx::getPlateFilamentList(PartPlate* plate, const std::vector<int>& usedFilaments)
+{
+    auto                                 preset_bundle = wxGetApp().preset_bundle;
+    const Print&                         print         = *plate->fff_print();
+    std::vector<PrintFilamentMmsMapping> printFilamentList;
+
     std::map<std::string, Preset*> nameToPreset;
     for (int i = 0; i < preset_bundle->filaments.size(); ++i) {
         Preset* preset             = &preset_bundle->filaments.preset(i);
         nameToPreset[preset->name] = preset;
     }
 
-    mMmsGroup = PrinterMmsGroup();
     // get printfilament list
     std::vector<PrintFilamentMmsMapping> projectFilamentList;
-    mPrintFilamentList.clear();
     for (const auto& filamentName : preset_bundle->filament_presets) {
         auto it = nameToPreset.find(filamentName);
         if (it != nameToPreset.end()) {
@@ -408,7 +443,7 @@ IPCResult PrintSendDialogEx::preparePrintTask(const std::string& printerId)
         }
     }
     // calculate filament weight
-    auto extruders = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_used_filaments();
+    const std::vector<int>& extruders = usedFilaments; // elegoo-mcp: was the current plate's get_used_filaments()
     for (auto i = 0; i < extruders.size(); i++) {
         int extruderIdx = extruders[i] - 1;
         if (extruderIdx < 0 || extruderIdx >= (int) projectFilamentList.size())
@@ -431,7 +466,7 @@ IPCResult PrintSendDialogEx::preparePrintTask(const std::string& printerId)
         double support_volume_mm3    = 0.0;
         double flush_per_filament    = 0.0;
 
-        auto current_plate = mPlater->get_partplate_list().get_curr_plate();
+        auto current_plate = plate; // elegoo-mcp: was mPlater's current plate
         if (current_plate && current_plate->get_slice_result()) {
             const auto& gcode_stats = current_plate->get_slice_result()->print_statistics;
 
@@ -464,29 +499,9 @@ IPCResult PrintSendDialogEx::preparePrintTask(const std::string& printerId)
             }
         }
         info.filamentWeight = total_weight;
-        mPrintFilamentList.push_back(info);
+        printFilamentList.push_back(info);
     }
-
-    auto        cfg               = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-    std::string printerModel      = "";
-    auto        printerModelValue = cfg.option<ConfigOptionString>("printer_model");
-    if (printerModelValue) {
-        printerModel = printerModelValue->value;
-    }
-    printInfo["currentProjectPrinterModel"] = printerModel;
-    mHasMms = false;
-    nlohmann::json filamentList = json::array();
-    for (auto& filament : mPrintFilamentList) {
-        filamentList.push_back(convertPrintFilamentMmsMappingToJson(filament));
-    }
-
-    printInfo["filamentList"] = filamentList;
-
-    IPCResult result;
-    result.data    = printInfo;
-    result.code    = 0;
-    result.message = getErrorMessage(PrinterNetworkErrorCode::SUCCESS);
-    return result;
+    return printFilamentList;
 }
 
 IPCResult PrintSendDialogEx::getPrinterMmsInfo(const std::string &printerId)

@@ -3,7 +3,7 @@
 // elegoo-mcp: the Elegoo printers known to ElegooSlicer (Device tab) and their CANVAS
 // multi-material unit:
 //   GET /printers, /printers/{id}, /printers/{id}/status, /printers/{id}/tasks,
-//   /printers/{id}/files, /printers/{id}/canvas (read-only)
+//   /printers/{id}/files, /printers/{id}/canvas, /printers/{id}/canvas/mapping (read-only)
 //   POST /printers/{id}/canvas/sync (the CANVAS trays become the project's filaments)
 //
 // Where the data comes from:
@@ -29,12 +29,16 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrinterNetworkInfo.hpp"
+#include "libslic3r/StandardColorMatcher.hpp"
+#include "slic3r/GUI/Elegoo/PrintSendDialogEx.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PlaterExt.hpp"
 #include "slic3r/Utils/Elegoo/PrinterManager.hpp"
 #include "slic3r/Utils/Elegoo/PrinterMmsManager.hpp"
+
+#include <boost/algorithm/string.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -47,6 +51,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -914,6 +919,135 @@ Response Controller::handle_canvas_sync(const std::string &api_id, const std::st
     return { 200, r };
 }
 
+// --- CANVAS tray mapping ------------------------------------------------------------
+
+static bool is_blank(const std::string &s)
+{
+    return boost::algorithm::trim_copy(s).empty();
+}
+
+static std::string upper_trimmed(const std::string &s)
+{
+    return boost::algorithm::to_upper_copy(boost::algorithm::trim_copy(s));
+}
+
+// Whether two colours count as the same for the tray mapping: equal once both are rounded
+// to the nearest colour of ElegooSlicer's standard palette, the comparison
+// PrinterMmsManager::getFilamentMmsMapping makes. Colours the palette cannot read are
+// compared as text.
+static bool same_standard_color(const std::string &a, const std::string &b)
+{
+    static const StandardColorMatcher matcher;
+    const std::optional<StandardColorMatcher::Color> ma = matcher.match(a);
+    const std::optional<StandardColorMatcher::Color> mb = matcher.match(b);
+    if (ma && mb)
+        return upper_trimmed(ma->hex) == upper_trimmed(mb->hex);
+    return hex_color(a) == hex_color(b);
+}
+
+// The tray of the CANVAS reply with these ids, or null.
+static const PrinterMmsTray *find_tray(const PrinterMmsGroup &group, const std::string &unit_id, const std::string &tray_id)
+{
+    for (const PrinterMms &unit : group.mmsList)
+        for (const PrinterMmsTray &tray : unit.trayList)
+            if (tray.mmsId == unit_id && tray.trayId == tray_id)
+                return &tray;
+    return nullptr;
+}
+
+// One filament of the mapping, with its problems:
+// - no_tray: no tray was mapped (the Print dialog refuses to start: "some filaments not mapped");
+// - type_mismatch: the tray's filament type differs from the preset's;
+// - color_mismatch: the tray's colour is another standard colour than the slot's;
+// - tray_not_ready: the tray is no longer loaded or preloaded.
+static nlohmann::json mapped_filament_json(const PrintFilamentMmsMapping &f, const PrinterMmsGroup &group, bool sliced)
+{
+    const PrinterMmsTray &t      = f.mappedMmsFilament;
+    nlohmann::json        issues = nlohmann::json::array();
+    nlohmann::json        tray   = nullptr;
+    // The Print dialog's test of a mapped filament (checkFilamentMapping in print_send).
+    const bool mapped = !is_blank(t.trayName) && !is_blank(t.filamentName) && !is_blank(t.filamentType) &&
+                        !is_blank(t.mmsId) && !is_blank(t.trayId);
+    if (!mapped) {
+        issues.push_back("no_tray");
+    } else {
+        tray = {{"unit", t.mmsId}, {"tray", t.trayName}, {"type", t.filamentType}, {"color", hex_color(t.filamentColor)}};
+        if (upper_trimmed(t.filamentType) != upper_trimmed(f.filamentType))
+            issues.push_back("type_mismatch");
+        if (!same_standard_color(t.filamentColor, f.filamentColor))
+            issues.push_back("color_mismatch");
+        const PrinterMmsTray *now = find_tray(group, t.mmsId, t.trayId);
+        if (now == nullptr || (now->status != TRAY_STATUS_LOADED && now->status != TRAY_STATUS_PRELOADED))
+            issues.push_back("tray_not_ready");
+    }
+    return {
+        {"slot", f.index + 1},
+        {"preset", f.filamentName},
+        {"type", string_or_null(f.filamentType)},
+        {"color", hex_color(f.filamentColor)},
+        // The Print dialog's estimate (model, support, wipe tower and flush), rounded to
+        // 3 significant digits there; it needs the slice result.
+        {"weight_g", sliced ? nlohmann::json(std::round(f.filamentWeight * 100.0) / 100.0) : nlohmann::json()},
+        {"tray", tray},
+        {"issues", issues},
+    };
+}
+
+// GET /printers/{id}/canvas/mapping[?plate=i]: the CANVAS tray each filament of a plate
+// (default: the current one) would print from, decided as the Print dialog decides it: its
+// list of the plate's filaments (PrintSendDialogEx::getPlateFilamentList) and its tray
+// matching (PrinterMmsManager::getFilamentMmsMapping: the tray picked for that filament in
+// an earlier print when it is still loaded, else a ready tray of the same colour whose
+// filament matches). Read-only: nothing is saved.
+Response Controller::handle_canvas_mapping(const std::string &api_id, const std::string &query)
+{
+    int plate = -1; // -1: the current plate
+    if (!query_value(query, "plate").empty() && (!read_int_param(query, "plate", plate) || plate < 0))
+        return { 400, {{"error", "bad_plate_index"}} };
+
+    PrinterNetworkInfo p;
+    Response           error;
+    if (!find_canvas_printer(api_id, p, error))
+        return error;
+
+    // GUI data, read on the GUI thread: the plate's filaments as the Print dialog lists them,
+    // and the nozzle diameters for the CANVAS read.
+    auto           filaments = std::make_shared<std::vector<PrintFilamentMmsMapping>>();
+    nlohmann::json info      = run_on_ui([plate, filaments]() -> nlohmann::json {
+        PartPlateList &plates = wxGetApp().plater()->get_partplate_list();
+        const int      index  = plate < 0 ? plates.get_curr_plate_index() : plate;
+        if (index >= plates.get_plate_count())
+            return {{"error", "unknown_plate"}};
+        PartPlate *pp     = plates.get_plate(index);
+        const bool sliced = pp->is_slice_result_valid();
+        // The Print dialog takes the filaments of the plate's slice result. Before slicing
+        // there is none: take the filaments the plate's objects are set to print with.
+        *filaments = PrintSendDialogEx::getPlateFilamentList(pp, sliced ? pp->get_used_filaments() : pp->get_extruders(true));
+        return {{"plate", index}, {"sliced", sliced}, {"nozzles", nozzle_diameters_json()}};
+    });
+    if (info.contains("error"))
+        return { 404, info };
+
+    const CanvasReply reply = read_canvas(p.printerId, info["nozzles"].get<std::vector<double>>(), CANVAS_TIMEOUT_S);
+    if (reply.code != PrinterNetworkErrorCode::SUCCESS)
+        return printer_error(reply.code);
+    // The Print dialog does not map filaments to an unconnected CANVAS (PrintSendDialogEx::getPrinterMmsInfo).
+    if (!reply.group.connected || reply.group.mmsList.empty())
+        return { 409, {{"error", "canvas_disconnected"}} };
+    // The Print dialog's call. It reads the tray choices earlier prints saved, never writes them.
+    PrinterMmsManager::getInstance()->getFilamentMmsMapping(*filaments, reply.group);
+
+    const bool     sliced = info["sliced"].get<bool>();
+    bool           ok     = true;
+    nlohmann::json list   = nlohmann::json::array();
+    for (const PrintFilamentMmsMapping &f : *filaments) {
+        nlohmann::json item = mapped_filament_json(f, reply.group, sliced);
+        ok = ok && item["issues"].empty();
+        list.push_back(item);
+    }
+    return { 200, {{"plate", info["plate"]}, {"sliced", sliced}, {"ok", ok}, {"filaments", list}} };
+}
+
 // --- route group --------------------------------------------------------------------
 
 // Every /api/v1/printers route (dispatch sends the whole prefix here).
@@ -945,6 +1079,8 @@ Response Controller::route_elegoo(const Request &req)
                 return handle_get_canvas(id);
             if (req.method == "POST" && action == "canvas/sync")
                 return handle_canvas_sync(id, req.body);
+            if (req.method == "GET" && action == "canvas/mapping")
+                return handle_canvas_mapping(id, query);
         }
         return { 404, {{"error", "not_found"}} };
     } catch (const nlohmann::json::parse_error &) {

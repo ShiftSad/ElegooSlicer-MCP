@@ -48,6 +48,12 @@ public:
     PrintHostPostUploadAction getPostAction() const;
     bool getSwitchToDeviceTab() const;
 
+    // elegoo-mcp: the filaments a plate prints with, as the Print dialog maps them to CANVAS
+    // trays (PrinterMmsManager::getFilamentMmsMapping): preset, type, colour, slot index and the
+    // weight from the plate's slice result. usedFilaments: 1-based filament slots. Shared by
+    // preparePrintTask and the Remote API (GET /printers/{id}/canvas/mapping). GUI thread.
+    static std::vector<PrintFilamentMmsMapping> getPlateFilamentList(PartPlate* plate, const std::vector<int>& usedFilaments);
+
 protected:
     void on_dpi_changed(const wxRect &suggested_rect) override;
     void OnCloseWindow(wxCloseEvent& event);

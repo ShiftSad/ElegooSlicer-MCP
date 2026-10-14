@@ -115,6 +115,7 @@ private:
                                         const std::string &query);
     Response handle_get_canvas(const std::string &id);    // GET /printers/{id}/canvas
     Response handle_canvas_sync(const std::string &id, const std::string &body);     // POST /printers/{id}/canvas/sync
+    Response handle_canvas_mapping(const std::string &id, const std::string &query); // GET /printers/{id}/canvas/mapping
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);
