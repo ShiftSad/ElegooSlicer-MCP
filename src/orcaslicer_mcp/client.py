@@ -189,6 +189,13 @@ class OrcaClient:
         # ElegooSlicer MCP, capability "split".
         return await self._request("POST", f"/api/v1/objects/{obj_id}/split", json={"to": to})
 
+    # Undo / redo of the window's history (ElegooSlicer MCP, capability "undo").
+    async def undo(self) -> dict:
+        return await self._request("POST", "/api/v1/undo")
+
+    async def redo(self) -> dict:
+        return await self._request("POST", "/api/v1/redo")
+
     # Plates (fork v2.4.2-mcp.13 and later).
     async def get_plates(self) -> dict:
         return await self._request("GET", "/api/v1/plates")

@@ -182,6 +182,14 @@
       "description": "Set how many filament slots the project has, as the plus and minus buttons of the sidebar's filament list do: new slots are added at the end, and removing takes slots off the end (the highest numbers). Returns the slots as list_filament_slots does."
     },
     {
+      "name": "undo",
+      "description": "Undo the last change in the slicer window's history, like Ctrl+Z. Returns {\"ok\", \"can_undo\", \"can_redo\"}; ok is false when there was nothing to undo."
+    },
+    {
+      "name": "redo",
+      "description": "Redo the change undo last reverted, like Ctrl+Y. Returns {\"ok\", \"can_undo\", \"can_redo\"}; ok is false when there was nothing to redo (a new change after an undo clears what could be redone)."
+    },
+    {
       "name": "list_plates",
       "description": "List the plates in the project: each one's 0-based index, name, whether it is the current plate (the one slice, get_gcode, render_plate and get_job_status act on), lock state, build volume and the objects it holds."
     },

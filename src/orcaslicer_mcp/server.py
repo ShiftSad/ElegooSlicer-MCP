@@ -969,6 +969,45 @@ async def set_filament_count(
         return _elegoo_err(e, "filaments")
 
 
+# --- Undo / redo (ElegooSlicer MCP, capability "undo") --------------------------
+
+
+@mcp.tool()
+async def undo() -> dict:
+    """Undo the last change in the slicer window's history, like Ctrl+Z. Returns {"ok",
+    "can_undo", "can_redo"}; ok is false when there was nothing to undo.
+
+    The history is the window's own, shared with the user: it holds their edits as well as
+    changes made through these tools, so a step may be something the user did by hand. Moves,
+    rotations, added or removed objects and parts, painting and splits are recorded as in the
+    window; setting changes (set_config, select_preset) are not. Check the result with
+    list_objects or render_plate. Refused while slicing (slicing, 409) or while a gizmo is open
+    in the window (gizmo_editing, 409). Needs ElegooSlicer MCP ('undo' in get_status
+    capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.undo()
+    except ApiError as e:
+        return _elegoo_err(e, "undo")
+
+
+@mcp.tool()
+async def redo() -> dict:
+    """Redo the change undo last reverted, like Ctrl+Y. Returns {"ok", "can_undo",
+    "can_redo"}; ok is false when there was nothing to redo (a new change after an undo clears
+    what could be redone).
+
+    Uses the window's own history, shared with the user, as undo does. Check the result with
+    list_objects or render_plate. Refused while slicing (slicing, 409) or while a gizmo is open
+    in the window (gizmo_editing, 409). Needs ElegooSlicer MCP ('undo' in get_status
+    capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.redo()
+    except ApiError as e:
+        return _elegoo_err(e, "undo")
+
+
 @mcp.tool()
 async def list_plates() -> dict:
     """List the plates in the project: each one's 0-based index, name, whether it is the
@@ -2107,6 +2146,8 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "set_filament_slot": ("Set a filament slot's preset or colour", False, False),
     # Removing slots (with force) moves objects and parts that used them to another filament.
     "set_filament_count": ("Set the number of filament slots", False, True),
+    "undo": ("Undo the last change", False, False),
+    "redo": ("Redo the last undone change", False, False),
     "remember": ("Save a note", False, False),
     "load_model": ("Load a model file", False, False),
     "select_preset": ("Select preset", False, False),

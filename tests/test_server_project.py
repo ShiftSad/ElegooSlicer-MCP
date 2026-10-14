@@ -157,3 +157,32 @@ async def test_split_object_errors(monkeypatch):
 def test_split_object_hints():
     assert _hints("split_object").read_only_hint is False
     assert _hints("split_object").destructive_hint is False
+
+
+# --- undo / redo ----------------------------------------------------------------
+
+
+@respx.mock
+async def test_undo_and_redo(monkeypatch):
+    _env(monkeypatch)
+    u = respx.post(f"{BASE}/undo").mock(return_value=httpx.Response(
+        200, json={"ok": True, "can_undo": False, "can_redo": True}))
+    r = respx.post(f"{BASE}/redo").mock(return_value=httpx.Response(
+        200, json={"ok": False, "can_undo": True, "can_redo": False}))
+    assert (await srv.undo()) == {"ok": True, "can_undo": False, "can_redo": True}
+    assert (await srv.redo())["ok"] is False
+    assert u.called and r.called
+
+
+@respx.mock
+async def test_undo_refused_while_slicing_and_on_an_older_build(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/undo").mock(return_value=httpx.Response(409, json={"error": "slicing"}))
+    assert (await srv.undo())["error"] == "slicing"
+    respx.post(f"{BASE}/redo").mock(return_value=_route_missing())
+    _needs(await srv.redo(), "undo")
+
+
+def test_undo_redo_hints():
+    for name in ("undo", "redo"):
+        assert _hints(name).read_only_hint is False and _hints(name).destructive_hint is False
