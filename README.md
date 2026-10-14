@@ -99,7 +99,7 @@ These tools need the ElegooSlicer MCP build, a port of the same API to ElegooSli
 - `list_filament_slots`, `set_filament_slot` and `set_filament_count` show and change the project's filament slots as the sidebar's filament list does: preset and colour per slot, and how many slots there are (`filaments`).
 - `split_object` splits an object made of separate pieces into objects or parts, without dialogs (`split`).
 - `undo` and `redo` step through the window's history, the same history your own edits go on (`undo`).
-- `list_layer_changes`, `add_layer_change` and `remove_layer_change` set a filament switch or a pause at a layer height, as the preview's layer slider does (`layer_changes`). On the Centauri Carbon 2 a pause runs M600; a colour-change mark writes no command in ElegooSlicer.
+- `list_layer_changes`, `add_layer_change` and `remove_layer_change` set a filament switch or a pause at a layer height, as the preview's layer slider does (`layer_changes`). On the Centauri Carbon 2 a pause runs M600; there is no colour-change mark, since ElegooSlicer writes no command for one.
 - `run_calibration` sets up a calibration print from the Calibration menu, replacing the open project (`calibration`).
 
 ### Plate renders

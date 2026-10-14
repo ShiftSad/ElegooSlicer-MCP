@@ -185,7 +185,7 @@
     },
     {
       "name": "list_layer_changes",
-      "description": "List the changes set at a layer height on a plate, as the marks on the preview's layer slider: filament switches (tool_change), colour-change marks (color_change), pauses (pause) and custom G-code (custom, which these tools can list but not add)."
+      "description": "List the changes set at a layer height on a plate, as the marks on the preview's layer slider."
     },
     {
       "name": "add_layer_change",
@@ -193,7 +193,7 @@
     },
     {
       "name": "remove_layer_change",
-      "description": "Remove the change set at height z on a plate, as deleting a mark on the preview's layer slider does. Returns the plate's remaining list, as list_layer_changes."
+      "description": "Remove the change set at height z on a plate, whatever its type (custom G-code included), as deleting a mark on the preview's layer slider does. Returns the plate's remaining list, as list_layer_changes."
     },
     {
       "name": "run_calibration",

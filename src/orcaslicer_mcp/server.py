@@ -1049,10 +1049,12 @@ async def list_layer_changes(
     plate: Annotated[int | None, _PLATE_OR_CURRENT] = None,
 ) -> dict:
     """List the changes set at a layer height on a plate, as the marks on the preview's layer
-    slider: filament switches (tool_change), colour-change marks (color_change), pauses (pause)
-    and custom G-code (custom, which these tools can list but not add). Returns {"plate",
-    "items": [{z, type, slot?, message?}]}. Read-only. An unknown plate returns unknown_plate.
-    Needs ElegooSlicer MCP ('layer_changes' in get_status capabilities)."""
+    slider. Returns {"plate", "items": [...]}, sorted by z (mm): tool_change (with slot, the
+    filament to change to), pause (with message when one was stored), custom (custom G-code
+    from the window, with its gcode; these tools can list and remove it but not add it) and
+    color_change (with slot; only in projects made in another slicer). Read-only. An unknown
+    plate returns unknown_plate. Needs ElegooSlicer MCP ('layer_changes' in get_status
+    capabilities)."""
     try:
         async with _client() as c:
             return await c.get_layer_changes(await _plate_or_current(c, plate))
@@ -1064,15 +1066,15 @@ async def list_layer_changes(
 async def add_layer_change(
     z: Annotated[float, Field(description=(
         "Height in mm of the layer the change applies from, as the preview's layer slider shows "
-        "it: the change happens before that layer prints. It must lie within the height of the "
-        "plate's objects (bad_z otherwise)."))],
-    type: Annotated[Literal["tool_change", "color_change", "pause"], Field(description=(
+        "it: the change happens before that layer prints. It must be above 0 and below the top "
+        "of the plate's tallest object (bad_z otherwise)."))],
+    type: Annotated[Literal["tool_change", "pause"], Field(description=(
         "'tool_change': from this layer up, print with filament slot `slot`; a multi-material "
-        "unit (the CANVAS) switches by itself, with the usual flush. 'pause': pause the print "
-        "and run the printer's pause G-code (M600 on the Centauri Carbon 2), to drop in a nut or "
-        "magnet or to swap filament by hand. 'color_change': the OrcaSlicer colour-change mark; "
-        "ElegooSlicer writes no command for it (its M600 insertion is compiled out), so prefer "
-        "'pause' for a manual swap."))],
+        "unit (the CANVAS) switches by itself, with the usual flush (M6211 on the Centauri "
+        "Carbon 2). 'pause': pause the print and run the printer's pause G-code (M600 on the "
+        "Centauri Carbon 2), to drop in a nut or magnet or to swap filament by hand. There is no "
+        "colour-change type: ElegooSlicer writes no G-code for one (its slider does not offer it "
+        "either), so use a pause for a manual swap."))],
     slot: Annotated[int | None, Field(description=(
         "1-based filament slot to switch to; required for tool_change (see "
         "list_filament_slots)."))] = None,
@@ -1084,12 +1086,16 @@ async def add_layer_change(
     """Add a filament switch or a pause at a layer height, as adding one on the preview's layer
     slider does. Returns the plate's full list, as list_layer_changes.
 
-    A change at the same z replaces the one there. Use tool_change for a print that changes
-    colour by height (a striped vase, a two-colour sign), pause to embed something or to swap
-    filament by hand. The plate is left unsliced: re-slice to see the change in the preview and
-    in the time and filament estimates (a tool_change adds a filament change and its flush).
-    Errors: bad_z, bad_slot or bad_type (422), unknown_plate (404), slicing (409). Needs
-    ElegooSlicer MCP ('layer_changes' in get_status capabilities)."""
+    A change at the same z (within 0.001 mm) replaces the one there. Use tool_change for a print
+    that changes colour by height (a two-colour sign, stripes), pause to embed something or to
+    swap filament by hand. As on the slider, tool_change needs 2 or more filament slots, a plate
+    whose objects each print with one filament (no parts, paint or height ranges in other
+    filaments) and no spiral vase mode; otherwise it is bad_type with a detail saying which. The
+    plate is left unsliced: re-slice to see the change in the preview and in the time and
+    filament estimates (a tool_change adds a filament change and its flush). Errors: bad_z (also
+    an empty plate, or custom G-code already at that height), bad_slot or bad_type (422),
+    unknown_plate (404), slicing or preview_only (409). Needs ElegooSlicer MCP ('layer_changes'
+    in get_status capabilities)."""
     if type == "tool_change" and slot is None:
         return {"error": "bad_slot",
                 "hint": "tool_change needs slot: the 1-based filament slot to print with from z up."}
@@ -1112,8 +1118,9 @@ async def remove_layer_change(
         "0.001 mm)."))],
     plate: Annotated[int | None, _PLATE_OR_CURRENT] = None,
 ) -> dict:
-    """Remove the change set at height z on a plate, as deleting a mark on the preview's layer
-    slider does. Returns the plate's remaining list, as list_layer_changes.
+    """Remove the change set at height z on a plate, whatever its type (custom G-code included),
+    as deleting a mark on the preview's layer slider does. Returns the plate's remaining list,
+    as list_layer_changes.
 
     No change at that height returns no_change_at_z (404); take z from list_layer_changes. The
     plate is left unsliced, so re-slice afterwards. Needs ElegooSlicer MCP ('layer_changes' in

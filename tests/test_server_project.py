@@ -203,7 +203,8 @@ def test_undo_redo_hints():
 
 _PLATES = {"current": 1, "plates": [{"index": 0, "current": False}, {"index": 1, "current": True}]}
 _CHANGES = {"plate": 1, "items": [{"z": 5.0, "type": "tool_change", "slot": 2},
-                                  {"z": 12.4, "type": "pause", "message": "insert magnet"}]}
+                                  {"z": 12.4, "type": "pause", "message": "insert magnet"},
+                                  {"z": 15.0, "type": "custom", "gcode": "M117 hello"}]}
 
 
 @respx.mock
@@ -286,6 +287,13 @@ async def test_layer_changes_need_an_elegoo_build(monkeypatch):
     _env(monkeypatch)
     respx.get(f"{BASE}/plates/0/layer_changes").mock(return_value=_route_missing())
     _needs(await srv.list_layer_changes(plate=0), "layer_changes")
+
+
+def test_add_layer_change_offers_no_colour_change():
+    # ElegooSlicer writes no G-code for a colour change and its route refuses one.
+    import typing
+    hints = typing.get_type_hints(srv.add_layer_change, include_extras=True)
+    assert typing.get_args(typing.get_args(hints["type"])[0]) == ("tool_change", "pause")
 
 
 def test_layer_change_hints():
