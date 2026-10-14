@@ -8,7 +8,7 @@
 #include <mutex>
 #include <set>
 
-namespace Slic3r { class Model; }
+namespace Slic3r { class Model; class DynamicPrintConfig; }
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -17,6 +17,11 @@ namespace Slic3r { namespace GUI { namespace RemoteAPI {
 int  find_object_index(const Model &model, uint64_t id); // index in Model::objects, -1 if none
 void api_notify(const std::string &text, bool warning = false); // on-screen toast
 std::string main_view_name(); // main-window tab: "prepare" | "preview" | "other"
+void invalidate_object_plates(int obj_idx); // mark the plates holding the object unsliced
+// Stages per-object/per-part overrides from a JSON body onto cfg with the policy of
+// every config write (unknown, sensitive and read-only keys are refused into errors).
+void stage_object_config(DynamicPrintConfig &cfg, const nlohmann::json &in,
+                         nlohmann::json &applied, nlohmann::json &errors);
 
 // Snapshot of the last/current slice, maintained on the GUI thread by wx event
 // subscriptions (Task 10), read by API threads under the mutex.
@@ -91,6 +96,12 @@ private:
     // elegoo-mcp: model operations, defined in RemoteAPIModelOps.cpp.
     Response handle_orient_object(const std::string &body);  // POST /orient {"object_id": id}
     Response handle_set_view(const std::string &body);       // POST /view {"view"}
+    // /objects/{id}/volumes[/{vid}[/config]]: action is the path after "{id}/".
+    Response route_volumes(const Request &req, uint64_t id, const std::string &action);
+    Response handle_get_volumes(uint64_t id);
+    Response handle_add_volume(uint64_t id, const std::string &body);
+    Response handle_put_volume_config(uint64_t id, uint64_t vid, const std::string &body);
+    Response handle_delete_volume(uint64_t id, uint64_t vid);
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);

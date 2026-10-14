@@ -51,6 +51,10 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/objects/{id}/transform` | Move, rotate and/or scale an object |
 | POST | `/orient` | Auto-orient every object, or one object with `{"object_id": id}` |
 | POST | `/view` | Show the Prepare or Preview tab |
+| GET | `/objects/{id}/volumes` | List an object's parts, modifiers, negative volumes and support enforcers/blockers |
+| POST | `/objects/{id}/volumes` | Add a box/cylinder/sphere modifier, negative volume or support enforcer/blocker |
+| PUT | `/objects/{id}/volumes/{vid}/config` | Set one volume's own settings (atomic) |
+| DELETE | `/objects/{id}/volumes/{vid}` | Remove a volume |
 
 ### GET /status
 
@@ -377,6 +381,61 @@ buttons do; the reply names the tab now showing. Opening Preview on an unsliced 
 behaves as in the window. With a G-code file open the window is preview-only, and
 the Prepare button would ask whether to close that file, so `prepare` is refused
 with `409 preview_only`. Errors: `400 missing_view | invalid_json`, `422 bad_view`.
+
+## Part volumes
+
+The rows under an object in the object list: its parts, modifiers, negative volumes
+and support enforcers/blockers. `{id}` is the object id of `GET /objects`, `{vid}`
+the volume id listed here (ids, not positions: adding or removing a volume reorders
+`index`). Sizes and positions are world millimetres measured on the object's first
+copy. Every change marks the plates holding the object unsliced.
+
+### GET /objects/{id}/volumes
+
+```json
+{ "object": 832, "volumes": [
+  { "id": 833, "index": 0, "name": "cube", "type": "part", "extruder": 0,
+    "size_mm": [20,20,20], "position_mm": [128,128,10], "config": {} },
+  { "id": 901, "index": 1, "name": "Generic-Cube", "type": "modifier", "extruder": 0,
+    "size_mm": [30,30,5], "position_mm": [128,128,12.5], "config": {"extruder": "0", "sparse_infill_density": "40%"} } ] }
+```
+`type` is `part | modifier | negative | support_enforcer | support_blocker`;
+`extruder` 0 means the volume uses the object's filament; `position_mm` is the centre
+of the volume's bounding box; `config` holds the volume's own overrides. `404 unknown_object`.
+
+### POST /objects/{id}/volumes
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"type":"modifier","shape":"box","size_mm":[30,30,5],"position_mm":[128,128,12.5],"config":{"sparse_infill_density":"40%"}}' \
+  http://localhost:13130/api/v1/objects/832/volumes
+```
+`201 {"volume": {...}}` with the fields above. Adds the shape the way right-click >
+Add modifier / Add negative volume / Support enforcer / Support blocker > Cube,
+Cylinder or Sphere does, minus its tips dialog: the shape stays aligned with the bed
+whatever the object's rotation, its centre goes to `position_mm` and its size is
+`size_mm` (a cylinder or sphere may be elliptic). `name` defaults to the GUI's
+("Generic-Cube"...). `config` is checked like `PUT /objects/{id}/config` before
+anything is added; a refused key answers `422 {"error":"config_rejected","errors":{...}}`
+and adds nothing. Errors: `422 bad_type | bad_shape | bad_size | bad_position`
+(size: each side > 0 and <= 10000 mm), `404 unknown_object | no_instance`,
+`400 body_must_be_object | name_must_be_string | config_must_be_object | invalid_json`.
+
+### PUT /objects/{id}/volumes/{vid}/config
+
+Same body, atomic semantics and key policy as `PUT /objects/{id}/config`
+(`422` with `errors` and nothing applied if any key is refused; sensitive keys need
+the Preferences switch, read-only keys are refused). `"extruder": n` picks the
+volume's filament slot (0 = the object's) and updates the object list's filament
+column. Reply: `{"applied": [...], "errors": {}, "object": "<name>", "volume": {...}}`.
+`404 unknown_object | unknown_volume`.
+
+### DELETE /objects/{id}/volumes/{vid}
+
+`200 {"ok": true}`, through the object list's own delete. Refused where the window
+would open a dialog: `409 last_part` (the object's last solid part) and
+`409 cut_object` (a part or negative volume of a cut object). `404 unknown_object |
+unknown_volume`.
 
 ## Notes & limits
 

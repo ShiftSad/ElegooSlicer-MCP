@@ -647,6 +647,178 @@ paths:
               example: { error: "bad_view" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /objects/{id}/volumes:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer }, description: "Object id as reported by GET /objects." }
+    get:
+      summary: List an object's volumes
+      operationId: getVolumes
+      responses:
+        "200":
+          description: Parts, modifiers, negative volumes and support enforcers/blockers.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: integer }
+                  volumes: { type: array, items: { $ref: "#/components/schemas/Volume" } }
+        "404":
+          description: Unknown object.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_object" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+    post:
+      summary: Add a modifier, negative volume or support enforcer/blocker
+      operationId: addVolume
+      description: |
+        Same as right-click > Add modifier / negative volume / support enforcer /
+        support blocker > Cube, Cylinder or Sphere, without its tips dialog. The shape
+        stays aligned with the bed, its centre goes to `position_mm` (world mm, first
+        copy) and its size is `size_mm`. `config` is checked like PUT
+        /objects/{id}/config before anything is added.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, shape, size_mm, position_mm]
+              properties:
+                type: { type: string, enum: [modifier, negative, support_enforcer, support_blocker] }
+                shape: { type: string, enum: [box, cylinder, sphere] }
+                size_mm: { $ref: "#/components/schemas/Vec3" }
+                position_mm: { $ref: "#/components/schemas/Vec3" }
+                name: { type: string }
+                config: { type: object, additionalProperties: true }
+            example: { type: modifier, shape: box, size_mm: [30, 30, 5], position_mm: [128, 128, 12.5], config: { sparse_infill_density: "40%" } }
+      responses:
+        "201":
+          description: Added.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  volume: { $ref: "#/components/schemas/Volume" }
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                not_object: { value: { error: "body_must_be_object" } }
+                name:       { value: { error: "name_must_be_string" } }
+                config:     { value: { error: "config_must_be_object" } }
+                bad_json:   { value: { error: "invalid_json" } }
+        "404":
+          description: Unknown object, or one without a copy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                object:   { value: { error: "unknown_object" } }
+                instance: { value: { error: "no_instance" } }
+        "422":
+          description: Bad type, shape, size or position, or a refused config key (nothing added).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                type:     { value: { error: "bad_type" } }
+                shape:    { value: { error: "bad_shape" } }
+                size:     { value: { error: "bad_size" } }
+                position: { value: { error: "bad_position" } }
+                config:   { value: { error: "config_rejected", applied: [], errors: { post_process: "blocked_by_remote_api_policy" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /objects/{id}/volumes/{vid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: vid, in: path, required: true, schema: { type: integer }, description: "Volume id as reported by GET /objects/{id}/volumes." }
+    delete:
+      summary: Remove a volume
+      operationId: deleteVolume
+      responses:
+        "200":
+          description: Removed.
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean } } }
+              example: { ok: true }
+        "400":
+          description: Malformed volume id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "bad_volume_id" }
+        "404":
+          description: Unknown object or volume.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                object: { value: { error: "unknown_object" } }
+                volume: { value: { error: "unknown_volume" } }
+        "409":
+          description: The window would ask first (last solid part, or a part of a cut object).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                last_part:  { value: { error: "last_part" } }
+                cut_object: { value: { error: "cut_object" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /objects/{id}/volumes/{vid}/config:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: vid, in: path, required: true, schema: { type: integer } }
+    put:
+      summary: Set one volume's own settings (atomic)
+      operationId: putVolumeConfig
+      description: |
+        Same semantics and key policy as PUT /objects/{id}/config: nothing is applied
+        if any key is refused. `extruder` picks the volume's filament slot (0 = the
+        object's).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+            example: { sparse_infill_density: "40%", extruder: 2 }
+      responses:
+        "200":
+          description: Applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied: { type: array, items: { type: string } }
+                  errors: { type: object }
+                  object: { type: string }
+                  volume: { $ref: "#/components/schemas/Volume" }
+        "400":
+          description: Body is not an object, malformed JSON or bad id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown object or volume.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: At least one key refused; nothing applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigApplyResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -678,6 +850,17 @@ components:
       items: { type: number }
       minItems: 3
       maxItems: 3
+    Volume:
+      type: object
+      properties:
+        id: { type: integer }
+        index: { type: integer, description: "Position in the object's volume list (changes when volumes are added or removed)." }
+        name: { type: string }
+        type: { type: string, enum: [part, modifier, negative, support_enforcer, support_blocker] }
+        extruder: { type: integer, description: "Filament slot, 0 = the object's." }
+        size_mm: { $ref: "#/components/schemas/Vec3" }
+        position_mm: { $ref: "#/components/schemas/Vec3", description: "World centre of the bounding box, first copy." }
+        config: { type: object, additionalProperties: { type: string }, description: "The volume's own overrides." }
     Status:
       type: object
       properties:

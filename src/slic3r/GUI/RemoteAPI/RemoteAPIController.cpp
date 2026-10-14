@@ -133,7 +133,7 @@ static void invalidate_all_plates_if_changed(const DynamicPrintConfig &config_be
         wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
 }
 
-static void invalidate_object_plates(int obj_idx)
+void invalidate_object_plates(int obj_idx) // shared, see the header
 {
     Plater        *plater = wxGetApp().plater();
     PartPlateList &plates = plater->get_partplate_list();
@@ -2022,6 +2022,34 @@ Response Controller::handle_duplicate_object(uint64_t id)
     return { 200, r };
 }
 
+// Stages per-object overrides from a JSON body onto cfg; refused keys land in errors.
+// elegoo-mcp: moved out of handle_put_object_config so part volumes
+// (PUT /objects/{id}/volumes/{vid}/config) follow the very same policy.
+void stage_object_config(DynamicPrintConfig &cfg, const nlohmann::json &in,
+                         nlohmann::json &applied, nlohmann::json &errors)
+{
+    const bool allow_sensitive = sensitive_writes_allowed();
+    for (auto it = in.begin(); it != in.end(); ++it) {
+        const std::string &key = it.key();
+        if (print_config_def.get(key) == nullptr) { errors[key] = "unknown_key"; continue; }
+        // Same policy as PUT /config; a per-object override of these is never a
+        // slicing need, so there is no write-back exemption here.
+        if (!allow_sensitive && is_sensitive_config_key(key)) {
+            errors[key] = "blocked_by_remote_api_policy";
+            continue;
+        }
+        // elegoo-mcp: read-only keys (see handle_put_config) are never per-object.
+        if (print_config_def.get(key)->readonly) {
+            errors[key] = "readonly_key";
+            continue;
+        }
+        try {
+            cfg.set_deserialize_strict(key, json_value_to_config_string(it.value()));
+            applied.push_back(key);
+        } catch (const std::exception &e) { errors[key] = e.what(); }
+    }
+}
+
 Response Controller::handle_put_object_config(uint64_t id, const std::string &body)
 {
     nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in dispatch
@@ -2035,26 +2063,7 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         DynamicPrintConfig cfg = mo->config.get(); // copy of existing per-object overrides
         nlohmann::json applied = nlohmann::json::array();
         nlohmann::json errors  = nlohmann::json::object();
-        const bool allow_sensitive = sensitive_writes_allowed();
-        for (auto it = in.begin(); it != in.end(); ++it) {
-            const std::string &key = it.key();
-            if (print_config_def.get(key) == nullptr) { errors[key] = "unknown_key"; continue; }
-            // Same policy as PUT /config; a per-object override of these is never a
-            // slicing need, so there is no write-back exemption here.
-            if (!allow_sensitive && is_sensitive_config_key(key)) {
-                errors[key] = "blocked_by_remote_api_policy";
-                continue;
-            }
-            // elegoo-mcp: read-only keys (see handle_put_config) are never per-object.
-            if (print_config_def.get(key)->readonly) {
-                errors[key] = "readonly_key";
-                continue;
-            }
-            try {
-                cfg.set_deserialize_strict(key, json_value_to_config_string(it.value()));
-                applied.push_back(key);
-            } catch (const std::exception &e) { errors[key] = e.what(); }
-        }
+        stage_object_config(cfg, in, applied, errors);
         if (!errors.empty()) { // atomic: apply nothing on any error
             api_notify(std::string("Couldn't set object settings on '") + mo->name + "'", true);
             return {{"applied", nlohmann::json::array()}, {"errors", errors}};
@@ -2530,6 +2539,10 @@ Response Controller::dispatch(const Request &req)
                 }
                 if (req.method == "PUT" && action == "height_range") {
                     try { return handle_put_height_range(oid, req.body); }
+                    catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
+                }
+                if (action == "volumes" || action.rfind("volumes/", 0) == 0) { // elegoo-mcp
+                    try { return route_volumes(req, oid, action); }
                     catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
                 }
                 return { 404, {{"error", "not_found"}} };
