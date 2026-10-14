@@ -1,8 +1,8 @@
 # Windows build of ElegooSlicer MCP (ElegooSlicer + the Remote API).
 #
 # What it does, in order:
-#   1. Sets up the same toolchain as the local build wrapper (tools\build.cmd in the
-#      workspace): VS 2022 (v143) x64 environment, CMake 3.31.x (Elegoo needs < 4.0 on
+#   1. Sets up the same toolchain as the local build wrapper (tools\remote-api\build.cmd):
+#      VS 2022 (v143) x64 environment, CMake 3.31.x (Elegoo needs < 4.0 on
 #      Windows) and Strawberry Perl (needed by the OpenSSL dependency).
 #   2. Restores the dependencies from the Actions cache, or builds them with
 #      `build_release_windows.bat onlydeps` and saves them for the next run.
@@ -27,11 +27,13 @@ on:
       - 'ci-*'
       - remote-api
     # A docs-only push does not need a 1-2 h build, nor does one that only changes the
-    # Python MCP server in mcp/ (it is installed from git, not packed into the zip).
+    # Python MCP server in mcp/ (it is installed from git, not packed into the zip) or the
+    # local test tools in tools/remote-api/.
     paths-ignore:
       - '**.md'
       - 'docs/**'
       - 'mcp/**'
+      - 'tools/remote-api/**'
   workflow_dispatch:
 
 # One build per branch at a time. A newer push waits for the running build instead of
