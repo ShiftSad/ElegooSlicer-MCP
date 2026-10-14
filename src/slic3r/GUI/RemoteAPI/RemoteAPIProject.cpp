@@ -540,6 +540,10 @@ Response Controller::handle_split_object(uint64_t id, const std::string &body)
             // split keeping every piece's height, which is the question's "Yes". Then, for
             // drop_to_bed, give the pieces the original's auto-drop back and put them on
             // the bed, which is what the "No" answer, or no question, ends with.
+            // The undo snapshot comes first, so that undo brings the original back as it
+            // was, auto-drop included; while it is in scope the split's own snapshot is
+            // skipped (Plater::TakeSnapshot suppresses further snapshots).
+            Plater::TakeSnapshot snapshot(plater, "Split to Objects");
             const bool auto_drop = mo->instances.front()->auto_drop;
             mo->instances.front()->auto_drop = false;
             const size_t before = model.objects.size();
