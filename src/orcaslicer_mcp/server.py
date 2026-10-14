@@ -984,7 +984,9 @@ async def set_filament_count(
     colour of the window's palette; change it with set_filament_slot. Errors: bad_count (422: a
     count outside 1..max, or a printer whose preset has one slot per extruder), slot_in_use,
     unsaved_filament_changes (409: the Filament tab has unsaved edits to a preset only a removed
-    slot uses) or preview_only (409). Needs ElegooSlicer MCP ('filaments' in get_status
+    slot uses), print_settings_question (409: the print settings hold a combination the window
+    would ask about when the slots change; detail quotes the question, fix it with set_config
+    first) or preview_only (409). Needs ElegooSlicer MCP ('filaments' in get_status
     capabilities)."""
     try:
         async with _client() as c:
@@ -2359,6 +2361,14 @@ _PRINTER_ERRORS = {
                            "(the Centauri Carbon 2 over LAN).", "Resume it on the printer's screen."),
     "command_unsupported": ("ElegooSlicer can't send this command to this printer.",
                             "Use the printer's screen."),
+    "command_in_progress": ("An earlier pause, resume or stop for this printer was still waiting for "
+                            "the printer's answer, so this one was not sent.",
+                            "Check get_printer_status in a few seconds before sending it again."),
+    "unsupported_on_wan": ("This is a cloud printer: ElegooSlicer can only send, pause and stop "
+                           "prints on printers it reaches over the local network, so nothing was "
+                           "sent.",
+                           "Add the printer by IP address and access code in ElegooSlicer's Device "
+                           "tab, or use the printer's screen or Elegoo's app."),
     "upload_in_progress": ("A print is still being sent to this printer (upload_id names it).",
                            "Follow it with get_upload_status, or cancel it with cancel_upload."),
     "unknown_upload": ("There is no such transfer: ElegooSlicer forgets a finished one after an "
@@ -2829,8 +2839,9 @@ async def prepare_print(
     preview_only, not_elegoolink_profile, printer_model_mismatch, upload_format_unsupported,
     printer_offline, printer_busy (with status), upload_in_progress, canvas_disconnected,
     canvas_unsupported, secondary_instance (409), mapping_incomplete (422, with issues per slot),
-    bad_mapping, unsupported_option, filename_format_error, unknown_plate (404); each comes with
-    what to do. Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
+    bad_mapping, unsupported_option, filename_format_error, unknown_plate (404), unsupported_on_wan
+    (501: a cloud printer, which ElegooSlicer can't pause or stop, so it doesn't start prints on
+    one); each comes with what to do. Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
     options: dict = {}
     for key, value in (("plate", plate), ("bed_side", bed_side), ("leveling", leveling),
                        ("timelapse", timelapse), ("auto_refill", auto_refill), ("mapping", mapping)):
@@ -2971,7 +2982,11 @@ async def cancel_upload(
         return _printer_err(e, "print_control")
 
 
-_NOT_STOPPABLE = ("idle", "print_completed", "canceled")
+# The states the slicer sends a stop in (RemoteAPIElegoo.cpp can_stop_in): a print runs, is
+# pausing or paused, or is in a step that starts it. In any other state (idle, a firmware update,
+# a calibration, an error) it answers not_printing, so the user is not asked about it.
+_STOPPABLE = ("printing", "pausing", "paused", "preheating", "homing", "auto_leveling",
+              "self_checking", "filament_operating", "extruder_operating")
 
 
 def _stop_question(p: dict) -> str:
@@ -2993,7 +3008,7 @@ async def _ask_to_stop(printer: str | None, ctx: Context) -> Elicit[_Confirmatio
             p = _pelegoo.pick_printer(await c.get_printers(), printer)
     except (ApiError, PrinterError):
         return None  # the tool reads the printer again and reports the problem itself
-    if not p.get("connected") or p.get("status") in _NOT_STOPPABLE:
+    if not p.get("connected") or p.get("status") not in _STOPPABLE:
         return None
     return Elicit(_stop_question(p), _Confirmation)
 
@@ -3019,9 +3034,9 @@ async def _printer_command(printer: str | None, action: str) -> dict:
 async def pause_print(printer: Annotated[str | None, _PRINTER] = None) -> dict:
     """Pause the print running on an Elegoo printer, as its Pause button does. Returns
     {"ok": true}. Resume with resume_print (or on the printer's screen: the Centauri Carbon 2 can
-    only be resumed there over LAN). Errors: not_printing, printer_offline (409),
-    print_control_disabled (403), printer_timeout (the pause may still have happened: check
-    get_printer_status). Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
+    only be resumed there over LAN). Errors: not_printing, printer_offline, command_in_progress
+    (409), print_control_disabled (403), unsupported_on_wan (501), printer_timeout (the pause may
+    still have happened: check get_printer_status). Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
     return await _printer_command(printer, "pause")
 
 
@@ -3052,9 +3067,9 @@ async def stop_print(
     user there (naming the printer and the file) and only a yes stops the print;
     otherwise user_confirmed must be True, only after the user asked for the stop in this
     conversation, and without it the reply is confirmation_required with the question to ask.
-    To only interrupt the print, use pause_print instead. Errors: not_printing, printer_offline
-    (409), print_control_disabled (403), printer_timeout (the stop may still have happened: check
-    get_printer_status). Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
+    To only interrupt the print, use pause_print instead. Errors: not_printing, printer_offline,
+    command_in_progress (409), print_control_disabled (403), unsupported_on_wan (501),
+    printer_timeout (the stop may still have happened: check get_printer_status). Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
     try:
         async with _client() as c:
             p = _pelegoo.pick_printer(await c.get_printers(), printer)
@@ -3066,7 +3081,7 @@ async def stop_print(
     if not p.get("connected"):
         message, hint = _PRINTER_ERRORS["printer_offline"]
         return {"error": "printer_offline", "message": message, "hint": hint}
-    if p.get("status") in _NOT_STOPPABLE:
+    if p.get("status") not in _STOPPABLE:
         return {"error": "not_printing", "status": p.get("status"),
                 "message": f"{p.get('name')} isn't printing."}
     refusal = _confirmation_refusal(answer, user_confirmed, _stop_question(p), _can_ask_user(ctx))

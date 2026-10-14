@@ -435,6 +435,32 @@ async def test_stop_when_nothing_prints_asks_nobody():
     assert (await srv.stop_print(user_confirmed=True))["error"] == "printer_offline"
 
 
+@pytest.mark.parametrize("status", ["updating", "pid_calibrating", "error", "unknown"])
+@respx.mock
+async def test_stop_in_a_state_the_slicer_refuses_asks_nobody(status):
+    # The slicer sends a stop only while a print runs or starts (can_stop_in); asking the user
+    # about a stop during a firmware update would only end in its not_printing.
+    listing(printer(status))
+    route = respx.post(f"{F}/printers/p1/stop")
+    asker = Asker()
+    out = await call("stop_print", {}, "legacy", asker)
+    assert out["error"] == "not_printing" and out["status"] == status
+    assert asker.questions == [] and not route.called
+
+
+@respx.mock
+async def test_command_in_progress_and_wan_refusals_get_tool_hints():
+    listing(PRINTING)
+    respx.post(f"{F}/printers/p1/pause").mock(return_value=httpx.Response(409, json={
+        "error": "command_in_progress", "hint": "POST /printers/{id}/status"}))
+    out = await srv.pause_print()
+    assert out["error"] == "command_in_progress" and "get_printer_status" in out["hint"]
+    respx.post(f"{F}/printers/p1/stop").mock(return_value=httpx.Response(501, json={
+        "error": "unsupported_on_wan", "hint": "use the printer"}))
+    out = await srv.stop_print(user_confirmed=True)
+    assert out["error"] == "unsupported_on_wan" and "Device tab" in out["hint"]
+
+
 @pytest.mark.parametrize("mode", MODES)
 @respx.mock
 async def test_stop_asks_the_user_through_the_client(mode):
