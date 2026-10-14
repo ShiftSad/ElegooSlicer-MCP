@@ -1,10 +1,13 @@
 #!/usr/bin/env node
-// Claude Desktop extension launcher for orcaslicer-mcp.
+// Claude Desktop extension launcher for the ElegooSlicer MCP server.
 //
 // The extension host runs this with Claude Desktop's bundled Node. The actual
-// MCP server is the orcaslicer-mcp Python package, run via uvx. GUI apps on
-// macOS and Windows get a stripped PATH that misses user-level install dirs,
-// so uvx is resolved against the places uv actually installs to before PATH.
+// MCP server is the orcaslicer-mcp Python package of the ElegooSlicer-MCP
+// repository, run via uvx straight from git: this fork is not on PyPI, and the
+// PyPI package of the same name is the upstream OrcaSlicer one, which lacks the
+// ElegooSlicer tools. uv needs git on the PATH to fetch it. GUI apps on macOS
+// and Windows get a stripped PATH that misses user-level install dirs, so uvx is
+// resolved against the places uv actually installs to before PATH.
 "use strict";
 
 const { spawn } = require("child_process");
@@ -14,6 +17,8 @@ const path = require("path");
 
 const WIN = process.platform === "win32";
 const EXE = WIN ? "uvx.exe" : "uvx";
+// Where uvx gets the server: the mcp/ folder of the remote-api branch.
+const SOURCE = "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp";
 
 function candidateDirs() {
   const home = os.homedir();
@@ -69,7 +74,7 @@ if (!WIN) pathParts.push("/usr/bin", "/bin", "/usr/sbin", "/sbin");
 // path (Windows 11); it did not reproduce on Windows 10, with or without
 // Windows Terminal as the default terminal. Pipes sidestep the question: the
 // child gets plain anonymous-pipe handles and no console is created at all.
-const child = spawn(uvx, ["orcaslicer-mcp"], {
+const child = spawn(uvx, ["--from", SOURCE, "orcaslicer-mcp"], {
   stdio: ["pipe", "pipe", "pipe"],
   windowsHide: true,
   env: { ...process.env, PATH: pathParts.filter(Boolean).join(path.delimiter) },
