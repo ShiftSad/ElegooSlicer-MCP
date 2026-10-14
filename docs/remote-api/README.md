@@ -61,6 +61,8 @@ Base URL: `http://<host>:13130/api/v1`
 | PUT | `/filaments` | Set the number of filament slots (the sidebar's + / - buttons) |
 | PUT | `/filaments/{slot}` | Set one slot's filament preset and/or colour |
 | POST | `/objects/{id}/split` | Split an object into objects, or a part into parts |
+| POST | `/undo` | Undo the last model edit (the window's Ctrl+Z) |
+| POST | `/redo` | Redo the last undone model edit (the window's Ctrl+Y) |
 
 ### GET /status
 
@@ -622,6 +624,23 @@ The plates holding the result are marked unsliced. Errors: `422 not_splittable`
 (a paint, cut or other editing tool is open in the 3D view) `| select_failed`,
 `400 body_must_be_object | bad_volume_id | drop_to_bed_must_be_boolean | bad_object_id |
 invalid_json`.
+
+## Undo / redo
+
+### POST /undo, POST /redo
+
+```json
+{ "ok": true, "can_undo": true, "can_redo": true }
+```
+The window's Ctrl+Z / Ctrl+Y on its undo history (capability `undo`): object, part,
+plate and paint edits, whether made in the window or through the API. Presets,
+settings and filament slots are not in that history, as in the window. `ok` is false
+(still `200`) when there was nothing to undo or redo; `can_undo` / `can_redo` say
+whether another call would do something. After a step every plate is marked unsliced
+and `GET /slice/status` follows the current plate (a step can add or remove plates).
+Errors: `409 slicing | job_running` (an arrange/orient job) `| gizmo_editing` (a paint,
+cut or other editing tool is open in the 3D view; the move, rotate and scale tools are
+fine).
 
 ## Notes & limits
 

@@ -1166,6 +1166,49 @@ paths:
                 to:     { value: { error: "bad_to" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /undo:
+    post:
+      summary: Undo the last model edit
+      operationId: undo
+      description: |
+        The window's Ctrl+Z on its undo history (object, part, plate and paint edits;
+        not presets or settings). `ok` is false when there was nothing to undo. A step
+        marks every plate unsliced.
+      responses:
+        "200":
+          description: Done, or nothing to undo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UndoResult" }
+        "409":
+          description: Slicing, an arrange/orient job, or an editing tool open in the 3D view.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                slicing: { value: { error: "slicing" } }
+                job:     { value: { error: "job_running" } }
+                gizmo:   { value: { error: "gizmo_editing" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /redo:
+    post:
+      summary: Redo the last undone model edit
+      operationId: redo
+      description: The window's Ctrl+Y. Same reply and errors as POST /undo.
+      responses:
+        "200":
+          description: Done, or nothing to redo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UndoResult" }
+        "409":
+          description: Slicing, an arrange/orient job, or an editing tool open in the 3D view.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -1216,6 +1259,12 @@ components:
         type: { type: string, example: PLA }
         color: { type: string, example: "#00c1ae" }
         used_on_current_plate: { type: boolean }
+    UndoResult:
+      type: object
+      properties:
+        ok: { type: boolean, description: "False when there was nothing to undo/redo." }
+        can_undo: { type: boolean }
+        can_redo: { type: boolean }
     FilamentList:
       type: object
       properties:
@@ -1239,7 +1288,8 @@ components:
             object_id), `view` (POST /view and GET /status view), `volumes`
             (/objects/{id}/volumes), `project_save` (POST /project/save) and `paint`
             (POST /objects/{id}/paint).
-            Also `filaments` (/filaments), `split` (POST /objects/{id}/split).
+            Also `filaments` (/filaments), `split` (POST /objects/{id}/split), `undo`
+            (POST /undo, /redo).
         plates:
           type: object
           description: How many plates the project has and which one is current.

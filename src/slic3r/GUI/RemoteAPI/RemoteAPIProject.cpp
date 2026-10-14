@@ -22,6 +22,7 @@
 #include "slic3r/GUI/PresetComboBoxes.hpp"
 #include "slic3r/GUI/Selection.hpp"
 #include "slic3r/GUI/Tab.hpp"
+#include "slic3r/Utils/UndoRedo.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -96,6 +97,8 @@ std::optional<Response> Controller::route_project(const Request &req)
             if (req.method == "POST") return handle_split_object(id, req.body);
             return Response{ 404, {{"error", "not_found"}} };
         }
+        if (path == "/api/v1/undo" && req.method == "POST") return handle_undo_redo(true);
+        if (path == "/api/v1/redo" && req.method == "POST") return handle_undo_redo(false);
     } catch (const nlohmann::json::parse_error &) {
         return Response{ 400, {{"error", "invalid_json"}} };
     }
@@ -574,6 +577,44 @@ Response Controller::handle_split_object(uint64_t id, const std::string &body)
         if (e == "not_splittable") return { 422, r };
         return { 409, r }; // job_running, gizmo_editing, select_failed
     }
+    return { 200, r };
+}
+
+// --- POST /undo, POST /redo ----------------------------------------------------------
+// The window's Ctrl+Z / Ctrl+Y (Plater::undo / redo) on the main undo stack: object,
+// part, plate and paint edits, the same history the window's undo list shows. Presets
+// and settings are not in it (as in the window).
+Response Controller::handle_undo_redo(bool undo)
+{
+    nlohmann::json r = run_on_ui([this, undo]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        // Model edits under a running slice, arrange/orient job or an open editing tool
+        // would pull the data from under them.
+        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+        if (!plater->get_ui_job_worker().is_idle()) return {{"error", "job_running"}};
+        if (editing_gizmo_open()) return {{"error", "gizmo_editing"}};
+
+        // With no editing tool open the window works on the main stack. The has_*
+        // checks skip snapshots that change nothing, as Plater::undo / redo do.
+        const UndoRedo::Stack &stack = plater->undo_redo_stack_main();
+        bool ok = false;
+        if (undo ? stack.has_undo_snapshot() : stack.has_redo_snapshot()) {
+            std::string what; // the snapshot's name, for the notification
+            plater->undo_redo_topmost_string_getter(undo, what);
+            const size_t time_before = stack.active_snapshot_time();
+            if (undo) plater->undo();
+            else      plater->redo();
+            ok = stack.active_snapshot_time() != time_before;
+            if (ok) {
+                // A snapshot may change objects on any plate, or the plates themselves.
+                plater->get_partplate_list().invalid_all_slice_result();
+                sync_slice_state_to_current_plate("slice.plate_changed");
+                api_notify(std::string(undo ? "Undo" : "Redo") + (what.empty() ? "" : ": " + what));
+            }
+        }
+        return {{"ok", ok}, {"can_undo", stack.has_undo_snapshot()}, {"can_redo", stack.has_redo_snapshot()}};
+    });
+    if (r.contains("error")) return { 409, r }; // slicing, job_running, gizmo_editing
     return { 200, r };
 }
 
