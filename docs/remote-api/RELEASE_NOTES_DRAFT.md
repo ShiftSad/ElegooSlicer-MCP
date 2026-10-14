@@ -90,7 +90,10 @@ the camera address, tray numbering) are confirmed only once a real CC2 is connec
    `(Get-FileHash .\ElegooSlicer-MCP_v1.5.3.5-mcp.1_Windows_x64_portable.zip -Algorithm SHA256).Hash`
    must match the line in `SHA256SUMS` (case does not matter). In Git Bash:
    `sha256sum -c SHA256SUMS`.
-3. Extract the zip anywhere and run `ElegooSlicer-MCP\elegoo-slicer.exe`. The binaries are
+3. Extract the zip to a folder with a short path (Downloads or `C:\` is fine) and run
+   `ElegooSlicer-MCP\elegoo-slicer.exe`. Some files inside the zip have paths of 130
+   characters, so a folder path longer than about 125 characters hits Windows' 260-character
+   path limit and the first start fails with "Copying directory ... failed". The binaries are
    not code-signed, so Windows SmartScreen may warn: *More info* > *Run anyway*. Like the
    official app, it needs the Microsoft Edge WebView2 Runtime and the Visual C++ x64
    runtime (both are usually already on Windows 11).
