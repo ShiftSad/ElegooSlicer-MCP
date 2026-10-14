@@ -224,8 +224,9 @@ class OrcaClient:
         if path is not None:
             body["path"] = path
         # Writing a big project (meshes, painting, plate thumbnails) can outlast the default
-        # timeout, so allow it a minute.
-        return await self._request("POST", "/api/v1/project/save", json=body, timeout=60.0)
+        # timeout. Stay under Claude Desktop's ~60 s tool-call limit, as slice_and_wait does,
+        # so a slow save still gets our own answer instead of being cut off with none.
+        return await self._request("POST", "/api/v1/project/save", json=body, timeout=50.0)
 
     async def select_preset(self, ptype: str, name: str) -> dict:
         return await self._request("PUT", "/api/v1/preset", json={"type": ptype, "name": name})

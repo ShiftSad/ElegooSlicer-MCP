@@ -276,6 +276,26 @@ async def test_save_project_needs_an_elegoo_build(monkeypatch):
     assert "ElegooSlicer MCP" in out["error"] and "'project_save'" in out["error"]
 
 
+
+@respx.mock
+async def test_save_project_waits_under_the_desktop_tool_limit(monkeypatch):
+    # Claude Desktop drops a tool call after ~60 s; our own timeout must fire first.
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save").mock(return_value=httpx.Response(200, json={"path": "C:/a.3mf"}))
+    await srv.save_project("C:/a.3mf")
+    assert route.calls.last.request.extensions["timeout"]["read"] == 50.0
+
+
+@respx.mock
+async def test_save_project_timeout_says_the_save_may_still_run(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save")
+    route.mock(return_value=httpx.Response(504, json={"error": "ui_timeout"}))
+    out = await srv.save_project("C:/a.3mf")
+    assert out["error"] == "save_still_running" and "overwrite=True" in out["hint"]
+    route.mock(side_effect=httpx.ReadTimeout("slow"))
+    assert (await srv.save_project("C:/a.3mf"))["error"] == "save_still_running"
+
 # --- paint_region -------------------------------------------------------------
 
 

@@ -12,7 +12,7 @@ from pydantic import Field
 from mcp.types import ToolAnnotations
 from .config import load_config
 from .client import OrcaClient
-from .errors import ApiError, Validation, NotFound, Conflict, ConfigError
+from .errors import ApiError, Validation, NotFound, Conflict, ConfigError, UiTimeout
 from .models import summarize_slice
 from . import settings_schema
 from . import placement
@@ -1207,11 +1207,20 @@ async def save_project(
     settings, so the work can be reopened later. Without path it saves over the project's
     current file (project_unnamed when the project was never saved; pass a path then). A path
     not ending in .3mf is refused (not_3mf), and an existing file is replaced only with
-    overwrite=True (file_exists otherwise). Needs ElegooSlicer MCP ('project_save' in
-    get_status capabilities)."""
+    overwrite=True (file_exists otherwise). save_still_running means the slicer is still
+    writing after about 50 s; wait before saving again. Needs ElegooSlicer MCP ('project_save'
+    in get_status capabilities)."""
     try:
         async with _client() as c:
             return await c.save_project(path, overwrite)
+    except UiTimeout:
+        # The slicer stopped waiting for its GUI thread, but the save goes on there. A plain
+        # retry to the same path would then fail with file_exists for the file still being
+        # written, so say what to do instead of "retry".
+        return {"error": "save_still_running",
+                "hint": "The slicer did not finish saving in time and may still be writing the "
+                        "file. Wait a moment before saving again; a second save to the same path "
+                        "needs overwrite=True."}
     except ApiError as e:
         return _elegoo_err(e, "project_save")
 
