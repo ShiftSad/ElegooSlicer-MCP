@@ -468,6 +468,71 @@ paths:
                 failed: { value: { error: "move_failed" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /objects/{id}/transform:
+    post:
+      summary: Move, rotate and/or scale an object
+      operationId: transformObject
+      description: |
+        Applies to the object's first copy, in this order: `translate` (mm, added to
+        the current position), then `rotate` (degrees, about the **world** axes from
+        the current orientation, as the rotate gizmo does: X first, then Y, then Z,
+        around the object's origin, so `offset` does not change; successive calls add
+        up like gizmo drags), then `scale` (absolute factor along the object's own
+        axes). Re-checks which plate the object sits on afterwards.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Object id as reported by GET /objects.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: At least one of the three keys.
+              properties:
+                translate: { $ref: "#/components/schemas/Vec3" }
+                rotate: { $ref: "#/components/schemas/Vec3" }
+                scale: { $ref: "#/components/schemas/Vec3" }
+            example: { rotate: [0, -90, 0] }
+      responses:
+        "200":
+          description: Transformed. `rotation` is in radians (X, Y, Z angles of the new orientation).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  transform:
+                    type: object
+                    properties:
+                      offset: { $ref: "#/components/schemas/Vec3" }
+                      rotation: { $ref: "#/components/schemas/Vec3" }
+                      scale: { $ref: "#/components/schemas/Vec3" }
+              example: { id: 832, transform: { offset: [128, 128, 10], rotation: [0, -1.5708, 0], scale: [1, 1, 1] } }
+        "400":
+          description: No transform given, body not an object, malformed JSON or bad id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                none:       { value: { error: "no_transform" } }
+                not_object: { value: { error: "body_must_be_object" } }
+                bad_json:   { value: { error: "invalid_json" } }
+                bad_id:     { value: { error: "bad_object_id" } }
+        "404":
+          description: Unknown object, or an object without a copy on the bed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                object:   { value: { error: "unknown_object" } }
+                instance: { value: { error: "no_instance" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:

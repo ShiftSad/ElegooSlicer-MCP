@@ -1903,7 +1903,19 @@ Response Controller::handle_transform_object(uint64_t id, const std::string &bod
         if (mo->instances.empty()) return {{"error", "no_instance"}};
         ModelInstance *mi = mo->instances.front();
         if (has_t) mi->set_offset(mi->get_offset() + tr);
-        if (has_r) mi->set_rotation(mi->get_rotation() + ro * 0.017453292519943295); // deg->rad
+        // elegoo-mcp: turn the object from its current orientation about the world axes,
+        // as the rotate gizmo does (Selection::rotate -> transform_instance_relative puts
+        // the new rotation in front of the instance matrix). The fork added the angles to
+        // the stored Euler angles instead, which breaks after a first rotation: rotate
+        // Y -90 then Y +90 ended at 180 deg instead of back at the start (gimbal lock).
+        // Order inside one request (Geometry::rotation_transform): world X first, then
+        // world Y, then world Z. The pivot is the instance origin, so the offset stays.
+        if (has_r) {
+            const Geometry::Transformation old_trafo = mi->get_transformation();
+            const Transform3d world_rotation = Geometry::rotation_transform(ro * (PI / 180.0)); // deg -> rad
+            mi->set_transformation(Geometry::Transformation(
+                old_trafo.get_offset_matrix() * world_rotation * old_trafo.get_matrix_no_offset()));
+        }
         if (has_s) mi->set_scaling_factor(sc);
         mo->invalidate_bounding_box();
         // plates: re-check which plate the instance sits on, as a drag in the window

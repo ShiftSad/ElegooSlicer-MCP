@@ -48,6 +48,7 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/plates/{i}/select` | Make plate `i` the current one |
 | DELETE | `/plates/{i}` | Delete plate `i` (its objects are parked beside the bed, not deleted) |
 | POST | `/objects/{id}/plate` | Move an object onto plate `i` |
+| POST | `/objects/{id}/transform` | Move, rotate and/or scale an object |
 
 ### GET /status
 
@@ -310,6 +311,29 @@ next plate appears, so `POST /plates` straight after a delete picks them back up
 `404 unknown_object | unknown_plate | unknown_instance`, `422 plate_locked` (the
 target or the plate it sits on is locked; `plate` names which) `| move_failed`,
 `409 slicing`, `400 missing_plate`.
+
+### POST /objects/{id}/transform
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"rotate": [0, -90, 0]}' http://localhost:13130/api/v1/objects/832/transform
+```
+```json
+{ "id": 832, "transform": { "offset": [128,128,10], "rotation": [0,-1.5708,0], "scale": [1,1,1] } }
+```
+Send any of `translate`, `rotate`, `scale`, each an `[x, y, z]` array. They are
+applied to the object's first copy in this order:
+- `translate` (mm) is added to the current position.
+- `rotate` (degrees) turns the object from its current orientation about the
+  **world** axes, as the rotate gizmo does: X first, then Y, then Z, around the
+  object's origin (its `offset` does not change). Calls add up like gizmo drags, so
+  `[0,-90,0]` followed by `[0,90,0]` puts the object back the way it started.
+- `scale` (factor) is absolute, along the object's own axes (`[1,1,1]` = original size).
+
+The response gives the resulting `offset` (mm), `rotation` (radians: the X, Y, Z
+angles of the new orientation, in the order above) and `scale`. Errors:
+`400 no_transform | body_must_be_object | invalid_json | bad_object_id`,
+`404 unknown_object | no_instance`.
 
 ## Notes & limits
 
