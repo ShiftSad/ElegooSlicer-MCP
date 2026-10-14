@@ -228,3 +228,46 @@ async def test_set_part_filament_sends_extruder(monkeypatch):
     out = await srv.set_part_filament(42, 901, 2)
     assert out["applied"] == ["extruder"]
     assert _sent(route) == {"extruder": 2}
+
+
+# --- save_project -------------------------------------------------------------
+
+
+@respx.mock
+async def test_save_project_to_a_path(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save").mock(
+        return_value=httpx.Response(200, json={"path": "C:/prints/bracket.3mf"}))
+    out = await srv.save_project("C:/prints/bracket.3mf", overwrite=True)
+    assert out == {"path": "C:/prints/bracket.3mf"}
+    assert _sent(route) == {"path": "C:/prints/bracket.3mf", "overwrite": True}
+
+
+@respx.mock
+async def test_save_project_without_path_saves_the_current_file(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save").mock(
+        return_value=httpx.Response(200, json={"path": "C:/prints/old.3mf"}))
+    out = await srv.save_project()
+    assert out["path"] == "C:/prints/old.3mf"
+    assert _sent(route) == {"overwrite": False}
+
+
+@respx.mock
+async def test_save_project_errors_pass_through(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save")
+    route.mock(return_value=httpx.Response(409, json={"error": "project_unnamed"}))
+    assert (await srv.save_project())["error"] == "project_unnamed"
+    route.mock(return_value=httpx.Response(409, json={"error": "file_exists", "path": "C:/a.3mf"}))
+    assert (await srv.save_project("C:/a.3mf"))["error"] == "file_exists"
+    route.mock(return_value=httpx.Response(422, json={"error": "not_3mf"}))
+    assert (await srv.save_project("C:/a.stl"))["error"] == "not_3mf"
+
+
+@respx.mock
+async def test_save_project_needs_an_elegoo_build(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/project/save").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
+    out = await srv.save_project("C:/a.3mf")
+    assert "ElegooSlicer MCP" in out["error"] and "'project_save'" in out["error"]

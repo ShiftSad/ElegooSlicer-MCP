@@ -1116,6 +1116,32 @@ async def load_model(path: str) -> dict:
 
 
 @mcp.tool()
+async def save_project(
+    path: Annotated[str | None, Field(description=(
+        "Where to save, on the computer running the slicer; must end in .3mf. An absolute "
+        "path is safest (on Windows, e.g. C:\\Users\\me\\prints\\bracket.3mf). Leave it out "
+        "to save over the project's current file."))] = None,
+    overwrite: Annotated[bool, Field(description=(
+        "Allow replacing a file that already exists at path. Without it an existing file is "
+        "left alone and the reply is file_exists."))] = False,
+) -> dict:
+    """Save the project as a .3mf file, the way File > Save project does, without any dialog.
+    Returns {"path": ...} with the file written.
+
+    The file keeps the objects, plates, parts, painting, per-object settings and the current
+    settings, so the work can be reopened later. Without path it saves over the project's
+    current file (project_unnamed when the project was never saved; pass a path then). A path
+    not ending in .3mf is refused (not_3mf), and an existing file is replaced only with
+    overwrite=True (file_exists otherwise). Needs ElegooSlicer MCP ('project_save' in
+    get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.save_project(path, overwrite)
+    except ApiError as e:
+        return _elegoo_err(e, "project_save")
+
+
+@mcp.tool()
 async def select_preset(
     type: Annotated[str, Field(description=(
         "Which preset group to switch: 'print' (process/quality), 'filament' (material), "
@@ -1810,6 +1836,7 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "set_part_config": ("Set per-part config", False, False),
     "set_part_filament": ("Set a part's filament", False, False),
     "remove_part": ("Remove a part from an object", False, True),
+    "save_project": ("Save project as .3mf (can replace a file)", False, True),
     "remember": ("Save a note", False, False),
     "load_model": ("Load a model file", False, False),
     "select_preset": ("Select preset", False, False),

@@ -226,6 +226,10 @@
       "description": "Load a model file (path on the OrcaSlicer host) onto the current plate. Accepts .stl/.obj/.3mf, plus .step/.stp on fork v2.3.2-mcp.3+. Large STEP files can take a minute to tessellate; the call waits."
     },
     {
+      "name": "save_project",
+      "description": "Save the project as a .3mf file, the way File > Save project does, without any dialog. Returns {\"path\": ...} with the file written."
+    },
+    {
       "name": "select_preset",
       "description": "Make the named preset the active one for its group (print, filament, or printer)."
     },

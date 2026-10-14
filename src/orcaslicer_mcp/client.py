@@ -214,6 +214,15 @@ class OrcaClient:
         return await self._request("POST", "/api/v1/model", json={"path": path},
                                    timeout=130.0)
 
+    async def save_project(self, path: str | None = None, overwrite: bool = False) -> dict:
+        # ElegooSlicer MCP, capability "project_save". No path = the project's current file.
+        body: dict = {"overwrite": overwrite}
+        if path is not None:
+            body["path"] = path
+        # Writing a big project (meshes, painting, plate thumbnails) can outlast the default
+        # timeout, so allow it a minute.
+        return await self._request("POST", "/api/v1/project/save", json=body, timeout=60.0)
+
     async def select_preset(self, ptype: str, name: str) -> dict:
         return await self._request("PUT", "/api/v1/preset", json={"type": ptype, "name": name})
 
