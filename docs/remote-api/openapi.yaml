@@ -1602,9 +1602,11 @@ paths:
       operationId: stopPrint
       description: |
         Capability `print_control`. Cannot be undone, so the body must say
-        `{"confirm": "stop"}` (else 400 confirm_required). Refused only when the printer is
-        idle, its print completed or was canceled (a print's start shows as heating or
-        leveling states).
+        `{"confirm": "stop"}` (else 400 confirm_required). Sent only while the printer is
+        printing, pausing or paused, or in a step that starts a print (preheating, homing,
+        auto_leveling, self_checking, filament_operating, extruder_operating); else 409
+        not_printing (never during a firmware update, a calibration, an error or an unknown
+        state).
       requestBody:
         required: true
         content:

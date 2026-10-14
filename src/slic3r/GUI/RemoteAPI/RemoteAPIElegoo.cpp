@@ -2206,6 +2206,29 @@ static PrinterNetworkErrorCode send_print_command(const std::string &printer_id,
     return (PrinterNetworkErrorCode) (int) *sdk_code;
 }
 
+// Whether a stop may be sent to a printer in this state: a print runs, is pausing or paused, or
+// is in one of the steps that start it (some printers report heating, homing, leveling, the
+// self-check or loading the filament as states of their own; the CC2 reports them as printing).
+// Never in any other state: a firmware update, a calibration or test, an error, an emergency
+// stop, idle, or a state ElegooSlicer does not know. A stop there is not a "stop the print".
+static bool can_stop_in(PrinterStatus status)
+{
+    switch (status) {
+    case PRINTER_STATUS_PRINTING:
+    case PRINTER_STATUS_PAUSING:
+    case PRINTER_STATUS_PAUSED:
+    case PRINTER_STATUS_PREHEATING:
+    case PRINTER_STATUS_HOMING:
+    case PRINTER_STATUS_AUTO_LEVELING:
+    case PRINTER_STATUS_SELF_CHECKING:
+    case PRINTER_STATUS_FILAMENT_OPERATING:
+    case PRINTER_STATUS_EXTRUDER_OPERATING:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // POST /printers/{id}/pause, /resume, /stop {"confirm": "stop"}: acts on the print in progress.
 Response Controller::handle_print_command(const std::string &api_id, const std::string &command, const std::string &body)
 {
@@ -2230,16 +2253,14 @@ Response Controller::handle_print_command(const std::string &api_id, const std::
     if (p.connectStatus != PRINTER_CONNECT_STATUS_CONNECTED)
         return { 409, {{"error", "printer_offline"}} };
     // Whether the command fits the printer's state, from ElegooSlicer's cache: pause a print that
-    // is printing, resume one that is paused, stop one that has not ended. The printer reports a
-    // print's start (heating, leveling) under other states, so stop is refused only when idle.
+    // is printing, resume one that is paused, stop one that runs or is starting.
     const PrinterStatus  status = p.printerStatus;
     const nlohmann::json state  = printer_status_name(status);
     if (command == "pause" && status != PRINTER_STATUS_PRINTING)
         return { 409, {{"error", "not_printing"}, {"status", state}} };
     if (command == "resume" && status != PRINTER_STATUS_PAUSED)
         return { 409, {{"error", "not_paused"}, {"status", state}} };
-    if (command == "stop" && (status == PRINTER_STATUS_IDLE || status == PRINTER_STATUS_PRINT_COMPLETED ||
-                              status == PRINTER_STATUS_CANCELED))
+    if (command == "stop" && !can_stop_in(status))
         return { 409, {{"error", "not_printing"}, {"status", state}} };
 
     const std::string what = (p.printTask.fileName.empty() ? std::string("the print") : "'" + p.printTask.fileName + "'") +

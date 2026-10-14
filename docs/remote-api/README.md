@@ -914,8 +914,10 @@ cancel and then shows `success`. Until then the printer counts as receiving a pr
 `{"ok": true}` once the printer accepted the command. `stop` needs the body
 `{"confirm": "stop"}` (else `400 confirm_required`). The printer's state is checked first,
 from ElegooSlicer's cache: `409 not_printing` + `status` (pause: the printer is not
-printing; stop: it is idle, its print completed or was canceled), `409 not_paused` +
-`status` (resume). A command goes straight to the printer, one at a time per printer.
+`printing`; stop: it is not `printing`, `pausing`, `paused`, or in a step that starts a
+print: `preheating`, `homing`, `auto_leveling`, `self_checking`, `filament_operating`,
+`extruder_operating`; a stop is never sent during a firmware update, a calibration, an
+error or an unknown state), `409 not_paused` + `status` (resume). A command goes straight to the printer, one at a time per printer.
 - `504 printer_timeout` + `hint`: no answer within 20 s. The printer may still carry the
   command out: check `GET /printers/{id}/status`.
 - `501 {"error": "resume_unsupported", "hint": "resume on the printer's screen"}`: the
