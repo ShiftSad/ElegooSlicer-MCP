@@ -230,6 +230,20 @@ async def test_finished_when_the_printer_goes_straight_back_to_idle(monkeypatch)
     assert out["met"] is True and "error" in out["stopped_early"]
 
 
+async def test_a_moment_offline_does_not_end_the_wait(monkeypatch):
+    def offline():
+        return elegoo.elegoo_snapshot(printer("printing", connected=False), EL.public())
+    # One or two disconnected polls in a row: a Wi-Fi blip, the wait carries on.
+    out = await _run(monkeypatch, [_snap("printing", TASK), offline(), offline(),
+                                   _snap("printing", TASK), _snap("print_completed")], "finished")
+    assert out["met"] is True and out["stopped_early"] is None
+    # Three in a row: the printer is gone, and the reply says so.
+    out = await _run(monkeypatch, [_snap("printing", TASK), offline(), offline(), offline(),
+                                   _snap("print_completed")], "finished")
+    assert out["met"] is False and "isn't connected" in out["stopped_early"]
+    assert out["status"]["state"] == "offline" and out["waited_s"] == 15
+
+
 async def test_a_cancelled_print_ends_the_wait_for_printing(monkeypatch):
     out = await _run(monkeypatch, [_snap("preheating"), _snap("canceled")], "printing")
     assert out["met"] is False and out["stopped_early"] == "The job ended before extrusion started."

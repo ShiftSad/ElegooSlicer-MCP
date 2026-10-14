@@ -203,6 +203,13 @@ async def run_wait(target, client, until: str, timeout_s: int, report=None, *,
                 news = False  # the next pass holds the same snapshot: don't announce it twice
                 continue
             return result(False, stopped_early=f"Lost contact with the printer: {e.message}")
+        if (target.kind == "elegoo" and (fresh.get("elegoo") or {}).get("status") == "offline"
+                and failures + 1 < MAX_POLL_FAILURES):
+            # ElegooSlicer's link to a printer on Wi-Fi drops for a moment now and then: count a
+            # disconnected poll like a failed one, so only several in a row end the wait.
+            failures += 1
+            news = False
+            continue
         failures = 0
         news = True
         prev, snap = snap, fresh
