@@ -1302,6 +1302,321 @@ paths:
         "502": { $ref: "#/components/responses/PrinterError" }
         "503": { $ref: "#/components/responses/PrintersUnavailable" }
         "504": { $ref: "#/components/responses/PrinterTimeout" }
+  /printers/{id}/print/prepare:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Check a print of the current plate on a printer (nothing is sent)
+      operationId: preparePrint
+      description: |
+        Capability `print_control`, preference `remote_api_allow_print_control` (see
+        GET /status `print_control_enabled`). Makes the checks of the window's Print button
+        and Print dialog (and a few more) and answers a summary and a plan id for
+        POST /printers/{id}/print. The plan is used once, expires after 300 s, and is bound to
+        the plate's slice result: slicing again, changing a setting or selecting another plate
+        expires it. Options default to the Print dialog's last choices; an option the printer
+        does not have is off. `mapping` picks trays for some slots; the others get the Print
+        dialog's own choice (GET /printers/{id}/canvas/mapping). Nothing is saved.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                plate: { type: integer, minimum: 0, description: "0-based; default and only allowed value: the current plate." }
+                bed_side: { type: string, enum: [A, B], description: "A: the textured PEI side; B: the other one (as the Print dialog). Needs bed switching." }
+                leveling: { type: boolean, description: "Auto bed leveling before the print." }
+                timelapse: { type: boolean, description: "LAN printers only." }
+                auto_refill: { type: boolean, description: "CANVAS auto refill; needs a connected CANVAS." }
+                mapping:
+                  type: array
+                  items:
+                    type: object
+                    required: [slot, tray]
+                    properties:
+                      slot: { type: integer, minimum: 1, description: "1-based filament slot the plate prints with." }
+                      unit: { type: string, description: "Optional: the tray's unit id, as in GET /printers/{id}/canvas." }
+                      tray: { type: string, example: A3, description: "A loaded or preloaded tray, as in GET /printers/{id}/canvas." }
+      responses:
+        "200":
+          description: The plan and what it would do.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrintPlan" }
+        "400":
+          description: Bad body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                invalid_json:  { value: { error: "invalid_json" } }
+                not_an_object: { value: { error: "body_must_be_object" } }
+                unknown_field: { value: { error: "unknown_field", field: "timelaps" } }
+                plate:         { value: { error: "bad_plate_index" } }
+                bed_side:      { value: { error: "bad_bed_side", detail: "bed_side: \"A\" | \"B\"" } }
+                option:        { value: { error: "bad_timelapse", detail: "timelapse: true | false" } }
+                mapping:       { value: { error: "bad_mapping", detail: "mapping: [{\"slot\": 1, \"unit\"?: \"0\", \"tray\": \"A1\"}], ..." } }
+        "403": { $ref: "#/components/responses/PrintControlDisabled" }
+        "404":
+          description: Unknown printer or plate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                printer: { value: { error: "printer_not_found" } }
+                plate:   { value: { error: "unknown_plate" } }
+        "409":
+          description: |
+            Nothing was sent. The plate: `plate_not_current`, `not_sliced`, `not_printable`
+            (+ `reason`: toolpath_outside | gcode_check_failed | filament_not_printable),
+            `preview_only` (a G-code file is open). The printer: `printer_offline`,
+            `printer_busy` (+ `status`; only idle or print_completed take a print),
+            `upload_in_progress` (+ `upload_id`), `printer_model_mismatch` (+ `printer_model`,
+            `project_model`), `not_elegoolink_profile`, `upload_format_unsupported`. The
+            filaments: `canvas_disconnected` / `canvas_unsupported` (+ `filaments`: several
+            filaments without a connected CANVAS). Also `secondary_instance`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                busy:      { value: { error: "printer_busy", status: "printing" } }
+                sliced:    { value: { error: "not_sliced", plate: 0 } }
+                model:     { value: { error: "printer_model_mismatch", printer_model: "Elegoo Centauri Carbon", project_model: "Elegoo Centauri Carbon 2" } }
+                canvas:    { value: { error: "canvas_disconnected", filaments: 2, hint: "the plate prints with several filaments; they need a connected CANVAS" } }
+                secondary: { value: { error: "secondary_instance", hint: "close the other ElegooSlicer windows" } }
+        "422":
+          description: |
+            `mapping_incomplete`: a slot has no tray (`no_tray`), a tray that is not ready
+            (`tray_not_ready`) or a tray of another filament type (`type_mismatch`); `issues`
+            lists them, `filaments` the whole mapping. `bad_mapping`: unknown slot or tray, a
+            tray that is not loaded, or no CANVAS to map to. `unsupported_option` (+ `option`):
+            the printer does not have it. `filename_format_error`: the print profile's
+            filename_format does not process.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                mapping:
+                  value: { error: "mapping_incomplete", issues: [{ slot: 2, issues: ["no_tray"] }], filaments: [],
+                           hint: "load the filaments, sync the CANVAS (POST /printers/{id}/canvas/sync) or pick trays with \"mapping\"" }
+                option: { value: { error: "unsupported_option", option: "timelapse" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504":
+          description: The printer list or the CANVAS read (`printer_timeout`) or the GUI thread (`ui_timeout`) did not answer in time.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                printer: { value: { error: "printer_timeout" } }
+                gui:     { value: { error: "ui_timeout" } }
+  /printers/{id}/print:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Send a prepared print and start it
+      operationId: startPrint
+      description: |
+        Capability `print_control`. Sends the plan POST /printers/{id}/print/prepare made and
+        starts the print; answers at once. The printer's state and the plan's slice result are
+        checked again, then the plate's sliced G-code (the same bytes and name the window's
+        Print button sends) is copied, the print profile's post-processing scripts run on the
+        copy, and ElegooSlicer's upload manager sends it with "upload and print". Follow it
+        with GET /uploads/{id}. Never takes a file or a path from the client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id]
+              additionalProperties: false
+              properties:
+                plan_id: { type: string }
+      responses:
+        "202":
+          description: Sending started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  upload_id: { type: string }
+        "400":
+          description: Bad body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                plan_id:       { value: { error: "bad_plan_id", detail: "plan_id: the id POST /printers/{id}/print/prepare answered" } }
+                invalid_json:  { value: { error: "invalid_json" } }
+                unknown_field: { value: { error: "unknown_field", field: "plan" } }
+        "403": { $ref: "#/components/responses/PrintControlDisabled" }
+        "404":
+          description: Unknown printer, or no such plan for this printer (a plan is used once).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                plan:    { value: { error: "unknown_plan" } }
+                printer: { value: { error: "printer_not_found" } }
+        "409":
+          description: "`printer_offline`, `printer_busy` (+ `status`), `upload_in_progress` (+ `upload_id`), `secondary_instance`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "printer_busy", status: "printing" }
+        "410":
+          description: The plan is older than 300 s, or the plate was sliced again or changed, another plate was selected, or a setting changed. Prepare again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "plan_expired", detail: "the plan is older than 5 minutes; prepare again" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504":
+          description: The printer list (`printer_timeout`) or the GUI thread (`ui_timeout`) did not answer in time.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                printer: { value: { error: "printer_timeout" } }
+                gui:     { value: { error: "ui_timeout" } }
+  /uploads/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: "The upload_id POST /printers/{id}/print answered." }
+    get:
+      summary: How a print sent by POST /printers/{id}/print is going
+      operationId: getUpload
+      description: Capability `print_control`. An upload stays readable for an hour after it ended.
+      responses:
+        "200":
+          description: The upload's state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadStatus" }
+        "403": { $ref: "#/components/responses/PrintControlDisabled" }
+        "404":
+          description: No such upload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_upload" }
+        "409":
+          description: Not the first ElegooSlicer window.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "secondary_instance", hint: "close the other ElegooSlicer windows" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      summary: Stop sending a print, before the whole file reached the printer
+      operationId: cancelUpload
+      description: |
+        Capability `print_control`. The transfer stops and the print does not start. Once the
+        whole file reached the printer it is too late (409 too_late): stop the print with
+        POST /printers/{id}/stop. If the last bytes went out just as the cancel arrived, the
+        printer still starts the print: GET /uploads/{id} keeps watching for a minute after a
+        cancel and then shows `success`.
+      responses:
+        "200":
+          description: Cancelled (also when it already was).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, enum: [true] }
+        "403": { $ref: "#/components/responses/PrintControlDisabled" }
+        "404":
+          description: No such upload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_upload" }
+        "409":
+          description: "`too_late` (+ `status`, `hint`): the file was sent, or the upload ended. Also `secondary_instance`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "too_late", status: "uploading", hint: "the file was sent; stop the print with POST /printers/{id}/stop" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /printers/{id}/pause:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Pause the print in progress
+      operationId: pausePrint
+      description: |
+        Capability `print_control`. Sent straight to the printer, one command at a time per
+        printer. Needs a printing printer (ElegooSlicer's cache).
+      responses:
+        "200": { $ref: "#/components/responses/PrintCommandOk" }
+        "400": { $ref: "#/components/responses/PrintCommandBadBody" }
+        "403": { $ref: "#/components/responses/PrintControlDisabled" }
+        "404": { $ref: "#/components/responses/PrinterNotFound" }
+        "409": { $ref: "#/components/responses/PrintCommandRefused" }
+        "501": { $ref: "#/components/responses/PrintCommandUnsupported" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrintCommandTimeout" }
+  /printers/{id}/resume:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Resume a paused print
+      operationId: resumePrint
+      description: |
+        Capability `print_control`. Needs a paused printer (409 not_paused). The Elegoo SDK of
+        this build cannot resume a Centauri Carbon 2 over the LAN: 501 resume_unsupported,
+        resume on the printer's screen.
+      responses:
+        "200": { $ref: "#/components/responses/PrintCommandOk" }
+        "400": { $ref: "#/components/responses/PrintCommandBadBody" }
+        "403": { $ref: "#/components/responses/PrintControlDisabled" }
+        "404": { $ref: "#/components/responses/PrinterNotFound" }
+        "409": { $ref: "#/components/responses/PrintCommandRefused" }
+        "501": { $ref: "#/components/responses/PrintCommandUnsupported" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrintCommandTimeout" }
+  /printers/{id}/stop:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      summary: Stop the print in progress
+      operationId: stopPrint
+      description: |
+        Capability `print_control`. Cannot be undone, so the body must say
+        `{"confirm": "stop"}` (else 400 confirm_required). Refused only when the printer is
+        idle, its print completed or was canceled (a print's start shows as heating or
+        leveling states).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              additionalProperties: false
+              properties:
+                confirm: { type: string, enum: [stop] }
+      responses:
+        "200": { $ref: "#/components/responses/PrintCommandOk" }
+        "400": { $ref: "#/components/responses/PrintCommandBadBody" }
+        "403": { $ref: "#/components/responses/PrintControlDisabled" }
+        "404": { $ref: "#/components/responses/PrinterNotFound" }
+        "409": { $ref: "#/components/responses/PrintCommandRefused" }
+        "501": { $ref: "#/components/responses/PrintCommandUnsupported" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrintCommandTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -1361,6 +1676,53 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: "printer_timeout" }
+    PrintControlDisabled:
+      description: Print control is off (Preferences > Remote API > Allow sending and controlling prints). Nothing was done.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "print_control_disabled", hint: "Preferences > Remote API > Allow sending and controlling prints" }
+    PrintCommandOk:
+      description: The printer accepted the command.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              ok: { type: boolean, enum: [true] }
+    PrintCommandBadBody:
+      description: Bad body. POST /printers/{id}/stop needs {"confirm":"stop"}.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            confirm:       { value: { error: "confirm_required", hint: "send {\"confirm\": \"stop\"}" } }
+            invalid_json:  { value: { error: "invalid_json" } }
+            unknown_field: { value: { error: "unknown_field", field: "force" } }
+    PrintCommandRefused:
+      description: "Nothing was sent. `not_printing` / `not_paused` (+ `status`, from ElegooSlicer's cache), `printer_offline`, `printer_busy`, `secondary_instance`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            not_printing: { value: { error: "not_printing", status: "idle" } }
+            not_paused:   { value: { error: "not_paused", status: "printing" } }
+            offline:      { value: { error: "printer_offline" } }
+            secondary:    { value: { error: "secondary_instance", hint: "close the other ElegooSlicer windows" } }
+    PrintCommandUnsupported:
+      description: The Elegoo SDK has no such command for this printer.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            resume:  { value: { error: "resume_unsupported", hint: "resume on the printer's screen" } }
+            command: { value: { error: "command_unsupported", command: "pause" } }
+    PrintCommandTimeout:
+      description: No answer within 20 s. The printer may still carry the command out; check GET /printers/{id}/status.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "printer_timeout", hint: "the printer may still carry out the command: check GET /printers/{id}/status" }
   schemas:
     Error:
       type: object
@@ -1434,6 +1796,7 @@ components:
           enum: [prepare, preview, other]
           description: "Main-window tab on screen (other: home, device and other pages)."
         slicing: { type: boolean, description: "True while a slice is in progress." }
+        print_control_enabled: { type: boolean, description: "Preferences > Remote API > Allow sending and controlling prints: the print_control routes answer 403 while false." }
     Plate:
       type: object
       properties:
@@ -1670,3 +2033,52 @@ components:
               issues:
                 type: array
                 items: { type: string, enum: [no_tray, type_mismatch, color_mismatch, tray_not_ready] }
+    PrintPlan:
+      type: object
+      properties:
+        plan_id: { type: string, description: "For POST /printers/{id}/print; used once." }
+        expires_in_s: { type: integer, example: 300 }
+        summary: { $ref: "#/components/schemas/PrintSummary" }
+    PrintSummary:
+      type: object
+      description: What the print would do. Show it to the user before starting the print.
+      properties:
+        printer: { type: string, description: "The printer's name." }
+        printer_id: { type: string }
+        plate: { type: integer }
+        file_name: { type: string, description: "The file's name on the printer, the window's (post-processing scripts may still rename it)." }
+        estimated_time_s: { type: integer, nullable: true }
+        filament_g: { type: number }
+        layers: { type: integer }
+        bed_side: { type: string, nullable: true, enum: [A, B], description: "null when the printer has no bed switching." }
+        leveling: { type: boolean }
+        timelapse: { type: boolean }
+        auto_refill: { type: boolean }
+        mapping:
+          type: array
+          description: One item per filament the plate prints with, the items of CanvasMapping.filaments; empty without a connected CANVAS.
+          items: { type: object }
+        warnings:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string, enum: [color_mismatch, no_canvas, print_completed, post_processing] }
+              slot: { type: integer, description: "color_mismatch: the slot." }
+              message: { type: string }
+    UploadStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [exporting, uploading, success, failed, cancelled]
+          description: |
+            `exporting`: copying the G-code and running the post-processing scripts.
+            `success`: the file was sent and the print started. `cancelled` shows at once after
+            DELETE /uploads/{id}; it becomes `success` if the file had just been sent.
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        bytes: { type: array, items: { type: integer }, minItems: 2, maxItems: 2, description: "[sent, total]" }
+        message: { type: string, description: "In English; for failed, it says whether the file was sent." }
+        code: { type: integer, description: "failed only: ElegooSlicer's PrinterNetworkErrorCode." }
+        printer_id: { type: string }
+        file_name: { type: string }

@@ -750,3 +750,168 @@ Read-only: nothing is saved, nothing is sent.
 
 Errors, besides the ones of `GET .../canvas`: `409 canvas_disconnected` (the printer
 reports no connected CANVAS unit; the Print dialog then sends without a mapping).
+
+## Print control
+
+Send the plate ElegooSlicer sliced to an Elegoo printer and start it, follow or cancel
+the transfer, and pause, resume or stop the print (capability `print_control`). These
+routes move a real machine, so they work under these rules:
+
+- **Off by default.** Preferences → Remote API → **Allow sending and controlling prints**
+  (`remote_api_allow_print_control`). While it is off, every route below answers
+  `403 {"error": "print_control_disabled", "hint": "Preferences > Remote API > Allow
+  sending and controlling prints"}`. The setting is read on every request, so switching it
+  off stops the next one. `GET /status` reports it as `print_control_enabled`.
+- **Only ElegooSlicer's own G-code.** What is sent is the G-code ElegooSlicer sliced for the
+  current plate: the same bytes and the same file name the window's Print button sends. The
+  API never takes a file or a path from the client.
+- **Two steps.** `print/prepare` checks everything and answers a summary and a `plan_id`;
+  nothing is sent. `print` sends that plan only: once, within 5 minutes, and only while the
+  plate still holds the slice result that was checked. Slicing again, changing a setting or
+  selecting another plate expires it (`410 plan_expired`). An MCP client shows the summary
+  to the user and starts the print only after they confirm.
+- **Always visible.** Every action shows a notification in ElegooSlicer naming the printer
+  and the file, whatever "Notify on API changes" says. A request refused because the
+  setting is off shows a warning too.
+- **Stopping is explicit:** `POST .../stop` needs the body `{"confirm": "stop"}`.
+- **First window only.** With several ElegooSlicer windows open, only the first one is
+  connected to the printers; the others answer `409 {"error": "secondary_instance", "hint":
+  "close the other ElegooSlicer windows"}`.
+- **Telemetry.** ElegooSlicer records the file transfer and the print start as it does for
+  the window's Print button (uploaded only while logged in to an Elegoo account).
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/printers/{id}/print/prepare` | Check a print of the current plate: summary and plan id |
+| POST | `/printers/{id}/print` | Send the plan's G-code and start the print |
+| GET | `/uploads/{id}` | How the sending is going |
+| DELETE | `/uploads/{id}` | Stop sending, before the whole file reached the printer |
+| POST | `/printers/{id}/pause` | Pause the print |
+| POST | `/printers/{id}/resume` | Resume a paused print |
+| POST | `/printers/{id}/stop` | Stop the print (`{"confirm": "stop"}`) |
+
+Errors of every route, besides the printer ones above (`404 printer_not_found`,
+`409 printer_offline`, `502 printer_error`, `503 printers_unavailable`,
+`504 printer_timeout`): `403 print_control_disabled`, `409 secondary_instance`,
+`400 invalid_json | body_must_be_object | unknown_field` (`unknown_field` names a field the
+route does not know: a misspelt option is refused, not ignored).
+
+### POST /printers/{id}/print/prepare
+
+Body, every field optional:
+
+```json
+{"plate": 0, "bed_side": "A", "leveling": true, "timelapse": false, "auto_refill": false,
+ "mapping": [{"slot": 2, "unit": "0", "tray": "A3"}]}
+```
+
+- `plate`: 0-based, default the current plate. Only the current plate can be printed, as in
+  the window (and only its slice result follows every setting change at once): select
+  another one first with `POST /plates/{i}/select` and slice it.
+- `bed_side`, `leveling`, `timelapse`, `auto_refill`: default the Print dialog's last
+  choice. An option the printer does not have is off, and asking for it answers
+  `422 unsupported_option` + `option`. `timelapse` exists on LAN printers only,
+  `auto_refill` with a connected CANVAS only, `bed_side` with bed switching only: `A` is the
+  textured PEI side and `B` the other one, as in the Print dialog.
+- `mapping`: the tray for some filament slots (`unit` and `tray` as in `GET .../canvas`;
+  only loaded or preloaded trays). The other slots get the Print dialog's own choice, the
+  one `GET .../canvas/mapping` shows. Nothing is saved.
+
+```json
+{
+  "plan_id": "1f0e7c2a-...", "expires_in_s": 300,
+  "summary": {
+    "printer": "Centauri Carbon 2", "printer_id": "p3f9c2a71d04e8b65", "plate": 0,
+    "file_name": "helmet_PLA_1h2m.gcode", "estimated_time_s": 3720, "filament_g": 41.27,
+    "layers": 212, "bed_side": "A", "leveling": true, "timelapse": false, "auto_refill": false,
+    "mapping": [
+      {"slot": 1, "preset": "Elegoo PLA @ECC2", "type": "PLA", "color": "#ffffff", "weight_g": 30.1,
+       "tray": {"unit": "0", "tray": "A1", "type": "PLA", "color": "#ffffff"}, "issues": []}
+    ],
+    "warnings": [{"code": "print_completed", "message": "the printer shows its last print as completed: make sure the bed is clear"}]
+  }
+}
+```
+(Values illustrative.)
+- `file_name`: the name the file gets on the printer, the window's: the print profile's
+  `filename_format`, folded to ASCII and cleaned as the Print dialog cleans it.
+- `estimated_time_s`, `filament_g`, `layers`: the figures the Print dialog shows.
+- `mapping`: one item per filament the plate prints with, as in `GET .../canvas/mapping`;
+  empty when the printer has no connected CANVAS.
+- `warnings`: `color_mismatch` (a slot prints from a tray of another colour), `no_canvas`
+  (one filament and no connected CANVAS: the printer prints with the filament in its
+  extruder), `print_completed` (make sure the bed is clear), `post_processing` (the print
+  profile's post-processing scripts run on the file before it is sent and may rename it).
+
+Errors (nothing was sent):
+- the plate: `404 unknown_plate`, `400 bad_plate_index`, `409 plate_not_current`,
+  `409 not_sliced`, `409 not_printable` + `reason` (`toolpath_outside |
+  gcode_check_failed | filament_not_printable`: the window's Print button is disabled
+  then too), `409 preview_only` (a G-code file is open: it was not sliced from this
+  project);
+- the printer: `409 printer_busy` + `status` (only an `idle` or `print_completed` printer
+  takes a print), `409 upload_in_progress` + `upload_id`, `409 printer_model_mismatch` +
+  `printer_model`, `project_model` (the G-code is made for the profile's printer model; the
+  Print dialog only warns), `409 not_elegoolink_profile` (the project's printer profile
+  does not send through ElegooLink), `409 upload_format_unsupported` (the profile sends
+  `.gcode.3mf` files), `422 filename_format_error`;
+- the filaments: `409 canvas_disconnected | canvas_unsupported` + `filaments` (the plate
+  prints with several filaments and the printer has no connected CANVAS; the Print dialog
+  would send them without a mapping), `422 mapping_incomplete` + `issues: [{slot, issues}]`
+  + `filaments` (a slot has no tray: `no_tray`, its tray is not ready: `tray_not_ready`, or
+  its tray holds another filament type: `type_mismatch`; the Print dialog refuses a tray of
+  another type only when the filament name differs too). Load the filament, sync the CANVAS
+  (`POST .../canvas/sync`) or pick trays with `mapping`. `422 bad_mapping` (unknown slot or
+  tray, tray not loaded, no CANVAS to map to), `400 bad_mapping`;
+- the body: `400 bad_bed_side | bad_leveling | bad_timelapse | bad_auto_refill`;
+- the CANVAS read, as `GET .../canvas`.
+
+### POST /printers/{id}/print
+
+Body `{"plan_id": "..."}` → `202 {"upload_id": "..."}` at once. The printer's state and the
+plan's slice result are checked again first. Then, on a thread of its own, the API copies
+the plate's sliced G-code (thumbnails included), runs the print profile's post-processing
+scripts on the copy as the window does, and has ElegooSlicer's upload manager send it with
+"upload and print" and the plan's options and trays. The Print dialog's remembered printer
+and options become the plan's, as after a print from the dialog; tray choices are not saved.
+
+Errors: `400 bad_plan_id`, `404 unknown_plan` (no such plan for this printer; a plan is used
+once), `410 plan_expired` + `detail` (older than 5 minutes, or the plate was sliced again or
+changed, another plate was selected, or a setting changed: prepare again),
+`409 printer_busy | upload_in_progress | printer_offline`.
+
+### GET /uploads/{id}
+
+```json
+{"status": "uploading", "progress": 42, "bytes": [5242880, 12582912],
+ "message": "sending the file to the printer", "printer_id": "p3f9c2a71d04e8b65",
+ "file_name": "helmet_PLA_1h2m.gcode"}
+```
+- `status`: `exporting` (copying the G-code, running the post-processing scripts),
+  `uploading`, `success` (the file was sent and the print started), `failed` (with `code`,
+  ElegooSlicer's `PrinterNetworkErrorCode`, and a `message` that says whether the file was
+  sent), `cancelled`.
+- `bytes`: `[sent, total]`. An upload stays readable for an hour after it ended;
+  `404 unknown_upload`.
+
+### DELETE /uploads/{id}
+
+`{"ok": true}`: the transfer stops and the print does not start. Once the whole file reached
+the printer it is too late: `409 {"error": "too_late", "status", "hint"}`; stop the print
+with `POST .../stop` instead. If the last bytes went out just as the cancel arrived, the
+printer still starts the print: `GET /uploads/{id}` keeps watching for a minute after a
+cancel and then shows `success`.
+
+### POST /printers/{id}/pause, /resume, /stop
+
+`{"ok": true}` once the printer accepted the command. `stop` needs the body
+`{"confirm": "stop"}` (else `400 confirm_required`). The printer's state is checked first,
+from ElegooSlicer's cache: `409 not_printing` + `status` (pause: the printer is not
+printing; stop: it is idle, its print completed or was canceled), `409 not_paused` +
+`status` (resume). A command goes straight to the printer, one at a time per printer.
+- `504 printer_timeout` + `hint`: no answer within 20 s. The printer may still carry the
+  command out: check `GET /printers/{id}/status`.
+- `501 {"error": "resume_unsupported", "hint": "resume on the printer's screen"}`: the
+  Elegoo SDK of this build cannot resume a Centauri Carbon 2 over the LAN.
+  `501 command_unsupported` for another command the SDK does not have for the printer.
+- `409 printer_busy`, `502 printer_error` + `code`.
