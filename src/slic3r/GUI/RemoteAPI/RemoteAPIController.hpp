@@ -24,6 +24,9 @@ void stage_object_config(DynamicPrintConfig &cfg, const nlohmann::json &in,
                          nlohmann::json &applied, nlohmann::json &errors);
 // elegoo-mcp: stats.breakdown.purge of a slice result (RemoteAPIProject.cpp).
 nlohmann::json breakdown_purge_json(const GCodeProcessorResult &res);
+// elegoo-mcp (D8): the Yes/No questions the Print tab would ask about these print
+// settings, found by running its checks on a copy (RemoteAPIDialogs.cpp).
+std::vector<std::string> print_settings_questions(const DynamicPrintConfig &print_config);
 
 // Snapshot of the last/current slice, maintained on the GUI thread by wx event
 // subscriptions (Task 10), read by API threads under the mutex.

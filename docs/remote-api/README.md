@@ -121,6 +121,11 @@ applied and you get `422` with the error token `config_rejected` and per-key rea
 ```
 `PUT /objects/{id}/config` and `PUT /objects/{id}/volumes/{vid}/config` answer a
 refused key the same way.
+On `PUT /config`, print settings the window would question (spiral vase with more than
+one wall, ...) are refused the same way, with the question under the key `_question`
+(`errors` then holds the window's question, not a key); a value the window
+corrects with a message (a layer height of 0 becomes 0.2) is corrected and the message
+is listed in `skipped_dialogs` (see [Dialogs](#dialogs)).
 Other errors: `400 body_must_be_object`, `400 invalid_json`, `504 ui_timeout`.
 
 #### Per-filament keys
@@ -789,6 +794,10 @@ things as they are; the entry then ends with `(answered No)`.
 | Where | What the window would show | What the API does |
 |---|---|---|
 | any route | an error box (`show_error`) or an info box (`show_info`), e.g. "Failed loading file" on `POST /model`, the "load geometry data only" note for a PrusaSlicer 3MF | notification + `skipped_dialogs` |
+| `PUT /config` | the Print/Filament tab's check of the new values corrects one and says so ("Too small layer height. Reset to 0.2.", ironing spacing, first layer height, XY compensation, elephant foot, seam slope start height, lock depth, max volumetric speed < 0.5) | the correction is made, notification + `skipped_dialogs` |
+| `PUT /config` | the Print tab's check asks a question: spiral vase needs one wall, no top layers, no infill, no support...; alternate extra wall with "ensure vertical shell thickness: All"; the Extrusion/Combined fuzzy skin modes need the Arachne wall generator | refused before anything is applied: `422 config_rejected` with the question in `errors._question`; send settings that agree, in the same request |
+| other routes that reload print settings (`PUT /preset` to a preset saved with such a combination, per-object settings) | the same checks | boxes as above; a question is answered No (the setting that conflicts is turned off) |
+| `PUT /config` while the printer tab's Extruder page is open in the window | "The Retract before wipe option could be only 100% when using the Firmware Retraction mode ..." | answered No (firmware retraction is turned off) |
 
 ## Notes & limits
 

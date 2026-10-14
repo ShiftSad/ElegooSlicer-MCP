@@ -10,11 +10,27 @@
 #include "MsgDialog.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "Plater.hpp"
+#include "RemoteAPI/RemoteAPIDialogs.hpp" // elegoo-mcp (D8)
 
 #include <wx/msgdlg.h>
 
 namespace Slic3r {
 namespace GUI {
+
+// elegoo-mcp (D8): a Remote API request must not open a dialog, as nobody may be at the
+// machine to close it (RemoteAPI/RemoteAPIDialogs.hpp). During one, a message box is
+// skipped and the check goes on as after OK; a Yes/No question gets the API's answer,
+// No (keep the rest, drop the setting that conflicts). PUT /config refuses a batch that
+// would raise a question before the Print tab gets here (print_settings_questions).
+static int show_modal(MessageDialog &dialog, const wxString &msg_text, bool question = false)
+{
+    if (!RemoteAPI::api_skips_dialogs())
+        return dialog.ShowModal();
+    if (question)
+        return RemoteAPI::api_question(into_u8(msg_text)) ? wxID_YES : wxID_NO;
+    RemoteAPI::skip_dialog(into_u8(msg_text));
+    return wxID_OK;
+}
 
 void ConfigManipulation::apply(DynamicPrintConfig* config, DynamicPrintConfig* new_config)
 {
@@ -156,7 +172,7 @@ void ConfigManipulation::check_filament_max_volumetric_speed(DynamicPrintConfig 
         MessageDialog      dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist    = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats({0.5}));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -228,7 +244,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("layer_height", new ConfigOptionFloat(0.2));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -242,7 +258,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("layer_height", new ConfigOptionFloat(max_lh));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -255,7 +271,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("ironing_spacing", new ConfigOptionFloat(0.1));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -266,7 +282,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("support_ironing_spacing", new ConfigOptionFloat(0.1));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -278,7 +294,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -293,7 +309,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("xy_hole_compensation", new ConfigOptionFloat(0));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -308,7 +324,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("xy_contour_compensation", new ConfigOptionFloat(0));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -323,7 +339,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("elefant_foot_compensation", new ConfigOptionFloat(0));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -390,7 +406,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(m_msg_dlg_parent, msg_text, "",
                                wxICON_WARNING | (is_global_config ? wxYES | wxNO : wxOK));
         DynamicPrintConfig new_conf = *config;
-        auto answer = dialog.ShowModal();
+        auto answer = show_modal(dialog, msg_text, /*question=*/is_global_config); // elegoo-mcp (D8)
         if (!is_global_config || answer == wxID_YES) {
             new_conf.set_key_value("ensure_vertical_shell_thickness", new ConfigOptionEnum<EnsureVerticalShellThickness>(evstModerate));
             new_conf.set_key_value("alternate_extra_wall", new ConfigOptionBool(true));
@@ -528,7 +544,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog      dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist    = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("seam_slope_start_height", new ConfigOptionFloatOrPercent(0, false));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -542,7 +558,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog      dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist    = true;
-        dialog.ShowModal();
+        show_modal(dialog, msg_text); // elegoo-mcp (D8)
         new_conf.set_key_value("infill_lock_depth", new ConfigOptionFloat(skin_depth / 2));
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
@@ -557,7 +573,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxYES | wxNO);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist = true;
-        auto answer = dialog.ShowModal();
+        auto answer = show_modal(dialog, msg_text, /*question=*/true); // elegoo-mcp (D8)
         if (answer == wxID_YES)
             new_conf.set_key_value("wall_generator", new ConfigOptionEnum<PerimeterGeneratorType>(PerimeterGeneratorType::Arachne));
         else 
@@ -1105,7 +1121,7 @@ int ConfigManipulation::show_spiral_mode_settings_dialog(bool is_object_config)
     MessageDialog dialog(wxGetApp().plater(), msg_text, "",
         wxICON_WARNING | (!is_object_config ? wxYES | wxNO : wxOK));
     is_msg_dlg_already_exist = true;
-    auto answer = dialog.ShowModal();
+    auto answer = show_modal(dialog, msg_text, /*question=*/!is_object_config); // elegoo-mcp (D8)
     is_msg_dlg_already_exist = false;
     if (is_object_config)
         answer = wxID_YES;

@@ -5,6 +5,7 @@
 #include "RemoteAPIController.hpp" // first: Boost.Asio must come before <windows.h>
 #include "RemoteAPIDialogs.hpp"
 
+#include "slic3r/GUI/ConfigManipulation.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -62,6 +63,20 @@ bool api_question(const std::string &text)
         notify(reported, false);
     }
     return log->answer_yes;
+}
+
+// Runs the Print tab's own checks (TabPrint::update -> update_print_fff_config) on a copy
+// of the staged print settings, in a quiet log: nothing is shown or changed, and the
+// questions the checks would ask are returned (spiral vase needs one wall, alternate
+// extra wall with "ensure vertical shell thickness: all", fuzzy skin needs Arachne).
+std::vector<std::string> print_settings_questions(const DynamicPrintConfig &print_config)
+{
+    DynamicPrintConfig copy = print_config;
+    ConfigManipulation checks; // no callbacks: it only edits `copy`
+    DialogLog          dry_run;
+    dry_run.quiet = true;
+    checks.update_print_fff_config(&copy, /*is_global_config=*/true);
+    return dry_run.questions;
 }
 
 }}} // namespace

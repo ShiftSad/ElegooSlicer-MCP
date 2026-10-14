@@ -2,6 +2,7 @@
 //#include "slic3r/Utils/Serial.hpp"
 #include "Tab.hpp"
 #include "RemoteAPI/RemoteAPIController.hpp"
+#include "RemoteAPI/RemoteAPIDialogs.hpp" // elegoo-mcp (D8)
 #include "PresetHints.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -5584,14 +5585,19 @@ void TabPrinter::toggle_options()
         float retract_before_wipe = static_cast<ConfigOptionPercents*>(m_config->option("retract_before_wipe"))->values[variant_index];
 
         if (use_firmware_retraction && wipe && retract_before_wipe < 100.0) {
+            // elegoo-mcp (D8): the text is kept for the Remote API, which cannot answer.
+            const wxString msg_text = _(L("The Retract before wipe option could be only 100% when using the Firmware Retraction mode.\n"
+                    "\nShall I set it to 100% in order to enable Firmware Retraction?"));
             //wxMessageDialog dialog(parent(),
-            MessageDialog dialog(parent(),
-                _(L("The Retract before wipe option could be only 100% when using the Firmware Retraction mode.\n"
-                    "\nShall I set it to 100% in order to enable Firmware Retraction?")),
+            MessageDialog dialog(parent(), msg_text,
                 _(L("Firmware Retraction")), wxICON_WARNING | wxYES | wxNO);
 
             DynamicPrintConfig new_conf = *m_config;
-            if (dialog.ShowModal() == wxID_YES) {
+            // elegoo-mcp (D8): during a Remote API request no dialog; the API answers No
+            // (firmware retraction off), see RemoteAPI/RemoteAPIDialogs.hpp.
+            const int answer = RemoteAPI::api_skips_dialogs() ? (RemoteAPI::api_question(into_u8(msg_text)) ? wxID_YES : wxID_NO)
+                                                              : dialog.ShowModal();
+            if (answer == wxID_YES) {
                 auto wipe = static_cast<ConfigOptionBools*>(m_config->option("wipe")->clone());
                 auto retract_before_wipe = static_cast<ConfigOptionPercents*>(m_config->option("retract_before_wipe")->clone());
                 for (size_t w = 0; w < wipe->values.size(); w++) {
