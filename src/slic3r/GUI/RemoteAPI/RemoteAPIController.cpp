@@ -119,6 +119,33 @@ static std::string api_config_unit(const std::string &key)
 static int find_object_index(const Model &model, uint64_t id); // defined with the M4b object handlers below
 static bool sensitive_writes_allowed(); // defined with the sensitive-key policy below
 
+// elegoo-mcp: slice validity after an API edit.
+// When a setting changes, Orca re-checks only the CURRENT plate (the background process
+// applies the new config to that plate's print). Every other plate keeps reporting
+// "sliced" until it is selected, so GET /plates called stale G-code valid. The GUI's
+// sidebar preset combo (Plater::priv::on_select_preset) marks every plate unsliced for
+// that reason, and dragging a copy marks the plates it touches
+// (PartPlateList::notify_instance_update). The API does the same: a global (preset or
+// project) change marks every plate, a per-object change the plates holding the object.
+// GUI thread only.
+static void invalidate_all_plates_if_changed(const DynamicPrintConfig &config_before)
+{
+    if (!(wxGetApp().preset_bundle->full_config() == config_before))
+        wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
+}
+
+static void invalidate_object_plates(int obj_idx)
+{
+    Plater        *plater = wxGetApp().plater();
+    PartPlateList &plates = plater->get_partplate_list();
+    const ModelObject *mo = plater->model().objects[obj_idx];
+    for (int ii = 0; ii < (int) mo->instances.size(); ++ii) {
+        const int plate_idx = plates.find_instance(obj_idx, ii); // -1: off every plate
+        if (plate_idx >= 0)
+            plates.get_plate(plate_idx)->update_slice_result_valid_state(false);
+    }
+}
+
 
 void Controller::notify_config_changed(int preset_type)
 {
@@ -684,6 +711,8 @@ Response Controller::handle_put_config(const std::string &body)
         const auto            *colours0 = bundle->project_config.option<ConfigOptionStrings>("filament_colour");
         const size_t           filaments_before = colours0 == nullptr ? 0 : colours0->values.size();
         const int              plate_idx = wxGetApp().plater()->get_partplate_list().get_curr_plate_index();
+        // elegoo-mcp: compared after the preset writes to mark every plate unsliced.
+        const DynamicPrintConfig config_before = bundle->full_config();
 
         for (auto it = in.begin(); it != in.end(); ++it) {
             const std::string &key = it.key();
@@ -848,6 +877,9 @@ Response Controller::handle_put_config(const std::string &body)
                 tab->load_config(t.cfg);
                 wxGetApp().plater()->on_config_change(t.cfg);
             }
+        // elegoo-mcp: on_config_change re-checks only the current plate, and only after
+        // a 500 ms timer; mark every plate now (the project branch below already does).
+        invalidate_all_plates_if_changed(config_before);
 
         // Project scope has no Tab, so the preset path above does not apply. There
         // is no single "apply a project config change" helper in-tree either - every
@@ -1337,6 +1369,8 @@ Response Controller::handle_select_preset(const std::string &body)
         // (that is exactly the modal deadlock above), so instead report every group we
         // discarded, and name them in the on-screen notification, so the loss is
         // visible to both the caller and whoever is at the machine.
+        // elegoo-mcp: compared after the switch to mark every plate unsliced.
+        const DynamicPrintConfig config_before = bundle->full_config();
         nlohmann::json discarded = nlohmann::json::array();
         auto discard_if_dirty = [&discarded](PresetCollection &c, const char *group) {
             if (c.current_is_dirty()) {
@@ -1349,6 +1383,8 @@ Response Controller::handle_select_preset(const std::string &body)
         discard_if_dirty(bundle->sla_materials, "sla_material");
         discard_if_dirty(bundle->printers, "printer");
         bool ok = tab->select_preset(name, false, "", /*force_select=*/true, /*force_no_transfer=*/true);
+        // elegoo-mcp: discarding edits changes the config even if the switch fails.
+        invalidate_all_plates_if_changed(config_before);
         if (!ok) return {{"error", "select_cancelled"}};
         return {{"selected", name}, {"discarded_changes", discarded}};
     });
@@ -1410,7 +1446,11 @@ Response Controller::handle_save_preset(const std::string &body)
         Tab *tab = wxGetApp().get_tab(type);
         if (tab == nullptr) return {{"error", "tab_unavailable"}};
         bool created = existing == nullptr;
+        // elegoo-mcp: saving under a new name renames the selected preset, and the
+        // G-code names it (print_settings_id...), so the plates' G-code is stale then.
+        const DynamicPrintConfig config_before = bundle->full_config();
         tab->save_preset(name, detach, /*save_to_project=*/false);
+        invalidate_all_plates_if_changed(config_before);
         // save_preset returns void; confirm the preset actually landed.
         const Preset *saved = presets.find_preset(name, false);
         if (saved == nullptr) return {{"error", "save_failed"}};
@@ -1471,6 +1511,7 @@ Response Controller::handle_put_layer_height(uint64_t id, const std::string &bod
         if (mode == "reset") {
             mo->layer_height_profile.clear();
             plater->schedule_background_process();
+            invalidate_object_plates(idx); // elegoo-mcp: see invalidate_object_plates
             wxGetApp().obj_list()->update_info_items(idx);
             api_notify("Reset layer height profile on '" + mo->name + "'");
             return {{"id", id}, {"mode", "reset"}};
@@ -1485,6 +1526,7 @@ Response Controller::handle_put_layer_height(uint64_t id, const std::string &bod
         mo->layer_height_profile.set(std::move(profile));
         const std::vector<double> &prof = mo->layer_height_profile.get();
         plater->schedule_background_process();
+        invalidate_object_plates(idx); // elegoo-mcp: see invalidate_object_plates
         wxGetApp().obj_list()->update_info_items(idx);
         double hmin = prof[1], hmax = prof[1];
         for (size_t i = 1; i < prof.size(); i += 2) {
@@ -1535,6 +1577,7 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
         if (clear) {
             mo->layer_config_ranges.clear();
             plater->changed_object(idx);
+            invalidate_object_plates(idx); // elegoo-mcp: see invalidate_object_plates
             wxGetApp().obj_list()->update_info_items(idx);
             api_notify("Cleared height ranges on '" + mo->name + "'");
             return {{"id", id}, {"height_ranges", ranges_json()}};
@@ -1558,6 +1601,7 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
         c.set_key_value("extruder",     new ConfigOptionInt(0));
         mo->layer_config_ranges[key].assign_config(std::move(c));
         plater->changed_object(idx);
+        invalidate_object_plates(idx); // elegoo-mcp: see invalidate_object_plates
         wxGetApp().obj_list()->update_info_items(idx);
         api_notify("Set height range " + std::to_string(min_z) + "-" + std::to_string(max_z) + " mm on '" + mo->name + "'");
         return {{"id", id}, {"height_ranges", ranges_json()}};
@@ -1637,12 +1681,16 @@ Response Controller::handle_delete_preset(const std::string &body)
             if (other.name != name && other.inherits() == name)
                 return {{"error", "has_children"},
                         {"detail", "other presets inherit from this one"}};
+        // elegoo-mcp: a filament preset can be in use by another filament slot without
+        // being the selected one; deleting it moves that slot to another preset.
+        const DynamicPrintConfig config_before = wxGetApp().preset_bundle->full_config();
         if (!presets->delete_preset(name))
             return {{"error", "delete_failed"}};
         // Refresh the tab's preset list + the plater sidebar combo.
         if (Tab *tab = wxGetApp().get_tab(type); tab != nullptr)
             tab->update_tab_ui();
         wxGetApp().plater()->sidebar().update_presets(type);
+        invalidate_all_plates_if_changed(config_before);
         api_notify("Deleted " + type_s + " preset '" + name + "'");
         return {{"deleted", name}};
     });
@@ -2013,6 +2061,7 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         }
         mo->config.assign_config(std::move(cfg));
         plater->changed_object(idx);
+        invalidate_object_plates(idx); // elegoo-mcp: see invalidate_object_plates
         // changed_object() reschedules the background slice and repaints the 3D scene, but
         // it does not touch the object list's filament column. That column is written by
         // ObjectList itself (set_extruder_for_selected_items / update_filament_values_for_items
