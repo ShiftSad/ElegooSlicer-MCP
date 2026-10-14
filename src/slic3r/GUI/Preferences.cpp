@@ -2257,11 +2257,12 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
         "remote_api_bind_lan");
     g_sizer->Add(item_lan);
 
+    // elegoo-mcp: user-facing text says ElegooSlicer (the fork said OrcaSlicer).
     auto item_notify = create_item_checkbox(
         _L("Notify on API changes"),
-        _L("Show a notification in OrcaSlicer when an external tool changes settings, "
+        _L("Show a notification in ElegooSlicer when an external tool changes settings, "
            "loads or edits objects, or switches presets. Slicing and arrange/orient use "
-           "OrcaSlicer's own feedback."),
+           "ElegooSlicer's own feedback."),
         "remote_api_notify");
     g_sizer->Add(item_notify);
 
@@ -2269,9 +2270,9 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     auto item_sensitive = create_item_checkbox(
         _L("Allow script, G-code and connection edits"),
         _L("Off (recommended): the API cannot change post-processing scripts, custom G-code, "
-           "the printer connection and its credentials, the printer model or the output "
-           "filename format. These can run commands on this computer or the printer, and an "
-           "AI agent can be steered by text it reads, so change them here in OrcaSlicer "
+           "the printer connection and its credentials, the printer model, the output "
+           "filename format or the CANVAS/cloud switches. These can run commands on this computer "
+           "or the printer, and an AI agent can be steered by text it reads, so change them here in ElegooSlicer "
            "instead. Writing back a value that is already set is always allowed."),
         "remote_api_allow_sensitive");
     g_sizer->Add(item_sensitive);
