@@ -560,7 +560,9 @@ requests.
   tokens, user names, serial numbers, mainboard ids and web URLs never appear, and a
   user name/password inside a host URL is cut off.
 - **Threads and timeouts.** Printer calls never run on the GUI thread. A call that does
-  not finish in 10 s (CANVAS: 20 s) answers `504 printer_timeout`.
+  not finish in 10 s (CANVAS: 20 s) answers `504 printer_timeout`, and all the waits of
+  one request together (printer, CANVAS, GUI thread) are capped at 25 s: the API answers
+  one request at a time, so a slow printer must not hold the others for longer.
 - **Errors** (every route): `404 printer_not_found`, `409 printer_offline`,
   `504 printer_timeout`, `503 printers_unavailable` (ElegooSlicer is closing, rebuilding
   its window, or a second ElegooSlicer window lost its link to the first one; retry),
@@ -929,5 +931,5 @@ error or an unknown state), `409 not_paused` + `status` (resume). A command goes
   `501 command_unsupported` for another command the SDK does not have for the printer.
   `501 unsupported_on_wan` for a cloud printer (nothing is sent).
 - `409 command_in_progress` + `hint`: an earlier command for this printer was still
-  waiting for the printer's answer for 20 s; this one was not sent.
+  waiting for the printer's answer when this one's time ran out; this one was not sent.
 - `409 printer_busy`, `502 printer_error` + `code`.

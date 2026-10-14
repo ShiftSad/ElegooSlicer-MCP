@@ -1684,7 +1684,7 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: "printers_unavailable" }
     PrinterTimeout:
-      description: The printer call did not finish in time (10 s, CANVAS 20 s).
+      description: The printer call did not finish in time (10 s, CANVAS 20 s; all the waits of one request together at most 25 s).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -1713,7 +1713,7 @@ components:
             invalid_json:  { value: { error: "invalid_json" } }
             unknown_field: { value: { error: "unknown_field", field: "force" } }
     PrintCommandRefused:
-      description: "Nothing was sent. `not_printing` / `not_paused` (+ `status`, from ElegooSlicer's cache), `printer_offline`, `printer_busy`, `secondary_instance`, `command_in_progress` (an earlier command for this printer was still running after 20 s)."
+      description: "Nothing was sent. `not_printing` / `not_paused` (+ `status`, from ElegooSlicer's cache), `printer_offline`, `printer_busy`, `secondary_instance`, `command_in_progress` (an earlier command for this printer was still running when this one's time ran out)."
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

@@ -21,7 +21,8 @@
 // Threads: printer, IPC and SDK calls can block for seconds. They never run on the GUI
 // thread: they run on a worker thread (run_on_worker) that the API thread waits for, up
 // to a timeout (504 printer_timeout). GUI data (presets, app config) is read on the GUI
-// thread with run_on_ui and handed to the worker.
+// thread with run_on_ui and handed to the worker. All the waits of one request share one
+// time budget (wait_s).
 //
 // Secrets: a printer is written to JSON field by field from a whitelist (printer_json).
 // Never put password, token, accessCode, pinCode, extraInfo, username, serialNumber,
@@ -90,6 +91,33 @@ static const int CANVAS_TIMEOUT_S  = 20; // a CANVAS read, including the wait fo
 static const int CANVAS_CACHE_S    = 5;  // a CANVAS reply is reused this long (CC2 rate limit)
 static const int REFRESH_EVERY_S   = 2;  // at most one status refresh request per printer
 static const int RAW_CACHE_S       = 2;  // at most one raw status read per printer (cloud)
+static const int UI_TIMEOUT_S      = 10; // a step on the GUI thread (run_on_ui)
+static const int REQUEST_BUDGET_S  = 25; // all the waits of one request together
+
+// --- the request's time budget ------------------------------------------------------
+
+// An Elegoo request waits on the API's only thread: for a worker that asks the printer, for
+// a CANVAS read, for the GUI thread. Every other request (and the /events socket) waits
+// meanwhile, and so does the GUI thread when it stops the API (Preferences, closing) in the
+// middle: it joins the API thread. Added up, the waits of one request could reach 70 s. So
+// a request gets one budget, REQUEST_BUDGET_S, started by route_elegoo, and each wait takes
+// its own timeout or what is left of the budget, whichever is shorter (wait_s).
+static std::chrono::steady_clock::time_point request_deadline; // API thread only
+
+// The seconds the next wait of the current request may take: timeout_s, or less when the
+// request's budget ends first. Throws std::runtime_error("printer_timeout") when the budget
+// is used up (route_elegoo answers 504), and std::runtime_error("printers_unavailable") when
+// ElegooSlicer started closing (503): a request does not start a wait for a closing window.
+static int wait_s(int timeout_s)
+{
+    if (wxGetApp().is_closing())
+        throw std::runtime_error("printers_unavailable");
+    const long long left =
+        std::chrono::duration_cast<std::chrono::seconds>(request_deadline - std::chrono::steady_clock::now()).count();
+    if (left <= 0)
+        throw std::runtime_error("printer_timeout");
+    return (int) std::min<long long>(timeout_s, left);
+}
 
 // --- worker threads -----------------------------------------------------------------
 
@@ -324,7 +352,7 @@ static nlohmann::json printer_json(const PrinterNetworkInfo &p)
 static bool find_printer(const std::string &api_id, PrinterNetworkInfo &found)
 {
     auto printers = std::make_shared<std::vector<PrinterNetworkInfo>>();
-    run_on_worker([printers] { *printers = PrinterManager::getInstance()->getPrinterList(); }, PRINTER_TIMEOUT_S);
+    run_on_worker([printers] { *printers = PrinterManager::getInstance()->getPrinterList(); }, wait_s(PRINTER_TIMEOUT_S));
     for (const PrinterNetworkInfo &p : *printers)
         if (api_printer_id(p.printerId) == api_id) {
             found = p;
@@ -344,7 +372,7 @@ Response Controller::handle_get_printers()
         if (opt != nullptr)
             model = opt->value;
         return {{"model", model}, {"recent", wxGetApp().app_config->get("recent", CONFIG_KEY_SELECTED_PRINTER_ID)}};
-    });
+    }, wait_s(UI_TIMEOUT_S));
     const std::string model  = pick["model"].get<std::string>();
     const std::string recent = pick["recent"].get<std::string>();
 
@@ -353,7 +381,7 @@ Response Controller::handle_get_printers()
     run_on_worker([printers, selected, model, recent] {
         *printers = PrinterManager::getInstance()->getPrinterList();
         *selected = PrinterManager::getInstance()->getSelectedPrinter(model, recent);
-    }, PRINTER_TIMEOUT_S);
+    }, wait_s(PRINTER_TIMEOUT_S));
 
     nlohmann::json list = nlohmann::json::array();
     for (const PrinterNetworkInfo &p : *printers)
@@ -501,7 +529,7 @@ Response Controller::handle_get_printer_status(const std::string &api_id, const 
         if (it == last_raw.end() || now - it->second.read_at >= std::chrono::seconds(RAW_CACHE_S)) {
             auto result = std::make_shared<PrinterNetworkResult<std::string>>();
             const std::string id = p.printerId;
-            run_on_worker([result, id] { *result = PrinterManager::getInstance()->getPrinterStatusRaw(id); }, PRINTER_TIMEOUT_S);
+            run_on_worker([result, id] { *result = PrinterManager::getInstance()->getPrinterStatusRaw(id); }, wait_s(PRINTER_TIMEOUT_S));
             if (!result->isSuccess() || !result->hasData())
                 return printer_error(result->isSuccess() ? PrinterNetworkErrorCode::PRINTER_INVALID_RESPONSE : result->code);
             nlohmann::json raw = nlohmann::json::parse(result->value(), nullptr, /*allow_exceptions=*/false);
@@ -541,7 +569,7 @@ Response Controller::handle_get_printer_history(const std::string &api_id, const
     if (what == "tasks") {
         auto result = std::make_shared<PrinterNetworkResult<PrinterPrintTaskResponse>>();
         run_on_worker([result, id, page, size] { *result = PrinterManager::getInstance()->getPrintTaskList(id, page, size); },
-                      PRINTER_TIMEOUT_S);
+                      wait_s(PRINTER_TIMEOUT_S));
         if (!result->isSuccess() || !result->hasData())
             return printer_error(result->isSuccess() ? PrinterNetworkErrorCode::PRINTER_INVALID_RESPONSE : result->code);
         for (const PrinterPrintTask &t : result->value().taskList)
@@ -554,7 +582,7 @@ Response Controller::handle_get_printer_history(const std::string &api_id, const
     }
     auto result = std::make_shared<PrinterNetworkResult<PrinterPrintFileResponse>>();
     run_on_worker([result, id, page, size] { *result = PrinterManager::getInstance()->getFileList(id, page, size); },
-                  PRINTER_TIMEOUT_S);
+                  wait_s(PRINTER_TIMEOUT_S));
     if (!result->isSuccess() || !result->hasData())
         return printer_error(result->isSuccess() ? PrinterNetworkErrorCode::PRINTER_INVALID_RESPONSE : result->code);
     for (const PrinterPrintFile &f : result->value().fileList)
@@ -819,8 +847,8 @@ Response Controller::handle_get_canvas(const std::string &api_id)
     if (!find_canvas_printer(api_id, p, error))
         return error;
 
-    const nlohmann::json nozzles = run_on_ui(nozzle_diameters_json);
-    const CanvasReply    reply   = read_canvas(p.printerId, nozzles.get<std::vector<double>>(), CANVAS_TIMEOUT_S);
+    const nlohmann::json nozzles = run_on_ui(nozzle_diameters_json, wait_s(UI_TIMEOUT_S));
+    const CanvasReply    reply   = read_canvas(p.printerId, nozzles.get<std::vector<double>>(), wait_s(CANVAS_TIMEOUT_S));
     if (reply.code != PrinterNetworkErrorCode::SUCCESS)
         return printer_error(reply.code);
     nlohmann::json j = canvas_json(reply.group);
@@ -934,8 +962,8 @@ Response Controller::handle_canvas_sync(const std::string &api_id, const std::st
     Response           error;
     if (!find_canvas_printer(api_id, p, error))
         return error;
-    const nlohmann::json nozzles = run_on_ui(nozzle_diameters_json);
-    const CanvasReply    reply   = read_canvas(p.printerId, nozzles.get<std::vector<double>>(), CANVAS_TIMEOUT_S);
+    const nlohmann::json nozzles = run_on_ui(nozzle_diameters_json, wait_s(UI_TIMEOUT_S));
+    const CanvasReply    reply   = read_canvas(p.printerId, nozzles.get<std::vector<double>>(), wait_s(CANVAS_TIMEOUT_S));
     if (reply.code != PrinterNetworkErrorCode::SUCCESS)
         return printer_error(reply.code);
     // The sync dialog shows an error instead of the trays when the CANVAS is not connected
@@ -981,7 +1009,7 @@ Response Controller::handle_canvas_sync(const std::string &api_id, const std::st
             if (!slot["tray"].is_null())
                 ++synced;
         return {{"synced", synced}, {"slots", slots}, {"unknown", unknown}};
-    }, 30);
+    }, wait_s(UI_TIMEOUT_S));
 
     if (r.contains("error")) {
         if (r["error"] == "printers_unavailable")
@@ -1131,11 +1159,11 @@ Response Controller::handle_canvas_mapping(const std::string &api_id, const std:
         // there is none: take the filaments the plate's objects are set to print with.
         *filaments = PrintSendDialogEx::getPlateFilamentList(pp, sliced ? pp->get_used_filaments() : pp->get_extruders(true));
         return {{"plate", index}, {"sliced", sliced}, {"nozzles", nozzle_diameters_json()}};
-    });
+    }, wait_s(UI_TIMEOUT_S));
     if (info.contains("error"))
         return { 404, info };
 
-    const CanvasReply reply = read_canvas(p.printerId, info["nozzles"].get<std::vector<double>>(), CANVAS_TIMEOUT_S);
+    const CanvasReply reply = read_canvas(p.printerId, info["nozzles"].get<std::vector<double>>(), wait_s(CANVAS_TIMEOUT_S));
     if (reply.code != PrinterNetworkErrorCode::SUCCESS)
         return printer_error(reply.code);
     // The Print dialog does not map filaments to an unconnected CANVAS (PrintSendDialogEx::getPrinterMmsInfo).
@@ -1209,7 +1237,8 @@ static void print_control_notify(const std::string &text, bool warning = false)
 // the request in the notification a refused action shows ("start a print"); "" for a read.
 bool Controller::check_print_control(const std::string &what, Response &refused)
 {
-    const bool allowed = run_on_ui([]() -> nlohmann::json { return Config::print_control_allowed(); }).get<bool>();
+    const bool allowed =
+        run_on_ui([]() -> nlohmann::json { return Config::print_control_allowed(); }, wait_s(UI_TIMEOUT_S)).get<bool>();
     if (!allowed) {
         if (!what.empty())
             print_control_notify("Remote API: refused to " + what + ": print control is off "
@@ -1724,7 +1753,7 @@ Response Controller::handle_print_prepare(const std::string &api_id, const std::
     const std::string printer_model = p.printerModel;
     nlohmann::json info = run_on_ui([plate_index, printer_model, plan, filaments]() -> nlohmann::json {
         return read_plate_for_print(plate_index, printer_model, *plan, *filaments);
-    });
+    }, wait_s(UI_TIMEOUT_S));
     if (info.contains("error")) {
         const std::string e = info["error"].get<std::string>();
         if (e == "printers_unavailable")
@@ -1743,7 +1772,7 @@ Response Controller::handle_print_prepare(const std::string &api_id, const std::
     bool            has_mms    = false;
     PrinterMmsGroup group {};
     if (has_canvas) {
-        const CanvasReply reply = read_canvas(p.printerId, info["nozzles"].get<std::vector<double>>(), CANVAS_TIMEOUT_S);
+        const CanvasReply reply = read_canvas(p.printerId, info["nozzles"].get<std::vector<double>>(), wait_s(CANVAS_TIMEOUT_S));
         if (reply.code != PrinterNetworkErrorCode::SUCCESS)
             return printer_error(reply.code);
         group   = reply.group;
@@ -2132,7 +2161,7 @@ Response Controller::handle_print_start(const std::string &api_id, const std::st
         for (const auto &[key, value] : plan->recent)
             wxGetApp().app_config->set("recent", key, value);
         return {{"ok", true}};
-    });
+    }, wait_s(UI_TIMEOUT_S));
     if (check.contains("error")) {
         if (check["error"] == "printers_unavailable")
             return printers_unavailable();
@@ -2318,9 +2347,12 @@ Response Controller::handle_print_command(const std::string &api_id, const std::
 
     const std::string what = (p.printTask.fileName.empty() ? std::string("the print") : "'" + p.printTask.fileName + "'") +
                              " on '" + p.printerName + "'";
+    // Taken from the request's budget before the try below: a budget already used up means
+    // nothing was sent, and route_elegoo answers that as a plain 504.
+    const int               timeout_s = wait_s(COMMAND_TIMEOUT_S);
     PrinterNetworkErrorCode code;
     try {
-        code = send_print_command(p.printerId, command, COMMAND_TIMEOUT_S);
+        code = send_print_command(p.printerId, command, timeout_s);
     } catch (const std::runtime_error &e) {
         // Another command for this printer was still inside the SDK the whole time: this one was
         // never sent, which the client must not take for a command that is on its way.
@@ -2363,9 +2395,12 @@ Response Controller::route_elegoo(const Request &req)
     try {
         if (wxGetApp().is_closing())
             return printers_unavailable();
+        // Every wait of this request comes out of one budget (see wait_s).
+        request_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(REQUEST_BUDGET_S);
         // The key of the printer ids (api_printer_id), from the settings, once.
         if (printer_id_key.empty()) {
-            printer_id_key = run_on_ui([]() -> nlohmann::json { return Config::printer_id_key(); }).get<std::string>();
+            printer_id_key = run_on_ui([]() -> nlohmann::json { return Config::printer_id_key(); }, wait_s(UI_TIMEOUT_S))
+                                 .get<std::string>();
             if (printer_id_key.empty())
                 return { 500, {{"error", "internal"}, {"detail", "could not create the key of the printer ids"}} };
         }
@@ -2417,6 +2452,8 @@ Response Controller::route_elegoo(const Request &req)
     } catch (const std::runtime_error &e) {
         if (std::string(e.what()) == "printer_timeout")
             return { 504, {{"error", "printer_timeout"}} };
+        if (std::string(e.what()) == "printers_unavailable") // wait_s: ElegooSlicer is closing
+            return printers_unavailable();
         throw; // ui_timeout and the rest are answered by dispatch
     }
 }
