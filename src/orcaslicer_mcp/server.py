@@ -1027,7 +1027,7 @@ async def list_layer_changes(
     plate: Annotated[int | None, _PLATE_OR_CURRENT] = None,
 ) -> dict:
     """List the changes set at a layer height on a plate, as the marks on the preview's layer
-    slider: filament switches (tool_change), manual colour swaps (color_change), pauses (pause)
+    slider: filament switches (tool_change), colour-change marks (color_change), pauses (pause)
     and custom G-code (custom, which these tools can list but not add). Returns {"plate",
     "items": [{z, type, slot?, message?}]}. Read-only. An unknown plate returns unknown_plate.
     Needs ElegooSlicer MCP ('layer_changes' in get_status capabilities)."""
@@ -1046,25 +1046,28 @@ async def add_layer_change(
         "plate's objects (bad_z otherwise)."))],
     type: Annotated[Literal["tool_change", "color_change", "pause"], Field(description=(
         "'tool_change': from this layer up, print with filament slot `slot`; a multi-material "
-        "unit (the CANVAS) switches by itself. 'color_change': stop for a manual filament swap "
-        "(M600), for a printer without automatic switching. 'pause': pause the print, to drop "
-        "in a nut or magnet for example."))],
+        "unit (the CANVAS) switches by itself, with the usual flush. 'pause': pause the print "
+        "and run the printer's pause G-code (M600 on the Centauri Carbon 2), to drop in a nut or "
+        "magnet or to swap filament by hand. 'color_change': the OrcaSlicer colour-change mark; "
+        "ElegooSlicer writes no command for it (its M600 insertion is compiled out), so prefer "
+        "'pause' for a manual swap."))],
     slot: Annotated[int | None, Field(description=(
         "1-based filament slot to switch to; required for tool_change (see "
         "list_filament_slots)."))] = None,
     message: Annotated[str | None, Field(description=(
-        "For pause: a short note, as the slider's Add pause asks for one; printers that support "
-        "it show it while paused."))] = None,
+        "For pause: a short note kept with the mark, as the slider's Add pause asks for one. "
+        "ElegooSlicer does not write it into the G-code, so the printer does not show it."))] = None,
     plate: Annotated[int | None, _PLATE_OR_CURRENT] = None,
 ) -> dict:
-    """Add a filament switch, manual colour swap or pause at a layer height, as adding one on
-    the preview's layer slider does. Returns the plate's full list, as list_layer_changes.
+    """Add a filament switch or a pause at a layer height, as adding one on the preview's layer
+    slider does. Returns the plate's full list, as list_layer_changes.
 
     A change at the same z replaces the one there. Use tool_change for a print that changes
-    colour by height (a striped vase, a two-colour sign), pause to embed something. The plate is
-    left unsliced: re-slice to see the change in the preview and in the time and filament
-    estimates. Errors: bad_z, bad_slot or bad_type (422), unknown_plate (404), slicing (409).
-    Needs ElegooSlicer MCP ('layer_changes' in get_status capabilities)."""
+    colour by height (a striped vase, a two-colour sign), pause to embed something or to swap
+    filament by hand. The plate is left unsliced: re-slice to see the change in the preview and
+    in the time and filament estimates (a tool_change adds a filament change and its flush).
+    Errors: bad_z, bad_slot or bad_type (422), unknown_plate (404), slicing (409). Needs
+    ElegooSlicer MCP ('layer_changes' in get_status capabilities)."""
     if type == "tool_change" and slot is None:
         return {"error": "bad_slot",
                 "hint": "tool_change needs slot: the 1-based filament slot to print with from z up."}

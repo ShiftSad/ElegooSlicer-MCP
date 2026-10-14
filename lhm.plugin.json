@@ -185,11 +185,11 @@
     },
     {
       "name": "list_layer_changes",
-      "description": "List the changes set at a layer height on a plate, as the marks on the preview's layer slider: filament switches (tool_change), manual colour swaps (color_change), pauses (pause) and custom G-code (custom, which these tools can list but not add)."
+      "description": "List the changes set at a layer height on a plate, as the marks on the preview's layer slider: filament switches (tool_change), colour-change marks (color_change), pauses (pause) and custom G-code (custom, which these tools can list but not add)."
     },
     {
       "name": "add_layer_change",
-      "description": "Add a filament switch, manual colour swap or pause at a layer height, as adding one on the preview's layer slider does. Returns the plate's full list, as list_layer_changes."
+      "description": "Add a filament switch or a pause at a layer height, as adding one on the preview's layer slider does. Returns the plate's full list, as list_layer_changes."
     },
     {
       "name": "remove_layer_change",
