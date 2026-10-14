@@ -228,25 +228,48 @@ async def cancel_slice() -> dict:
         return _m4_err(e, "the F2 fork fix")
 
 
+# Claude Desktop aborts a tool call after about 60 s, so slice_and_wait gives up waiting a
+# little before that and reports the slice as still running, instead of being cut off with
+# no answer at all.
+_SLICE_WAIT_DEFAULT_S = 50
+
+
 @mcp.tool()
 async def slice_and_wait(
     timeout: Annotated[int, Field(description=(
         "Maximum seconds to wait for the slice to finish before returning the last known "
-        "state. Default 300; raise it for large or textured plates that slice slowly."))] = 300,
+        "state. Default 50, so the call returns before Claude Desktop's ~60 s tool-call limit; "
+        "raise it only for clients that allow longer calls."))] = _SLICE_WAIT_DEFAULT_S,
 ) -> dict:
-    """Slice the current plate and block until it finishes, then return the final stats and
-    warnings in one call. If the plate is already sliced and unchanged, it returns the existing
-    result without re-slicing.
+    """Slice the current plate and wait up to `timeout` seconds (50 by default) for it to
+    finish, then return the final stats and warnings in one call. If the plate is already
+    sliced and unchanged, it returns the existing result without re-slicing.
+
+    A big plate can take longer than that: the reply then has timed_out=true, the current state
+    and progress, and a hint. Call slice_and_wait again to keep waiting (it waits for the slice
+    already running instead of starting a new one), or poll get_slice_status.
 
     This is the usual way to slice when you want the outcome immediately. For a non-blocking
     start, use slice then poll get_slice_status; to sweep one setting across values, use
     compare_settings."""
     try:
         async with _client() as c:
-            started = await _start_slice(c)
+            try:
+                started = await _start_slice(c)
+            except Conflict as e:
+                # A slice is already running, typically the one an earlier slice_and_wait
+                # started before its timeout: wait for that one rather than fail.
+                if "already_slicing" not in str(e):
+                    raise
+                started = {}
             if started.get("already_valid"):
                 return summarize_slice(await c.slice_status())
-            return summarize_slice(await _wait_for_slice(c, timeout))
+            result = summarize_slice(await _wait_for_slice(c, timeout))
+            if result["state"] not in _TERMINAL_SLICE_STATES:
+                result["timed_out"] = True
+                result["hint"] = (f"Still slicing after {timeout} s. Call slice_and_wait again "
+                                  "to keep waiting for this slice, or poll get_slice_status.")
+            return result
     except ApiError as e:
         return _err(e)
 

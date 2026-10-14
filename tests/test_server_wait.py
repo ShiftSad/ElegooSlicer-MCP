@@ -215,3 +215,48 @@ async def test_slice_and_wait_gives_up_after_one_retry(monkeypatch):
     monkeypatch.setattr(srv.asyncio, "sleep", _nosleep)
     out = await srv.slice_and_wait(timeout=5)
     assert "slice_not_started" in out.get("error", "")
+
+
+# --- Claude Desktop aborts tool calls after ~60 s: slice_and_wait must return before that ---
+
+def test_slice_and_wait_default_timeout_is_under_the_desktop_limit():
+    import inspect
+    default = inspect.signature(srv.slice_and_wait).parameters["timeout"].default
+    assert default == 50
+
+
+@respx.mock
+async def test_slice_and_wait_timeout_returns_state_and_hint(monkeypatch):
+    _env(monkeypatch)
+    respx.post("http://x:13130/api/v1/slice").mock(
+        return_value=httpx.Response(202, json={"started": True}))
+    respx.get("http://x:13130/api/v1/slice/status").mock(
+        return_value=httpx.Response(200, json={"state": "slicing", "percent": 40}))
+    out = await srv.slice_and_wait(timeout=0)
+    assert out["state"] == "slicing" and out["percent"] == 40
+    assert out["timed_out"] is True
+    assert "slice_and_wait again" in out["hint"] and "get_slice_status" in out["hint"]
+
+
+@respx.mock
+async def test_slice_and_wait_again_waits_for_the_running_slice(monkeypatch):
+    # The second call after a timeout: POST /slice says already_slicing (409); keep waiting.
+    _env(monkeypatch)
+    respx.post("http://x:13130/api/v1/slice").mock(
+        return_value=httpx.Response(409, json={"error": "already_slicing"}))
+    respx.get("http://x:13130/api/v1/slice/status").mock(
+        return_value=httpx.Response(200, json={"state": "done", "percent": 100,
+                                               "message": "", "stats": {"total_cost": 0.1},
+                                               "warnings": []}))
+    out = await srv.slice_and_wait(timeout=5)
+    assert out["state"] == "done"
+    assert "timed_out" not in out
+
+
+@respx.mock
+async def test_slice_and_wait_other_conflict_is_still_an_error(monkeypatch):
+    _env(monkeypatch)
+    respx.post("http://x:13130/api/v1/slice").mock(
+        return_value=httpx.Response(409, json={"error": "job_running"}))
+    out = await srv.slice_and_wait(timeout=5)
+    assert out == {"error": "job_running"}

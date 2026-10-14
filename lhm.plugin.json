@@ -95,7 +95,7 @@
     },
     {
       "name": "slice_and_wait",
-      "description": "Slice the current plate and block until it finishes, then return the final stats and warnings in one call. If the plate is already sliced and unchanged, it returns the existing result without re-slicing."
+      "description": "Slice the current plate and wait up to `timeout` seconds (50 by default) for it to finish, then return the final stats and warnings in one call. If the plate is already sliced and unchanged, it returns the existing result without re-slicing."
     },
     {
       "name": "apply_and_slice",
