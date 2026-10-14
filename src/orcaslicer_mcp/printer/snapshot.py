@@ -3,6 +3,7 @@ A failed secondary request (warnings, console, file metadata) becomes a note, no
 from __future__ import annotations
 import time
 
+from .elegoo import elegoo_snapshot
 from .errors import PrinterError
 from .status import klipper_snapshot, octoprint_snapshot
 
@@ -15,6 +16,9 @@ IDLE_CONSOLE_WINDOW_S = 600.0
 
 async def take_snapshot(target, client, *, now: float | None = None) -> dict:
     notes: list[str] = []
+    if target.kind == "elegoo":
+        # Read through ElegooSlicer, which answers from its printer cache (elegoo.py).
+        return elegoo_snapshot(await client.status(), target.public())
     if target.kind == "octoprint":
         printer = await client.printer()  # the state itself: without it there is no snapshot
         job: dict = {}

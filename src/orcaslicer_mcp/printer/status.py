@@ -6,7 +6,9 @@ from pathlib import PurePosixPath
 
 from .problems import console_problems, job_problem, klippy_problem, moonraker_warnings, problem
 
-ACTIVE = frozenset({"heating", "printing", "paused"})
+# "busy" is an Elegoo printer doing something other than printing (homing, auto leveling, loading
+# filament between colours, receiving the file): often a step of a print, so it counts as active.
+ACTIVE = frozenset({"heating", "printing", "paused", "busy"})
 DONE = frozenset({"finished", "cancelled", "error"})
 NEAR_TARGET_C = 3.0
 _PROGRESS_FLOOR = 0.05  # below 5 %, extrapolating time left from progress is noise
@@ -264,6 +266,8 @@ def headline(snap: dict) -> str:
         first = "The printer is shut down."
     elif state == "offline":
         first = "The printer is offline."
+    elif state == "busy":
+        first = f"Busy: {snap.get('activity') or 'not printing'}."
     else:
         first = "Idle."
     parts = [first]

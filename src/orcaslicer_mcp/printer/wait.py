@@ -35,10 +35,11 @@ def printing(snap: dict, kind: str | None) -> bool:
     """Klipper: extrusion has started (it says "printing" before that, so filament used decides).
     OctoPrint reports no extrusion, and its progress is a position in the file that moves while the
     heaters are still warming, so it counts only as "printing" once its status says so, which the
-    status layer reserves for a running job whose heaters are at temperature."""
+    status layer reserves for a running job whose heaters are at temperature. An Elegoo printer
+    reports no extrusion either; it says "printing" after its preheating, homing and leveling."""
     if snap.get("state") != "printing":
         return False
-    if kind == "octoprint":
+    if kind in ("octoprint", "elegoo"):
         return True
     job = snap.get("job") or {}
     return (job.get("filament_used_mm") or 0) > 0
@@ -137,6 +138,14 @@ async def run_wait(target, client, until: str, timeout_s: int, report=None, *,
         raise PrinterError("unsupported_for_connection",
                            "OctoPrint doesn't report layers, so first_layer_done only works with Klipper printers.",
                            hint="Wait for 'printing' instead.")
+    if until in ("heated", "first_layer_done") and target.kind == "elegoo":
+        # ElegooSlicer keeps no temperatures and no layer numbers for its printers: nothing to judge by.
+        what = "temperatures" if until == "heated" else "layer numbers"
+        raise PrinterError("unsupported_for_connection",
+                           f"ElegooSlicer doesn't keep an Elegoo printer's {what}, so '{until}' can't "
+                           "be judged for it.",
+                           hint="Wait for 'printing' instead: the printer reports printing once it "
+                                "has heated, homed and leveled.")
     poll_s = POLL_S if poll_s is None else poll_s
     timeout_s = max(1, min(int(timeout_s), MAX_TIMEOUT_S))
     start = clock()

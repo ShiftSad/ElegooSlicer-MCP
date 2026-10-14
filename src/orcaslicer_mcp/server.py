@@ -30,6 +30,7 @@ from .printer import target as _ptarget
 from .printer import wait as _pwait
 from .printer import history as _phistory
 from .printer import match as _pmatch
+from .printer import elegoo as _pelegoo
 from .printer.errors import PrinterError
 from .printer.snapshot import take_snapshot
 from .printer.status import _dur as _duration_text
@@ -2144,7 +2145,8 @@ async def render_plate(view: str = "editor", angle: str = "iso",
 
 # --- Printer feedback (read-only) ---------------------------------------------
 # The printer is found through OrcaSlicer's active printer profile (or ORCA_PRINTER_URL) and asked
-# over HTTP GET only. Nothing here sends commands to a printer.
+# over HTTP GET only. Nothing here sends commands to a printer. An Elegoo printer (host_type
+# elegoolink) is read through ElegooSlicer MCP's /printers routes instead (printer/elegoo.py).
 
 
 def _printer_api_key() -> str | None:
@@ -2178,7 +2180,10 @@ async def _with_printer(fn) -> dict:
     target = None
     try:
         target = await _ptarget.resolve_target(_client)
-        target, client = await _ptarget.open_printer(target, _printer_api_key())
+        if target.kind == "elegoo":
+            target, client = await _pelegoo.open_printer(target, _client)
+        else:
+            target, client = await _ptarget.open_printer(target, _printer_api_key())
         async with client:
             out = await fn(target, client)
         if target.source == "remembered" and isinstance(out, dict):
@@ -2202,7 +2207,12 @@ async def get_printer_status() -> dict:
 
     Finds the printer from OrcaSlicer's active printer profile (or ORCA_PRINTER_URL), so it needs no
     extra setup once the printer is connected in OrcaSlicer. Klipper (Moonraker) printers report the
-    most; OctoPrint reports basic status. Read-only: it never sends commands to the printer."""
+    most; OctoPrint reports basic status. An Elegoo printer connected in ElegooSlicer's Device tab
+    (ElegooSlicer MCP, 'printers' in get_status capabilities) is read through ElegooSlicer: state
+    ('busy' while it homes, levels, changes filament or receives a file, with `activity` saying
+    which), job file, progress and time left, and the exception codes it reports, but no
+    temperatures; `printer` names it (printer_id, name), and the one ElegooSlicer's Print dialog
+    would preselect is used. Read-only: it never sends commands to the printer."""
     return await _with_printer(lambda t, c: take_snapshot(t, c))
 
 
@@ -2213,7 +2223,9 @@ async def wait_for_printer(
         "extrusion has started. OctoPrint reports no extrusion, so there it means the job is "
         "running with the heaters at temperature. 'first_layer_done': the second layer has begun "
         "(Klipper only); without layer info from the slicer it is judged from the nozzle height, so "
-        "it is approximate. 'finished': the job completed, was cancelled or errored."))],
+        "it is approximate. 'finished': the job completed, was cancelled or errored. On an Elegoo "
+        "printer only 'printing' (it reports printing after heating, homing and leveling) and "
+        "'finished' work: ElegooSlicer keeps no temperatures or layer numbers for it."))],
     timeout_s: Annotated[int, Field(description=(
         "Seconds to wait before returning the latest status. Default 300, at most 1800. "
         "Call again to keep waiting."))] = _pwait.DEFAULT_TIMEOUT_S,
@@ -2241,7 +2253,9 @@ async def list_print_history(limit: int = 10) -> dict:
     or stopped jobs the printer's own reason while its console still holds it. `summary` says how
     the slicer's time estimates compare with reality once there are a few finished prints. Also copies
     those jobs into the local outcome store (safe to repeat), so recall_prints can learn from them.
-    Klipper printers only. `limit` is capped at 50."""
+    Klipper printers; `limit` is capped at 50. An Elegoo printer's history exists only in Elegoo's
+    cloud: for a printer added on the local network the reply is supported=false with the reason
+    (relay it); a cloud printer lists its jobs (name, start, end, duration), not copied to the store."""
     return await _with_printer(
         lambda t, c: _phistory.print_history(t, c, limit, _ptarget.printer_id_for(t)))
 
@@ -2253,8 +2267,12 @@ async def check_printer_match() -> dict:
     firmware retraction against the printer's own Klipper settings. Each check comes back ok, warn or
     unknown with both values and why it matters; relay `headline` and the warnings. Warnings only: it
     never changes or blocks anything. Run it before printing with a new or edited profile, or when
-    prints take longer than estimated. Klipper printers only; needs OrcaSlicer running."""
+    prints take longer than estimated. Klipper printers; needs OrcaSlicer running. For an Elegoo
+    printer (ElegooSlicer MCP) it compares what ElegooSlicer knows: the printer model and whether
+    profile and printer agree on a CANVAS multi-material unit."""
     async def run(t, c):
+        if t.kind == "elegoo":
+            return await _pelegoo.check_match(t, c)
         if t.kind != "klipper":
             return {"supported": False, "reason": "Only Klipper printers report their settings.",
                     "printer": t.public()}

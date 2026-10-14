@@ -182,6 +182,36 @@ def _strip_userinfo(url: str) -> str:
     return (scheme.group(0) if scheme else "") + REDACTED + url[at:]
 
 
+# Printer fields ElegooSlicer keeps next to each printer that must never reach the model: the
+# access code, PIN, password and token open the printer or the Elegoo account; the user name,
+# serial number, mainboard id and web URL identify them; extraInfo is a JSON blob holding some
+# of the same. ElegooSlicer MCP's printer routes build every reply field by field from a list of
+# allowed fields and never send these. scrub_printer_secrets removes them again from whatever
+# printer JSON the MCP relays, so a slicer bug or an older build can't leak them (defence in
+# depth). Names are compared without case, '_' or '-', so accessCode and access_code both go.
+PRINTER_SECRET_NAMES = frozenset({
+    "password", "token", "accesscode", "pincode", "extrainfo", "username", "serialnumber",
+    "mainboardid", "weburl",
+})
+# Any key holding one of these words goes too (accessToken, user_password, apiSecret, ...).
+PRINTER_SECRET_WORDS = ("password", "token", "secret", "accesscode", "pincode")
+
+
+def is_printer_secret(key) -> bool:
+    name = str(key).replace("_", "").replace("-", "").lower()
+    return name in PRINTER_SECRET_NAMES or any(word in name for word in PRINTER_SECRET_WORDS)
+
+
+def scrub_printer_secrets(value):
+    """A copy of a printer reply (any JSON value) without the keys is_printer_secret names, at
+    any depth. Everything else is kept as it is."""
+    if isinstance(value, dict):
+        return {k: scrub_printer_secrets(v) for k, v in value.items() if not is_printer_secret(k)}
+    if isinstance(value, list):
+        return [scrub_printer_secrets(v) for v in value]
+    return value
+
+
 def redact_secrets(cfg: dict) -> dict:
     """Hide credentials in a preset config before it reaches the model."""
     if not isinstance(cfg, dict):

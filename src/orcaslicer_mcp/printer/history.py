@@ -9,6 +9,7 @@ import statistics
 
 from .. import outcomes as _outcomes
 from ..outcomes import _num
+from . import elegoo as _elegoo
 from .errors import PrinterError
 from .problems import trim_klipper_message
 
@@ -113,6 +114,8 @@ def _sync_to_store(jobs: list[dict], reasons: list[str | None], printer_id: str)
 async def print_history(target, client, limit: int, printer_id: str) -> dict:
     if target.kind == "octoprint":
         return {"supported": False, "reason": "OctoPrint has no built-in print history.", "printer": target.public()}
+    if target.kind == "elegoo":
+        return await _elegoo.print_history(target, client, limit)
     limit = max(1, min(int(limit), 50))
     jobs = await client.history_list(limit)
     try:

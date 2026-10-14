@@ -210,6 +210,11 @@ def compare(cfg: dict, settings: dict) -> dict:
         check_bed_temp(cfg, settings),
         check_firmware_retraction(cfg, settings),
     ]
+    return summarize(checks)
+
+
+def summarize(checks: list[dict]) -> dict:
+    """The headline over a list of checks, and the checks."""
     warns = [c["check"] for c in checks if c["status"] == "warn"]
     unknown = sum(1 for c in checks if c["status"] == "unknown")
     ok = sum(1 for c in checks if c["status"] == "ok")

@@ -2,12 +2,13 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+from urllib.parse import quote
 import httpx
 import websockets
 from .config import Config
 from .errors import error_from_status, NotReachable, ApiError, UiTimeout
 from .guard import (BlockedKey, sensitive_keys, changed_keys, check_placeholders,
-                    redact_secrets)
+                    redact_secrets, scrub_printer_secrets)
 
 
 class OrcaClient:
@@ -223,6 +224,51 @@ class OrcaClient:
         if discard_project:
             body["discard_project"] = True
         return await self._request("POST", "/api/v1/calibration", json=body, timeout=50.0)
+
+    # Elegoo printers and their CANVAS (ElegooSlicer MCP, capabilities "printers" and
+    # "canvas"). The slicer builds these replies field by field and never sends a printer's
+    # secrets; every reply and error body is still scrubbed here, so a slicer bug or an older
+    # build can't leak one to the model (guard.scrub_printer_secrets).
+    async def _printer_request(self, method: str, path: str, **kwargs):
+        try:
+            return scrub_printer_secrets(await self._request(method, path, **kwargs))
+        except ApiError as e:
+            e.body = scrub_printer_secrets(e.body)
+            raise
+
+    @staticmethod
+    def _printer_path(printer_id: str, action: str = "") -> str:
+        # Printer ids are opaque strings from GET /printers: quoted so none can change the path.
+        path = f"/api/v1/printers/{quote(str(printer_id), safe='')}"
+        return f"{path}/{action}" if action else path
+
+    async def get_printers(self) -> dict:
+        return await self._printer_request("GET", "/api/v1/printers")
+
+    async def get_printer_status(self, printer_id: str) -> dict:
+        return await self._printer_request("GET", self._printer_path(printer_id, "status"))
+
+    async def get_printer_tasks(self, printer_id: str, page: int = 1, size: int = 20) -> dict:
+        return await self._printer_request("GET", self._printer_path(printer_id, "tasks"),
+                                           params={"page": page, "size": size})
+
+    async def get_canvas(self, printer_id: str) -> dict:
+        return await self._printer_request("GET", self._printer_path(printer_id, "canvas"))
+
+    async def sync_canvas(self, printer_id: str, mode: str | None = None,
+                          discard_changes: bool = False) -> dict:
+        body: dict = {}
+        if mode is not None:
+            body["mode"] = mode
+        if discard_changes:
+            body["discard_changes"] = True
+        return await self._printer_request("POST", self._printer_path(printer_id, "canvas/sync"),
+                                           json=body)
+
+    async def get_canvas_mapping(self, printer_id: str, plate: int | None = None) -> dict:
+        params = {"plate": plate} if plate is not None else None
+        return await self._printer_request("GET", self._printer_path(printer_id, "canvas/mapping"),
+                                           params=params)
 
     # Plates (fork v2.4.2-mcp.13 and later).
     async def get_plates(self) -> dict:

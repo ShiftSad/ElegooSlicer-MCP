@@ -2,7 +2,9 @@
 
 Order: ORCA_PRINTER_URL, else OrcaSlicer's active printer profile (read through the fork), else
 the printer that last answered (remembered in ~/.orcaslicer-mcp/printer.json and used only while
-OrcaSlicer can't be reached)."""
+OrcaSlicer can't be reached). On an ElegooSlicer MCP build that lists "printers", a profile that
+connects through ElegooSlicer's own printer link (host_type elegoolink) or has no address is read
+through the slicer instead (kind "elegoo", see elegoo.py)."""
 from __future__ import annotations
 import json
 import math
@@ -36,14 +38,20 @@ class PrinterTarget:
     profile: str | None = None
     host_type: str | None = None
     printer_model: str | None = None
-    kind: str | None = None               # "klipper" | "octoprint" once a probe answered
+    kind: str | None = None               # "klipper" | "octoprint" once a probe answered; "elegoo"
     remembered_at: float | None = None
     auth: tuple[str, str] | None = field(default=None, repr=False)  # basic auth from ORCA_PRINTER_URL; never reported or repr'd
+    printer_id: str | None = None         # an Elegoo printer: ElegooSlicer MCP's id for it
+    name: str | None = None               # and its name in ElegooSlicer's Device tab
 
     def public(self) -> dict:
         """What the model may see. Never the auth pair."""
-        return {"profile": self.profile, "url": self.url, "kind": self.kind,
-                "source": self.source, "remembered_at": self.remembered_at}
+        out = {"profile": self.profile, "url": self.url, "kind": self.kind,
+               "source": self.source, "remembered_at": self.remembered_at}
+        if self.printer_id is not None:
+            out["printer_id"] = self.printer_id
+            out["name"] = self.name
+        return out
 
 
 def normalise_url(raw: str) -> tuple[str, tuple[str, str] | None]:
@@ -288,6 +296,7 @@ async def _resolve_target(fork_factory, where: dict) -> PrinterTarget:
                                    hint="Select a printer in OrcaSlicer, or " + SET_URL_HINT)
             where["profile"] = str(name)
             preset = await fork.get_preset_config("printer", name)
+            capabilities = (status or {}).get("capabilities") or []
     except ApiError as e:
         remembered = recall_remembered()
         if remembered is not None:
@@ -301,6 +310,17 @@ async def _resolve_target(fork_factory, where: dict) -> PrinterTarget:
     host = str(cfg.get("print_host") or "").strip()
     model = cfg.get("printer_model") or None
     host_type = str(cfg.get("host_type") or "").strip().lower() or None
+    if "printers" in capabilities and (host_type == "elegoolink" or not host):
+        # ElegooSlicer connects to this printer itself: read it through the slicer (elegoo.py).
+        return PrinterTarget(url="", source="profile", profile=name, host_type=host_type,
+                             printer_model=model, kind="elegoo")
+    if not host and host_type == "elegoolink":
+        raise PrinterError(
+            "unsupported_connection",
+            f"The printer profile '{name}' connects through ElegooSlicer's own printer link, which "
+            "this server can only read through an ElegooSlicer MCP build.",
+            hint="Use an ElegooSlicer MCP build that lists 'printers' in get_status capabilities.",
+            host_type="elegoolink")
     if not host:
         if (model or "").startswith("Bambu Lab"):
             raise PrinterError("unsupported_connection", "Bambu printers aren't supported yet (it's planned).",
