@@ -1487,7 +1487,10 @@ static nlohmann::json read_plate_for_print(int plate_index, const std::string &p
     PartPlate *plate = plates.get_plate(index);
     if (!plate->is_slice_result_valid())
         return {{"error", "not_sliced"}, {"plate", index}};
-    // The window's Print button needs this too (MainFrame::get_enable_print_status).
+    // Stricter than the window, on purpose: for an Elegoo printer the Print button sends G-code
+    // (eSendGcode in MainFrame::get_enable_print_status), which needs only a valid slice result,
+    // so the window would send a plate whose toolpath leaves the bed, whose G-code check failed
+    // or whose filament cannot print on this bed. The API does not send those.
     if (!plate->is_slice_result_ready_for_print())
         return {{"error", "not_printable"}, {"plate", index}, {"reason", not_printable_reason(plate->get_slice_result())}};
 

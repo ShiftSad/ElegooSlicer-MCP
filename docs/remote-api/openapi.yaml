@@ -1371,7 +1371,8 @@ paths:
         "409":
           description: |
             Nothing was sent. The plate: `plate_not_current`, `not_sliced`, `not_printable`
-            (+ `reason`: toolpath_outside | gcode_check_failed | filament_not_printable),
+            (+ `reason`: toolpath_outside | gcode_check_failed | filament_not_printable; stricter
+            than the window on purpose, whose Print button sends such a plate),
             `preview_only` (a G-code file is open). The printer: `printer_offline`,
             `printer_busy` (+ `status`; only idle or print_completed take a print),
             `upload_in_progress` (+ `upload_id`), `printer_model_mismatch` (+ `printer_model`,

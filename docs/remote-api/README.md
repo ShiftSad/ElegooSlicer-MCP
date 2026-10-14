@@ -852,9 +852,9 @@ Body, every field optional:
 Errors (nothing was sent):
 - the plate: `404 unknown_plate`, `400 bad_plate_index`, `409 plate_not_current`,
   `409 not_sliced`, `409 not_printable` + `reason` (`toolpath_outside |
-  gcode_check_failed | filament_not_printable`: the window's Print button is disabled
-  then too), `409 preview_only` (a G-code file is open: it was not sliced from this
-  project);
+  gcode_check_failed | filament_not_printable`; stricter than the window on purpose: its
+  Print button sends such a plate to an Elegoo printer, the API does not),
+  `409 preview_only` (a G-code file is open: it was not sliced from this project);
 - the printer: `501 unsupported_on_wan` (a cloud printer), `409 printer_busy` + `status`
   (only an `idle` or `print_completed` printer takes a print), `409 upload_in_progress` + `upload_id`, `409 printer_model_mismatch` +
   `printer_model`, `project_model` (the G-code is made for the profile's printer model; the
