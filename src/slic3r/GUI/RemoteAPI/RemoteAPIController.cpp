@@ -781,6 +781,15 @@ Response Controller::handle_put_config(const std::string &body)
                     }
                 }
                 std::string newv = tgt->cfg.opt_serialize(key);
+                // elegoo-mcp: keys ElegooSlicer marks read-only (nozzle_diameter,
+                // pellet_modded_printer, start_end_points) cannot be edited in its GUI
+                // either - the nozzle comes from picking the matching printer preset.
+                // Same rule as below: writing back the current value is not a change.
+                const ConfigOptionDef *def = print_config_def.get(key);
+                if (def != nullptr && def->readonly && newv != oldv) {
+                    errors[key] = "readonly_key";
+                    continue;
+                }
                 if (sensitive && !allow_sensitive && newv != oldv) {
                     // Judged on the re-serialized value, so writing back the current value
                     // (snapshot/restore callers) is not a change. The staged copy is thrown
@@ -1958,6 +1967,11 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
             // slicing need, so there is no write-back exemption here.
             if (!allow_sensitive && is_sensitive_config_key(key)) {
                 errors[key] = "blocked_by_remote_api_policy";
+                continue;
+            }
+            // elegoo-mcp: read-only keys (see handle_put_config) are never per-object.
+            if (print_config_def.get(key)->readonly) {
+                errors[key] = "readonly_key";
                 continue;
             }
             try {
