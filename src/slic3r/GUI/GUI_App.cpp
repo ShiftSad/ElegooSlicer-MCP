@@ -5928,10 +5928,14 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
     http.header("accept", "application/vnd.github.v3+json")
         .timeout_connect(5)
         .timeout_max(10)
-        .on_error([](std::string body, std::string error, unsigned http_status) {
+        .on_error([this, by_user](std::string body, std::string error, unsigned http_status) {
             (void)body;
             BOOST_LOG_TRIVIAL(error) << format("Error getting: `%1%`: HTTP %2%, %3%",
                                                "check_new_version_sf (ElegooSlicer-MCP releases)", http_status, error);
+            // elegoo-mcp: GitHub answers 404 while the repo has no published release yet.
+            // For Help > Check for Updates say "no new version" instead of nothing.
+            if (by_user != 0 && http_status == 404)
+                this->no_new_version();
         })
         .on_complete([this, by_user, parse_mcp_ordinal](std::string body, unsigned http_status) {
             if (http_status != 200)
@@ -5974,10 +5978,12 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
                 version_info.description   = root.get_optional<std::string>("body").get_value_or("");
                 version_info.force_upgrade = false;
 
+                // elegoo-mcp: the fork also did evt->SetInt(by_user) here. In ElegooSlicer a
+                // non-zero Int makes the handler call Hide() on the release dialog's "Skip this
+                // version" button, which Elegoo never creates (uninitialised pointer -> crash).
+                // skip_version is already resolved numerically above, so 0 loses nothing.
                 wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
                 evt->SetString(tag);
-                if (by_user != 0)
-                    evt->SetInt(by_user);
                 GUI::wxGetApp().QueueEvent(evt);
             } catch (...) {}
         });
