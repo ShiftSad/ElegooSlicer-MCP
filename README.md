@@ -1,26 +1,38 @@
-# OrcaSlicer MCP
+# OrcaSlicer MCP, ElegooSlicer edition
 
-[![PyPI](https://img.shields.io/pypi/v/orcaslicer-mcp)](https://pypi.org/project/orcaslicer-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/orcaslicer-mcp)](https://pypi.org/project/orcaslicer-mcp/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
-[![MCP Badge](https://lobehub.com/badge/mcp/maxellis-orcaslicer-mcp)](https://lobehub.com/mcp/maxellis-orcaslicer-mcp)
 [![Buy Me a Coffee](https://img.shields.io/badge/support-buy%20me%20a%20coffee-ffdd00)](https://buymeacoffee.com/maxellis)
 
 Let Claude work alongside you in a real, running OrcaSlicer. It loads models, arranges the plate, tunes settings, slices, and reads the result back as numbers you can question: which feature ate the print time, what a setting actually does, whether a profile breaks your printer's physics. Every change lands in the GUI while you watch, so the slicer stays yours and you get better at it as you go.
 
-This package is an [MCP](https://modelcontextprotocol.io) server: it bundles no model. It talks to OrcaSlicer, at an address you configure (localhost by default), and, when you use the printer tools, makes read-only requests to your 3D printer. It sends the printer no commands and uploads nothing to it. The model comes from your MCP client. If that client uses a hosted one, your conversation goes there as any chat does; your models, profiles, and gcode stay on the machine running the slicer. Point the client at a local model and nothing goes to a hosted service.
+This package is an [MCP](https://modelcontextprotocol.io) server: it bundles no model. It talks to OrcaSlicer, at an address you configure (localhost by default), and, when you use the printer tools, makes read-only requests to your 3D printer. It sends the printer no commands and uploads nothing to it itself; sending a print to an Elegoo printer goes through the ElegooSlicer MCP build, and only when you allow it there (see [Security](#security)). The model comes from your MCP client. If that client uses a hosted one, your conversation goes there as any chat does; your models, profiles, and gcode stay on the machine running the slicer. Point the client at a local model and nothing goes to a hosted service.
+
+## ElegooSlicer MCP
+
+This copy of the server is a fork of [OrcaSlicer MCP](https://github.com/MaxEllis/orcaslicer-mcp) by Max Ellis, kept in the `mcp/` folder of [ShiftSad/ElegooSlicer-MCP](https://github.com/ShiftSad/ElegooSlicer-MCP). That repository also holds **ElegooSlicer MCP**: ElegooSlicer v1.5.3.5 with the same token-authenticated local control API as the OrcaSlicer MCP build (ported from [MaxEllis/OrcaSlicer](https://github.com/MaxEllis/OrcaSlicer)), extended for Elegoo printers such as the Centauri Carbon 2 and its CANVAS multi-colour unit.
+
+- The slicing tools of OrcaSlicer MCP work with it unchanged, on the stock Elegoo profiles (checked with the Centauri Carbon 2 0.4 nozzle profile). The Klipper and OctoPrint printer tools do not reach Elegoo printers.
+- The tools for routes only ElegooSlicer MCP has check the capabilities `get_status` lists. On a build without one they say which capability is missing instead of guessing. See [Project tools (ElegooSlicer MCP)](#project-tools-elegooslicer-mcp).
+- It is not on PyPI, and the `orcaslicer-mcp` package there is the upstream server without these tools. Run it from git: `uvx --from "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp" orcaslicer-mcp` (uv needs git for that). The Claude Desktop extension does the same.
+- The module, the command and the environment variables keep their OrcaSlicer names (`orcaslicer_mcp`, `orcaslicer-mcp`, `ORCA_API_TOKEN`, ...), so fixes from upstream can still be merged.
+
+What the ElegooSlicer MCP build does on its own, outside this server:
+
+- Like the official app, ElegooSlicer collects usage telemetry and uploads it only while you are logged in to an Elegoo account. Loads, slices and uploads made through the API count like clicks in the window. Stay logged out to keep it on your machine.
+- It is not a LAN-only build: logged in, it talks to Elegoo's cloud as the official app does. Printers are reached over your local network; the Centauri Carbon 2's local API needs its LAN Only mode turned on.
+- The portable zip keeps its own data folder, so it does not share profiles and settings with an installed ElegooSlicer.
 
 ## What it can do
 
 ### Knowing what the settings mean
 
-An offline settings reference ships with the package, carrying the authoritative label, tooltip, type, range, enum, and default for each key, so `describe_setting`, `search_settings`, and `compare_settings` answer from OrcaSlicer's own source instead of guessing. `consult` composes curated slicing knowledge and your saved notes by topic, symptom, or goal.
+An offline settings reference ships with the package, carrying the authoritative label, tooltip, type, range, enum, and default for each key, so `describe_setting`, `search_settings`, and `compare_settings` answer from the slicer's own source (this fork bundles ElegooSlicer v1.5.3.5's `PrintConfig.cpp`) instead of guessing. `consult` composes curated slicing knowledge and your saved notes by topic, symptom, or goal.
 
 `check_profile_physics` is a deterministic gate. It overlays proposed changes on the live config, runs flow, temperature, geometry, and cooling math, then returns `ok`, `warnings`, or `blocked`. Accelerations your printer cannot reach and speeds past the flow ceiling get caught before they reach a print.
 
 ### Settings
 
-Read and write any of roughly 800 OrcaSlicer settings on the live config, for the whole plate or scoped narrower: `get_config`, `set_config`, `find_config_keys`, `set_layer_height`, `set_height_range` for a band of layers, and `set_object_config` for one object's overrides.
+Read and write any of roughly 850 settings on the live config, for the whole plate or scoped narrower: `get_config`, `set_config`, `find_config_keys`, `set_layer_height`, `set_height_range` for a band of layers, and `set_object_config` for one object's overrides.
 
 On a multi-filament setup, per-filament keys are read merged across every loaded slot but written one preset at a time, and selecting a preset discards unsaved overrides in every group. So make filament edits first and print edits second; [docs/order-of-operations.md](docs/order-of-operations.md) explains why and gives the sequence.
 
@@ -74,7 +86,7 @@ It only crowns a winner when one variant genuinely beats the rest on time, filam
 
 `list_plates`, `add_plate`, `select_plate`, `delete_plate` and `move_object_to_plate` build a multi-plate project the way the toolbar does: one part per plate, each sliced on its own. Slicing, G-code, renders and job status always act on the current plate, so select a plate before you slice it. `list_objects` reports the plate each object sits on. Keep `arrange_plate` away from a layout like this: OrcaSlicer's arrange packs every unlocked plate together again. These need fork v2.4.2-mcp.13 or later.
 
-### Parts, painting and saving (ElegooSlicer MCP)
+### Project tools (ElegooSlicer MCP)
 
 These tools need the ElegooSlicer MCP build, a port of the same API to ElegooSlicer. Each one checks for a capability that `get_status` lists, and on a build without it says which capability is missing.
 
@@ -122,7 +134,8 @@ The server finds the printer through OrcaSlicer. It reads the address from the a
 Stock OrcaSlicer ships without a control API, so a matching build does that half of the job.
 
 1. **The OrcaSlicer MCP build.** OrcaSlicer 2.3.2 with an embedded local API, token-authenticated and bound to localhost until you say otherwise. Get it from the [releases page](https://github.com/MaxEllis/OrcaSlicer/releases). If no binary is up for your platform yet, build the `remote-api` branch from source.
-2. **This package (`orcaslicer-mcp`).** The MCP server that connects your AI client to that build.
+   For Elegoo printers, use the **ElegooSlicer MCP build** from [ShiftSad/ElegooSlicer-MCP](https://github.com/ShiftSad/ElegooSlicer-MCP) instead; see [ElegooSlicer MCP](#elegooslicer-mcp).
+2. **This package (`orcaslicer-mcp`).** The MCP server that connects your AI client to that build. Run this fork from git, not from PyPI.
 
 > **Updating:** take new builds from the [releases page](https://github.com/MaxEllis/OrcaSlicer/releases), never from inside the app. The in-app updater offers *stock* OrcaSlicer, which drops the control API. Builds mcp.2 and later turn that updater off for you. On an older build, click **Skip this Version** if a "new version available" prompt appears.
 
@@ -130,11 +143,11 @@ Stock OrcaSlicer ships without a control API, so a matching build does that half
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first, because it provides the `uvx` command that runs the server. One line does it: `curl -LsSf https://astral.sh/uv/install.sh | sh` on macOS and Linux, or `irm https://astral.sh/uv/install.ps1 | iex` in PowerShell on Windows.
 
-1. Install the OrcaSlicer MCP build, launch it, and finish the one-time setup by picking your printer. A fresh install may show a **“Bambu Network Plug-in Required”** dialog. Click **Skip for Now**, since that plug-in only serves Bambu cloud printing. The control API starts once setup is finished.
+1. Install the OrcaSlicer MCP build (or the ElegooSlicer MCP build), launch it, and finish the one-time setup by picking your printer. A fresh install may show a **“Bambu Network Plug-in Required”** dialog. Click **Skip for Now**, since that plug-in only serves Bambu cloud printing. The control API starts once setup is finished.
 2. Open **Preferences** (Ctrl+P), go to **Remote API**, and tick **Enable Remote API**. Copy the token shown on that page. Access stays localhost-only unless you also switch on "Allow LAN access".
 3. Connect your MCP client.
 
-    **Claude Desktop:** download `orcaslicer-mcp-<version>.mcpb` from the [releases page](https://github.com/MaxEllis/orcaslicer-mcp/releases/latest) and open the file. Claude Desktop offers to install it. Open the extension's settings afterwards, paste the token from step 2, and enable it.
+    **Claude Desktop:** download `elegooslicer-mcp-<version>.mcpb` from the [ElegooSlicer-MCP releases](https://github.com/ShiftSad/ElegooSlicer-MCP/releases) and open the file. It runs the server from git, so git must be installed. Claude Desktop offers to install it. Open the extension's settings afterwards, paste the token from step 2, and enable it.
 
     > Ignore any guide that tells you to hand-edit `claude_desktop_config.json`. Current Claude Desktop builds rewrite that file themselves and drop added `mcpServers` entries, so the edit will not stick. The extension leaves the file alone and finds `uvx` by itself.
 
@@ -145,7 +158,7 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first, bec
       "mcpServers": {
         "orcaslicer": {
           "command": "uvx",
-          "args": ["orcaslicer-mcp"],
+          "args": ["--from", "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp", "orcaslicer-mcp"],
           "env": {
             "ORCA_API_TOKEN": "<token from Preferences>"
           }
@@ -160,10 +173,10 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first, bec
     >
     > ```powershell
     > python -m venv "$env:USERPROFILE\.venvs\orcaslicer-mcp"
-    > & "$env:USERPROFILE\.venvs\orcaslicer-mcp\Scripts\python" -m pip install orcaslicer-mcp
+    > & "$env:USERPROFILE\.venvs\orcaslicer-mcp\Scripts\python" -m pip install "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp"
     > ```
     >
-    > Then set `"command"` to `C:\Users\<you>\.venvs\orcaslicer-mcp\Scripts\orcaslicer-mcp.exe` with no `args`. Upgrade later with the same pip command plus `-U`.
+    > Then set `"command"` to `C:\Users\<you>\.venvs\orcaslicer-mcp\Scripts\orcaslicer-mcp.exe` with no `args`. Upgrade later with the same pip command plus `-U --force-reinstall`.
 
     > **macOS note for GUI clients other than Claude Desktop:** apps launched from the Dock do not inherit your terminal's PATH, so `"command": "uvx"` can fail silently. Run `which uvx` in Terminal, then paste the full path it prints into `"command"`. It is usually `~/.local/bin/uvx`.
 
@@ -173,12 +186,21 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first, bec
 
 - The control API binds **127.0.0.1 only** by default. LAN access is an explicit opt-in in Preferences.
 - Every request must carry the API token. OrcaSlicer generates it on first run and can regenerate it at any time.
-- The MCP server runs as a local stdio process. Its only connections are to OrcaSlicer and, when you use the printer tools, read-only HTTP GET requests to your printer at the address in OrcaSlicer's active printer profile (or `ORCA_PRINTER_URL`). It sends the printer no commands and uploads nothing to it. No telemetry.
+- The MCP server runs as a local stdio process. Its only connections are to OrcaSlicer and, when you use the printer tools, read-only HTTP GET requests to your printer at the address in OrcaSlicer's active printer profile (or `ORCA_PRINTER_URL`). It sends the printer no commands and uploads nothing to it itself; on ElegooSlicer MCP, prints are sent by the slicer under the rules below. No telemetry.
 - The MCP server refuses to change config keys that run code or drive the printer directly. They are `post_process`, every `*_gcode` template, `printer_model`, `printer_technology`, `filename_format`, the printer connection settings (`print_host`, `printhost_*`, `host_type`, `printer_agent` and the rest of OrcaSlicer's physical-printer keys), and ElegooSlicer's `support_mms` and `support_wan_network`, which switch the CANVAS handling and the cloud device path. The list lives in `src/orcaslicer_mcp/guard.py`. An assistant holding the API token can be steered by text it reads, such as model names, G-code or web pages. Since `post_process` runs shell commands after export, these stay a human decision in the OrcaSlicer GUI.
 - Writing a key back to the value it already has is allowed, so restores keep working. The host address and its credentials are the exception. OrcaSlicer never reports their current value, so any write to them is refused. `edit_preset` runs the check before it selects the preset, which means a refused edit leaves your unsaved changes alone.
 - To let the MCP write specific keys anyway, list them in `ORCA_MCP_ALLOW_KEYS`, comma separated. Wildcards work, for example `*_gcode`. The Claude Desktop extension exposes it as a setting. At startup the server logs any name that matches no protected key, which is usually a typo.
 - This check covers the MCP server's own tools only. An assistant that can also run shell commands could read the token and call OrcaSlicer directly. OrcaSlicer MCP v2.4.2-mcp.10 and later apply the same rule inside the slicer, and it stays on until you tick **Allow script, G-code and connection edits** in Preferences → Remote API. On those builds the assistant needs both: that box ticked and the keys listed in `ORCA_MCP_ALLOW_KEYS`.
 - `get_preset_config` hides `printhost_apikey`, `printhost_user` and `printhost_password`. It also hides the `user:password@` part of `print_host` and `print_host_webui`, cutting at the last `@`, so a password that contains `/`, `@`, `?`, `#` or a space is hidden too. A URL with an `@` in its path loses the part before that `@` as well, because it looks the same as a password with a `/` in it. A value carrying the `<redacted>` placeholder is never written back.
+
+### ElegooSlicer MCP: printers and print control
+
+- The printer routes answer with a fixed list of fields, built one by one. Your printers' passwords, tokens, access codes, PIN codes, user names, serial numbers, mainboard ids and web addresses never appear in a reply or in a log.
+- Sending and controlling prints is **off by default** in the slicer: Preferences → Remote API → **Allow sending and controlling prints**. While it is off, every print route answers `403 print_control_disabled`, whatever the MCP server or anything else holding the token asks.
+- A print takes two steps. `prepare_print` checks that the plate is sliced, that the printer is connected and idle, and that every filament has a CANVAS tray, then returns a one-line summary (printer, plate, time, filament, bed side, tray mapping) and a plan id. The plan expires after 5 minutes, or as soon as the slice, the settings or the plate change. `start_print` then needs your confirmation: through the client's own confirmation prompt when the client supports one, otherwise the assistant has to pass `user_confirmed=True`, which its instructions allow only after you said yes in the conversation. `stop_print` asks the same way.
+- The slicer only sends the G-code it sliced itself for that plate. No route accepts a file or a path from the client, because G-code can damage a printer.
+- Every print action shows a notification in the slicer window naming the printer and the file, even with the Remote API notifications turned off.
+- `support_mms` and `support_wan_network`, the switches that decide how and where ElegooSlicer sends prints, are refused like the connection keys above.
 
 ## Development
 
@@ -203,7 +225,7 @@ The server talks to OrcaSlicer's local API at the address you configure, localho
 
 ## Status
 
-Early public release, soft launch. The server has a test suite of more than 500 unit tests and gets exercised on real print jobs. Prebuilt OrcaSlicer MCP builds cover Windows, macOS, and Linux on the [releases page](https://github.com/MaxEllis/OrcaSlicer/releases). Issues and reports are welcome.
+Early public release, soft launch. The server has a test suite of more than 500 unit tests and gets exercised on real print jobs. Prebuilt OrcaSlicer MCP builds cover Windows, macOS, and Linux on the [releases page](https://github.com/MaxEllis/OrcaSlicer/releases). The ElegooSlicer edition is built for Windows from [ShiftSad/ElegooSlicer-MCP](https://github.com/ShiftSad/ElegooSlicer-MCP). Issues and reports are welcome.
 
 ## Support
 
@@ -213,6 +235,5 @@ The project is free and stays that way. If it saves you time and you feel like s
 
 ## License
 
-AGPL-3.0, matching OrcaSlicer, from whose source the bundled settings schema derives. See [LICENSE](LICENSE).
+AGPL-3.0, matching OrcaSlicer and ElegooSlicer; the bundled settings schema derives from ElegooSlicer's source. See [LICENSE](LICENSE).
 
-<!-- mcp-name: io.github.MaxEllis/orcaslicer-mcp -->
