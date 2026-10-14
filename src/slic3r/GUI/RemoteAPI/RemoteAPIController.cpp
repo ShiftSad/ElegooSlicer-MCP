@@ -1453,6 +1453,10 @@ Response Controller::handle_save_preset(const std::string &body)
                         type_s == "printer"  ? Preset::TYPE_PRINTER : Preset::TYPE_INVALID;
     if (type == Preset::TYPE_INVALID)
         return { 400, {{"error", "unknown_type"}} };
+    // elegoo-mcp (D8): the answer to the window's "Temperature Safety Check" question.
+    if (in.contains("ignore_temperature_check") && !in["ignore_temperature_check"].is_boolean())
+        return { 400, {{"error", "ignore_temperature_check_must_be_boolean"}} };
+    const bool ignore_temperature_check = in.value("ignore_temperature_check", false);
     // SavePresetDialog normally enforces the name rules; mirror them headless.
     while (!name.empty() && (name.front() == ' ' || name.back() == ' ')) {
         if (name.front() == ' ') name.erase(name.begin());
@@ -1465,7 +1469,7 @@ Response Controller::handle_save_preset(const std::string &body)
     if (name.empty() || name == "." || name == ".." || name.size() > 128 || bad_char)
         return { 400, {{"error", "invalid_name"}} };
 
-    nlohmann::json r = run_on_ui([type, name, detach]() -> nlohmann::json {
+    nlohmann::json r = run_on_ui([type, name, detach, ignore_temperature_check]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;
         PresetCollection &presets = type == Preset::TYPE_PRINT    ? bundle->prints :
                                     type == Preset::TYPE_FILAMENT ? bundle->filaments :
@@ -1479,7 +1483,16 @@ Response Controller::handle_save_preset(const std::string &body)
         // elegoo-mcp: saving under a new name renames the selected preset, and the
         // G-code names it (print_settings_id...), so the plates' G-code is stale then.
         const DynamicPrintConfig config_before = bundle->full_config();
+        // elegoo-mcp (D8): a filament preset whose first-layer and other-layer temperatures
+        // differ a lot makes the save ask "Continue anyway?" (Tab::validate_filament_
+        // temperature_pairs). The API answers Yes only when the request said so.
+        DialogLog *dialogs = current_dialog_log();
+        if (dialogs != nullptr && ignore_temperature_check)
+            dialogs->answer_yes = true;
         tab->save_preset(name, detach, /*save_to_project=*/false);
+        if (dialogs != nullptr && !dialogs->refused_question.empty()) // answered No: nothing was saved
+            return {{"error", "temperature_safety_check"}, {"detail", dialogs->refused_question},
+                    {"hint", "fix the temperatures (PUT /config), or pass \"ignore_temperature_check\": true to save anyway"}};
         invalidate_all_plates_if_changed(config_before);
         // save_preset returns void; confirm the preset actually landed.
         const Preset *saved = presets.find_preset(name, false);
@@ -1491,6 +1504,7 @@ Response Controller::handle_save_preset(const std::string &body)
             api_notify("Can't overwrite built-in " + type_s + " preset '" + name + "'", true);
             return { 409, r };
         }
+        if (r["error"] == "temperature_safety_check") return { 422, r }; // elegoo-mcp (D8)
         return { 500, r };
     }
     api_notify((r["created"].get<bool>() ? "Saved new " : "Updated ") + type_s + " preset '" + name + "'");

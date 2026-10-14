@@ -7343,6 +7343,12 @@ bool Tab::validate_filament_temperature_pairs()
     msg_text += _L("\nYou can go back to edit values, or continue if this is intentional.");
     msg_text += _L("\n\nContinue anyway?");
 
+    // elegoo-mcp (D8): a Remote API save (POST /preset/save) cannot answer. It continues
+    // only when the request said so (ignore_temperature_check); otherwise the save stops
+    // here, as with "Back", and the API refuses with this text (RemoteAPI/RemoteAPIDialogs.hpp).
+    if (RemoteAPI::api_skips_dialogs())
+        return RemoteAPI::api_question(into_u8(msg_text));
+
     RichMessageDialog dialog(parent(), msg_text, _L("Temperature Safety Check"), wxYES | wxNO | wxICON_WARNING);
     dialog.SetButtonLabel(wxID_YES, _L("Continue"), true);
     dialog.SetButtonLabel(wxID_NO, _L("Back"));
