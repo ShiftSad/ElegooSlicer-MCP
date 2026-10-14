@@ -70,3 +70,100 @@ def test_multi_instance_flagged_unsupported():
     o = out["objects"][0]
     assert o.get("supported") is False
     assert "note" in o
+
+
+# --- plates and per-object brim (Elegoo feedback: other plates and object brim ignored) ---
+
+def _plates(*origins):
+    return {"plates": [{"index": i, "origin": [x, y, 0]} for i, (x, y) in enumerate(origins)]}
+
+
+def _obj(oid, plate, bbox_min, bbox_max, config=None):
+    o = {"id": oid, "name": f"part{oid}", "instances": 1, "plate": plate,
+         "size_mm": [bbox_max[0] - bbox_min[0], bbox_max[1] - bbox_min[1], 10],
+         "transform": {"offset": [0, 0, 0]},
+         "bbox_min": [bbox_min[0], bbox_min[1], 0], "bbox_max": [bbox_max[0], bbox_max[1], 10]}
+    if config is not None:
+        o["config"] = config
+    return o
+
+
+NO_RING = {"printable_area": "0x0,256x0,256x256,0x256", "brim_type": "no_brim", "skirt_loops": "0"}
+
+
+def test_object_on_second_plate_is_checked_against_that_plate():
+    # Plate 2 starts at x=281. A part at x 300..340 is well inside it, but would be
+    # "off the bed" if judged against plate 1 (0..256).
+    objs = {"objects": [_obj(1, 1, [300, 50], [340, 90], config={})]}
+    out = placement.check_placement(objs, NO_RING, _plates((0, 0), (281, 0)))
+    o = out["objects"][0]
+    assert o["plate"] == 1
+    assert o["fits"] is True
+    assert o["bed"] == {"min": [281.0, 0.0], "max": [537.0, 256.0]}
+    assert math.isclose(o["clearances"]["left"], 19.0)
+    assert out["all_fit"] is True
+    assert "notes" not in out
+
+
+def test_object_over_its_own_plate_edge_is_flagged():
+    objs = {"objects": [_obj(1, 1, [520, 50], [560, 90], config={})]}
+    out = placement.check_placement(objs, NO_RING, _plates((0, 0), (281, 0)))
+    o = out["objects"][0]
+    assert o["fits"] is False
+    assert math.isclose(o["overflow_mm"], 23.0)
+
+
+def test_object_off_every_plate_does_not_fit():
+    objs = {"objects": [_obj(1, -1, [-100, 50], [-60, 90], config={})]}
+    out = placement.check_placement(objs, NO_RING, _plates((0, 0)))
+    o = out["objects"][0]
+    assert o["fits"] is False
+    assert "off every plate" in o["note"]
+    assert out["all_fit"] is False
+
+
+def test_per_object_brim_override_widens_the_ring():
+    # The preset has no brim, the object asks for a 20 mm one: 10 mm from the edge is not enough.
+    objs = {"objects": [_obj(1, 0, [10, 100], [50, 140],
+                             config={"brim_type": "outer_only", "brim_width": "20",
+                                     "brim_object_gap": "0"})]}
+    out = placement.check_placement(objs, NO_RING, _plates((0, 0)))
+    o = out["objects"][0]
+    assert o["brim_from"] == "object"
+    assert math.isclose(o["ring_mm"], 20.0)
+    assert o["fits"] is False
+    assert math.isclose(o["clearances"]["left"], -10.0)
+    assert out["ring_mm"] == 0.0  # the preset's own ring is unchanged
+
+
+def test_per_object_no_brim_overrides_the_preset_brim():
+    cfg = dict(NO_RING, brim_type="outer_only", brim_width="15", brim_object_gap="0")
+    objs = {"objects": [_obj(1, 0, [10, 100], [50, 140], config={"brim_type": "no_brim"}),
+                        _obj(2, 0, [100, 100], [140, 140], config={})]}
+    out = placement.check_placement(objs, cfg, _plates((0, 0)))
+    own, preset = out["objects"]
+    assert own["brim_from"] == "object" and own["ring_mm"] == 0.0 and own["fits"] is True
+    assert preset["brim_from"] == "preset" and math.isclose(preset["ring_mm"], 15.0)
+
+
+def test_without_plates_falls_back_to_first_plate_and_says_so():
+    objs = {"objects": [_obj(1, 1, [300, 50], [340, 90], config={})]}
+    out = placement.check_placement(objs, NO_RING)
+    assert out["objects"][0]["fits"] is False
+    assert "plate" not in out["objects"][0]
+    assert any("plate positions not available" in n for n in out["notes"])
+
+
+def test_missing_object_config_is_noted():
+    objs = {"objects": [_obj(1, 0, [10, 10], [50, 50])]}
+    out = placement.check_placement(objs, NO_RING, _plates((0, 0)))
+    assert out["objects"][0]["brim_from"] == "preset"
+    assert any("per-object config not available" in n for n in out["notes"])
+
+
+def test_bbox_is_preferred_over_offset():
+    # offset is the mesh origin; after a rotation it is not the bbox centre.
+    o = _obj(1, 0, [200, 10], [250, 60], config={})
+    o["transform"]["offset"] = [10, 10, 0]
+    out = placement.check_placement({"objects": [o]}, NO_RING, _plates((0, 0)))
+    assert out["objects"][0]["expanded_bbox"] == {"min": [200.0, 10.0], "max": [250.0, 60.0]}

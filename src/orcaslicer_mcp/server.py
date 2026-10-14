@@ -690,14 +690,23 @@ async def check_placement() -> dict:
     area. Returns per-object fit, expanded first-layer bbox, per-edge clearance (mm), and
     overflow.
 
-    APPROXIMATE: uses the object footprint from size+offset, not the sliced toolpath (skirt
+    Each object is checked against the plate it sits on (its own plate's origin, from
+    list_plates), and its brim ring uses its own brim_type/brim_width/brim_object_gap
+    overrides when it has them, else the print preset's. `notes` says when the slicer did not
+    report the plate positions or per-object settings, so the estimate fell back.
+
+    APPROXIMATE: uses the object's bounding box footprint, not the sliced toolpath (skirt
     arcs, half-line-width, travel/wipe excluded); single-instance objects only. At ~mm
     margins the true verdict needs get_slice_warnings - this is a fast first-pass."""
     try:
         async with _client() as c:
             objs = await c.get_objects()
             cfg = await c.get_config(placement.CFG_KEYS)
-        return placement.check_placement(objs, cfg)
+            try:
+                plates = await c.get_plates()
+            except NotFound:
+                plates = None  # build without the plates API; placement notes the fallback
+        return placement.check_placement(objs, cfg, plates)
     except ApiError as e:
         return _m4b_err(e)
 
