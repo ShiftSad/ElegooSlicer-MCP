@@ -771,8 +771,8 @@ routes move a real machine, so they work under these rules:
   selecting another plate expires it (`410 plan_expired`). An MCP client shows the summary
   to the user and starts the print only after they confirm.
 - **Always visible.** Every action shows a notification in ElegooSlicer naming the printer
-  and the file, whatever "Notify on API changes" says. A request refused because the
-  setting is off shows a warning too.
+  and the file, whatever "Notify on API changes" says. An action (not a `GET`) refused
+  because the setting is off shows a warning too.
 - **Stopping is explicit:** `POST .../stop` needs the body `{"confirm": "stop"}`.
 - **First window only.** With several ElegooSlicer windows open, only the first one is
   connected to the printers; the others answer `409 {"error": "secondary_instance", "hint":
@@ -858,7 +858,8 @@ Errors (nothing was sent):
 - the filaments: `409 canvas_disconnected | canvas_unsupported` + `filaments` (the plate
   prints with several filaments and the printer has no connected CANVAS; the Print dialog
   would send them without a mapping), `422 mapping_incomplete` + `issues: [{slot, issues}]`
-  + `filaments` (a slot has no tray: `no_tray`, its tray is not ready: `tray_not_ready`, or
+  + `filaments` (a slot has no tray: `no_tray`, its tray is not ready or reports no colour:
+  `tray_not_ready`, or
   its tray holds another filament type: `type_mismatch`; the Print dialog refuses a tray of
   another type only when the filament name differs too). Load the filament, sync the CANVAS
   (`POST .../canvas/sync`) or pick trays with `mapping`. `422 bad_mapping` (unknown slot or
