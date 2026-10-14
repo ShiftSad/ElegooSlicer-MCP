@@ -901,7 +901,8 @@ async def list_filament_slots() -> dict:
     {"count", "max", "slots": [{slot, preset, type, color, used_on_current_plate}]}: how many
     slots there are, the most this printer allows, and per slot its number (1-based), filament
     preset, filament type (PLA, PETG, ...), colour ('#rrggbb') and whether something on the
-    current plate prints with it. Read-only.
+    current plate prints with it (an object, part, height range, colour paint or a filament
+    change at a height). Read-only.
 
     Call it to pick a slot for set_part_filament, paint_region(layer='color') or
     add_layer_change, and before set_filament_count to see which slots are in use. Needs
@@ -922,19 +923,22 @@ async def set_filament_slot(
         "printer (incompatible_preset otherwise)."))] = None,
     color: Annotated[str | None, Field(description=(
         "The slot's colour as '#rrggbb', e.g. '#1e90ff'. It is the colour the preview shows and "
-        "the printer's filament mapping compares; it does not change the preset."))] = None,
+        "the printer's filament mapping compares; it does not change the preset. A new preset "
+        "brings its own default colour unless color is given too."))] = None,
 ) -> dict:
     """Change one filament slot: load another filament preset into it, as picking one in the
     sidebar's filament list does, and/or set its colour. Returns the slot as
     list_filament_slots shows it.
 
-    Give preset, color or both. Every plate is left unsliced, so re-slice afterwards. When the
-    preference to auto-calculate flushing volumes is on, the slicer recalculates the flushing
-    between slots, as the window does. Errors: unknown_slot (404); unknown_preset,
-    incompatible_preset or bad_color (422). Needs ElegooSlicer MCP ('filaments' in get_status
-    capabilities)."""
+    Give preset, color or both. Every plate is left unsliced, so re-slice afterwards. The
+    flushing volumes are recalculated as the window's auto-flush preference says (after a colour
+    change unless it is disabled, after a preset change only when it is 'all'). Errors:
+    unknown_slot (404, with count); unknown_preset, incompatible_preset or bad_color (422);
+    unsaved_filament_changes (409: with a single slot the Filament tab switches too, and it has
+    unsaved edits; save or discard them in the window first) or preview_only (409: a G-code file
+    is open). Needs ElegooSlicer MCP ('filaments' in get_status capabilities)."""
     if preset is None and color is None:
-        return {"error": "nothing_to_change", "hint": "Pass preset, color or both."}
+        return {"error": "missing_fields", "hint": "Pass preset, color or both."}
     if color is not None and not _HEX_COLOR.match(color):
         return {"error": "bad_color", "hint": "Pass the colour as '#rrggbb', e.g. '#1e90ff'."}
     try:
@@ -950,18 +954,25 @@ async def set_filament_count(
         "How many filament slots the project should have: from 1 up to the max that "
         "list_filament_slots reports."))],
     force: Annotated[bool, Field(description=(
-        "Remove slots even when objects or parts print with them. Those then fall back as in "
-        "the window: an object to slot 1, a part to its object's slot. Leave it false to get "
-        "slot_in_use and the list of what uses them instead."))] = False,
+        "Remove slots even when something prints with them, as the window's delete does: "
+        "objects and parts on a removed slot move to slot 1, support and per-feature filament "
+        "settings on it go back to default, colour paint in a removed colour is erased and "
+        "filament changes at a height to it are dropped. Leave it false to get slot_in_use and "
+        "the list of what uses them instead."))] = False,
 ) -> dict:
     """Set how many filament slots the project has, as the plus and minus buttons of the
     sidebar's filament list do: new slots are added at the end, and removing takes slots off the
     end (the highest numbers). Returns the slots as list_filament_slots does.
 
-    Removing a slot that an object or part uses is refused with slot_in_use (409) and used_by,
-    the objects and parts that use it, unless force=True. A count outside 1..max is bad_count
-    (422). New slots start with the slicer's default filament; set them with set_filament_slot.
-    Needs ElegooSlicer MCP ('filaments' in get_status capabilities)."""
+    Removing a slot that something prints with is refused with slot_in_use (409) and used_by:
+    each entry names the object (object_id, name), the part (volume_id) when it is one, the slot
+    and the setting that uses it (extruder, support_filament, outer_wall_filament_id, ...,
+    color_paint), unless force=True. A new slot copies the last slot's preset and gets the next
+    colour of the window's palette; change it with set_filament_slot. Errors: bad_count (422: a
+    count outside 1..max, or a printer whose preset has one slot per extruder), slot_in_use,
+    unsaved_filament_changes (409: the Filament tab has unsaved edits to a preset only a removed
+    slot uses) or preview_only (409). Needs ElegooSlicer MCP ('filaments' in get_status
+    capabilities)."""
     try:
         async with _client() as c:
             return await c.set_filament_count(count, force)

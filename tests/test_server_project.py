@@ -77,7 +77,7 @@ async def test_set_filament_slot_color_only(monkeypatch):
 async def test_set_filament_slot_refuses_nothing_and_a_bad_color_locally(monkeypatch):
     _env(monkeypatch)
     route = respx.put(f"{BASE}/filaments/1").mock(return_value=httpx.Response(200, json={}))
-    assert (await srv.set_filament_slot(1))["error"] == "nothing_to_change"
+    assert (await srv.set_filament_slot(1))["error"] == "missing_fields"
     for bad in ("red", "#ff00", "ff0000", "#gg0000", "#ff0000aa"):
         assert (await srv.set_filament_slot(1, color=bad))["error"] == "bad_color", bad
     assert not route.called
