@@ -342,3 +342,23 @@ async def test_paint_clear_with_a_box_is_refused(monkeypatch):
     out = await srv.paint_region(42, "support", box_min=[0, 0, 0], box_max=[10, 10, 10], clear=True)
     assert out["error"] == "clear_takes_no_box"
     assert not route.called
+
+
+@respx.mock
+async def test_paint_overhang_angle_outside_0_to_90_is_refused(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={}))
+    for angle in (-5, 95):
+        out = await srv.paint_region(42, "support", state="enforce", max_overhang_deg=angle)
+        assert out["error"] == "bad_overhang"
+    assert not route.called
+
+
+@respx.mock
+async def test_paint_overhang_angle_0_and_90_are_sent(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={
+        "painted_triangles": 3, "layer": "support"}))
+    for angle in (0, 90):
+        await srv.paint_region(42, "support", state="enforce", max_overhang_deg=angle)
+        assert _sent(route)["max_overhang_deg"] == angle

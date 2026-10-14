@@ -758,10 +758,13 @@ async def paint_region(
     box_max: Annotated[list[float] | None, Field(description=(
         "[x, y, z] in mm, the high corner of the box to paint."))] = None,
     max_overhang_deg: Annotated[float | None, Field(description=(
-        "Only paint faces that point down: a face counts when its normal points at least this "
-        "many degrees below horizontal. 90 = only flat undersides; 45 = overhangs of 45 "
-        "degrees or more from vertical, the usual rule for needing support; 0 = every "
-        "downward-facing face. Leave it out to paint every face in the box."))] = None,
+        "0 to 90. Only paint faces that point down: a face is painted when its world-space "
+        "unit normal n has n.z < 0 and -n.z >= sin(max_overhang_deg), i.e. the normal points "
+        "strictly downward and at least this many degrees below horizontal. 90 = only flat "
+        "undersides; 45 = overhangs of 45 degrees or more from vertical, the usual rule for "
+        "needing support; 0 = every face that points down at all (vertical walls, whose "
+        "normal is horizontal, are never included). Leave it out to paint every face in the "
+        "box."))] = None,
     clear: Annotated[bool, Field(description=(
         "True: erase this layer's paint on the whole object. Takes no box; to erase only "
         "inside a box, use state='none' with box_min/box_max."))] = False,
@@ -777,7 +780,7 @@ async def paint_region(
     painted_triangles 0 means no face matched: widen the box or the angle. Painted support
     is used when support is on (enable_support); with a '(manual)' support_type only painted
     areas get support. The paint is saved with the project, and the object's plate is left
-    unsliced, so re-slice. Errors: bad_layer, bad_state or bad_slot (422), unknown_object.
+    unsliced, so re-slice. Errors: bad_layer, bad_state, bad_slot or bad_overhang (422), unknown_object.
     Needs ElegooSlicer MCP ('paint' in get_status capabilities)."""
     if (box_min is None) != (box_max is None):
         return {"error": "box_needs_both_corners",
@@ -789,6 +792,11 @@ async def paint_region(
         return {"error": "clear_takes_no_box",
                 "hint": "clear=True erases the whole object's paint on this layer. To erase "
                         "only inside the box, pass state='none' with box_min/box_max instead."}
+    # An angle below horizontal only means something from 0 to 90 degrees.
+    if max_overhang_deg is not None and not 0 <= max_overhang_deg <= 90:
+        return {"error": "bad_overhang",
+                "hint": "max_overhang_deg is degrees below horizontal, from 0 to 90 "
+                        "(45 = the usual overhangs that need support)."}
     body: dict = {"layer": layer}
     if state is not None:
         body["state"] = state
