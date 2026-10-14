@@ -196,8 +196,11 @@ void Server::start(const Config &cfg)
     } catch (const std::exception &e) {
         BOOST_LOG_TRIVIAL(error) << "remote-api: failed to bind port " << m_cfg.port
                                  << ": " << e.what();
-        m_ioc.reset();
+        // elegoo-mcp: destroy the acceptor BEFORE its io_context - the other order frees
+        // the Asio socket service first and ~acceptor then touches freed memory (crash).
+        // With SO_EXCLUSIVEADDRUSE this is the normal path for a second instance.
         m_acceptor.reset();
+        m_ioc.reset();
         return; // disabled for this run; the Preferences page shows "failed" via running()
     }
     m_running = true;
@@ -227,12 +230,20 @@ void Server::stop()
     m_running = false;
     if (m_ioc) m_ioc->stop();
     if (m_thread.joinable()) m_thread.join();
+    // elegoo-mcp: release the WebSocket sessions and the acceptor BEFORE the io_context.
+    // They own sockets/timers registered with its services; destroying the io_context
+    // first made their destructors use freed memory (crash when Preferences closes,
+    // the token is regenerated or the app quits while an /events client is connected).
+    // The sessions are moved out so their destructors do not run under m_ws_mutex.
+    {
+        std::set<std::shared_ptr<WsSession>> sessions;
+        {
+            std::lock_guard<std::mutex> lk(m_ws_mutex);
+            sessions.swap(m_ws_sessions);
+        }
+    }
     m_acceptor.reset();
     m_ioc.reset();
-    {
-        std::lock_guard<std::mutex> lk(m_ws_mutex);
-        m_ws_sessions.clear();
-    }
     BOOST_LOG_TRIVIAL(info) << "remote-api: stopped";
 }
 
