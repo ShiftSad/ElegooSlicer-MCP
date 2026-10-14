@@ -197,10 +197,13 @@ async def test_set_part_config(monkeypatch):
 @respx.mock
 async def test_set_part_config_invalid_key_422(monkeypatch):
     _env(monkeypatch)
+    # The real reply of a refused config write, as PUT /objects/{id}/config sends it: no
+    # "error" token, only the per-key reasons.
     respx.put(f"{BASE}/objects/42/volumes/901/config").mock(return_value=httpx.Response(422, json={
-        "error": "invalid_keys", "errors": {"no_such_key": "unknown_key"}}))
+        "applied": [], "errors": {"no_such_key": "unknown_key"}}))
     out = await srv.set_part_config(42, 901, {"no_such_key": 1})
-    assert out["error"] == "invalid_keys" and out["errors"] == {"no_such_key": "unknown_key"}
+    assert out["errors"] == {"no_such_key": "unknown_key"}
+    assert out["error"] == "HTTP 422"
 
 
 @respx.mock
