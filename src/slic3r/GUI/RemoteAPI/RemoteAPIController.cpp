@@ -55,7 +55,7 @@ Controller::~Controller() { g_controller = nullptr; }
 // to the GUI thread via CallAfter, so it is safe from io threads and from inside
 // run_on_ui alike. Deliberately NOT used for slice / arrange / orient - Orca's
 // own progress + result notifications already cover those (avoid double-up).
-static void api_notify(const std::string &text, bool warning = false)
+void api_notify(const std::string &text, bool warning) // elegoo-mcp: shared, see the header
 {
     wxGetApp().CallAfter([text, warning]() {
         auto *ac = wxGetApp().app_config;
@@ -116,7 +116,6 @@ static std::string api_config_unit(const std::string &key)
     return (d != nullptr && !d->sidetext.empty()) ? (std::string(" ") + d->sidetext) : std::string();
 }
 
-static int find_object_index(const Model &model, uint64_t id); // defined with the M4b object handlers below
 static bool sensitive_writes_allowed(); // defined with the sensitive-key policy below
 
 // elegoo-mcp: slice validity after an API edit.
@@ -1903,7 +1902,7 @@ Response Controller::handle_get_objects()
 }
 
 
-static int find_object_index(const Model &model, uint64_t id)
+int find_object_index(const Model &model, uint64_t id) // elegoo-mcp: shared, see the header
 {
     for (size_t i = 0; i < model.objects.size(); ++i)
         if ((uint64_t) model.objects[i]->id().id == id)
@@ -2120,6 +2119,10 @@ Response Controller::handle_orient()
         // like the GUI's own orient button does, or this call would quietly
         // do nothing.
         plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
+        // elegoo-mcp: the job orients only the 3D selection when there is one
+        // (OrientJob::prepare_selected). "All objects" needs an empty selection, also
+        // after POST /orient {"object_id"} left that object selected.
+        plater->deselect_all();
         plater->orient();
         return {{"started", true}};
     });
@@ -2454,7 +2457,12 @@ Response Controller::dispatch(const Request &req)
         if (is("GET",  "/api/v1/plate/render")) return handle_plate_render(t);
         if (is("GET",  "/api/v1/presets"))      return handle_get_presets();
         if (is("POST", "/api/v1/arrange"))      return handle_arrange();
-        if (is("POST", "/api/v1/orient"))       return handle_orient();
+        if (is("POST", "/api/v1/orient")) {
+            // elegoo-mcp: an optional body {"object_id": id} orients that object only.
+            if (req.body.find_first_not_of(" \t\r\n") == std::string::npos) return handle_orient();
+            try { return handle_orient_object(req.body); }
+            catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
+        }
         if (is("GET",  "/api/v1/jobs/status"))  return handle_jobs_status();
         if (is("GET",  "/api/v1/plates"))       return handle_get_plates();
         if (is("POST", "/api/v1/plates")) {

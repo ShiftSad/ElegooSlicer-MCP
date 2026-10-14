@@ -49,6 +49,7 @@ Base URL: `http://<host>:13130/api/v1`
 | DELETE | `/plates/{i}` | Delete plate `i` (its objects are parked beside the bed, not deleted) |
 | POST | `/objects/{id}/plate` | Move an object onto plate `i` |
 | POST | `/objects/{id}/transform` | Move, rotate and/or scale an object |
+| POST | `/orient` | Auto-orient every object, or one object with `{"object_id": id}` |
 
 ### GET /status
 
@@ -340,6 +341,23 @@ The response gives the resulting `offset` (mm), `rotation` (radians: the X, Y, Z
 angles of the new orientation, in the order above) and `scale`. Errors:
 `400 no_transform | body_must_be_object | invalid_json | bad_object_id`,
 `404 unknown_object | no_instance`.
+
+### POST /orient
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"object_id": 832}' http://localhost:13130/api/v1/orient
+```
+```json
+{ "started": true, "object_id": 832 }
+```
+Starts the window's auto-orient job and answers `202` at once; poll
+`GET /jobs/status` until `idle`. With `{"object_id": id}` only that object is turned:
+it is selected in the 3D view, as a click on it does, and the job orients the
+selection (the object stays selected afterwards). Without a body, or with `{}`, every
+object is oriented and any selection in the window is cleared first. Objects on a
+locked plate are left alone. Errors: `404 unknown_object`, `409 job_running`,
+`422 empty` (no objects), `400 bad_object_id | body_must_be_object | invalid_json`.
 
 ## Notes & limits
 

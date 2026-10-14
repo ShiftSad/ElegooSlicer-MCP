@@ -8,7 +8,14 @@
 #include <mutex>
 #include <set>
 
+namespace Slic3r { class Model; }
+
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
+
+// elegoo-mcp: helpers RemoteAPIController.cpp shares with RemoteAPIModelOps.cpp.
+// GUI thread only (call them inside run_on_ui).
+int  find_object_index(const Model &model, uint64_t id); // index in Model::objects, -1 if none
+void api_notify(const std::string &text, bool warning = false); // on-screen toast
 
 // Snapshot of the last/current slice, maintained on the GUI thread by wx event
 // subscriptions (Task 10), read by API threads under the mutex.
@@ -79,6 +86,9 @@ private:
     Response handle_select_plate(int index);                // plates: POST /plates/{i}/select
     Response handle_delete_plate(int index);                // plates: DELETE /plates/{i}
     Response handle_put_object_plate(uint64_t id, const std::string &body); // plates: POST /objects/{id}/plate
+
+    // elegoo-mcp: model operations, defined in RemoteAPIModelOps.cpp.
+    Response handle_orient_object(const std::string &body);  // POST /orient {"object_id": id}
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);

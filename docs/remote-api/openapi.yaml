@@ -538,6 +538,65 @@ paths:
                 instance: { value: { error: "no_instance" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /orient:
+    post:
+      summary: Auto-orient every object, or one object
+      operationId: orient
+      description: |
+        Starts the window's auto-orient job (asynchronous; poll GET /jobs/status until
+        `idle`). With `object_id` only that object is oriented: it is selected in the 3D
+        view and the job orients the selection (it stays selected). Without a body, or
+        with `{}`, every object is oriented and the window's selection is cleared first.
+        Objects on a locked plate are left alone.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                object_id: { type: integer, description: "Object id as reported by GET /objects." }
+            example: { object_id: 832 }
+      responses:
+        "202":
+          description: Orient job started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  started: { type: boolean }
+                  object_id: { type: integer, description: "Present when one object was asked for." }
+              example: { started: true, object_id: 832 }
+        "400":
+          description: Malformed body or object id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                bad_id:     { value: { error: "bad_object_id" } }
+                not_object: { value: { error: "body_must_be_object" } }
+                bad_json:   { value: { error: "invalid_json" } }
+        "404":
+          description: Unknown object.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_object" }
+        "409":
+          description: Another arrange/orient job is running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "job_running" }
+        "422":
+          description: No objects to orient.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "empty" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
