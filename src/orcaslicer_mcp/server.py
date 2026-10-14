@@ -1144,24 +1144,46 @@ async def run_calibration(
         "'pressure_advance', 'temperature' (temperature tower), 'retraction' (retraction "
         "tower), 'max_volumetric_speed', or 'vfa' (vertical fine artifacts, a speed tower)."))],
     params: Annotated[dict | None, Field(description=(
-        "The fields of that calibration's dialog in the window, by name; see the tool "
-        "description. A missing or wrong field is answered bad_params naming it."))] = None,
+        "The fields of that calibration's dialog in the window, by name, all optional (the "
+        "dialog's default when left out); the tool description lists them per type. A wrong "
+        "name, type or value is answered bad_params with a detail naming the field."))] = None,
     discard_project: Annotated[bool, Field(description=(
-        "The calibration replaces the open project with a new one. With unsaved changes it is "
-        "refused (unsaved_project) unless this is True, which throws those changes away. To "
-        "keep them, save_project first."))] = False,
+        "The calibration replaces the open project with a new one. When the project or the "
+        "print, filament or printer settings have unsaved changes it is refused "
+        "(unsaved_project) unless this is True, which throws those changes away. To keep them, "
+        "save_project (and save_preset) first."))] = False,
 ) -> dict:
-    """Set up a calibration print, as the window's Calibration menu does: the open project is
-    replaced by a new one holding the test objects, with the settings the test needs. It does
-    not slice. Returns {"type", "objects": [{id, name}]}.
+    """Set up a calibration print, as the window's Calibration menu does without its dialogs: the
+    open project is replaced by a new one holding the test model, and the print, filament and
+    printer settings are changed the way the test needs (unsaved edits, shown by get_status
+    under modified). It does not slice. Returns {"type", "objects": [{id, name}]}, plus
+    discarded_changes when discard_project dropped something.
 
-    The params mirror the calibration dialogs' fields: a range to sweep for the towers
-    (temperature, retraction, max_volumetric_speed, vfa, pressure_advance), typically start,
-    end and step, in the dialog's units (C, mm, mm3/s, mm/s, PA value); which pass for
-    flow_rate. Afterwards slice_and_wait, look at the result with render_plate, and print it.
-    Uses the selected printer, filament and print presets, so pick those first. Errors:
-    unsaved_project (409), bad_type or bad_params (422, detail names the field). Needs
-    ElegooSlicer MCP ('calibration' in get_status capabilities)."""
+    params per type (defaults in brackets; units as in the dialog):
+    - pressure_advance: method 'tower', 'line' or 'pattern' [tower]; extruder 'dde' or 'bowden'
+      [dde], which only picks the defaults; start [0]; end [0.1 tower/line, 0.08 pattern; 1.0
+      bowden]; step [0.002 tower/line, 0.005 pattern; bowden 0.02, pattern 0.05]; print_numbers
+      [true], line only; accelerations and speeds, pattern only: lists of whole mm/s2 and mm/s,
+      one test per pair, each acceleration above each speed [the outer wall acceleration and an
+      optimal speed].
+    - flow_rate: test 'yolo', 'yolo_perfectionist', 'pass1' or 'pass2' [yolo]; pattern of the top
+      surface 'archimedean_chords' or 'monotonic' [archimedean_chords].
+    - temperature: start [230] and end [190] in C, multiples of 5 from 155 to 500, start at
+      least end + 5; the tower prints from start at the bottom down to end, 5 C per block. The
+      dialog's presets: PLA 230/190, ABS and ASA 270/230, PETG 250/230, PCTG 280/240, TPU
+      240/210, PA-CF and PET-CF 320/280.
+    - max_volumetric_speed: start [5], end [20], step [0.5], in mm3/s.
+    - vfa: start [40, above 10], end [200], step [10], in mm/s.
+    - retraction: start [0], end [2], step [0.1], in mm of retraction length.
+    Every range needs end >= start + step.
+
+    Pick the printer, filament and print presets first: the test uses them. Afterwards
+    slice_and_wait, look at it with render_plate, and print it. A calibration leaves the
+    settings edited and the project unsaved, so a second one in a row needs discard_project too.
+    Errors: unsaved_project (409, with project_unsaved and presets_unsaved), job_running (409),
+    bad_type or bad_params (422), calibration_failed (500: the test model did not load).
+    Setting up can take up to a minute; after about 50 s the reply is calibration_still_running.
+    Needs ElegooSlicer MCP ('calibration' in get_status capabilities)."""
     try:
         async with _client() as c:
             return await c.run_calibration(type, params, discard_project)

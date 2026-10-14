@@ -339,6 +339,23 @@ async def test_run_calibration_errors_pass_through(monkeypatch):
 
 
 @respx.mock
+async def test_run_calibration_unsaved_project_names_what_is_unsaved(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/calibration").mock(return_value=httpx.Response(409, json={
+        "error": "unsaved_project", "project_unsaved": True, "presets_unsaved": ["print"]}))
+    out = await srv.run_calibration("pressure_advance", {"method": "line", "end": 0.08})
+    assert out == {"error": "unsaved_project", "project_unsaved": True, "presets_unsaved": ["print"]}
+
+
+@respx.mock
+async def test_run_calibration_failed_to_load(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/calibration").mock(return_value=httpx.Response(
+        500, json={"error": "calibration_failed"}))
+    assert (await srv.run_calibration("vfa"))["error"] == "calibration_failed"
+
+
+@respx.mock
 async def test_run_calibration_timeout_says_to_look_first(monkeypatch):
     _env(monkeypatch)
     respx.post(f"{BASE}/calibration").mock(side_effect=httpx.ReadTimeout("slow"))

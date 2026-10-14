@@ -197,7 +197,7 @@
     },
     {
       "name": "run_calibration",
-      "description": "Set up a calibration print, as the window's Calibration menu does: the open project is replaced by a new one holding the test objects, with the settings the test needs. It does not slice. Returns {\"type\", \"objects\": [{id, name}]}."
+      "description": "Set up a calibration print, as the window's Calibration menu does without its dialogs: the open project is replaced by a new one holding the test model, and the print, filament and printer settings are changed the way the test needs (unsaved edits, shown by get_status under modified)."
     },
     {
       "name": "list_plates",
