@@ -190,6 +190,18 @@
       "description": "Redo the change undo last reverted, like Ctrl+Y. Returns {\"ok\", \"can_undo\", \"can_redo\"}; ok is false when there was nothing to redo (a new change after an undo clears what could be redone)."
     },
     {
+      "name": "list_layer_changes",
+      "description": "List the changes set at a layer height on a plate, as the marks on the preview's layer slider: filament switches (tool_change), manual colour swaps (color_change), pauses (pause) and custom G-code (custom, which these tools can list but not add)."
+    },
+    {
+      "name": "add_layer_change",
+      "description": "Add a filament switch, manual colour swap or pause at a layer height, as adding one on the preview's layer slider does. Returns the plate's full list, as list_layer_changes."
+    },
+    {
+      "name": "remove_layer_change",
+      "description": "Remove the change set at height z on a plate, as deleting a mark on the preview's layer slider does. Returns the plate's remaining list, as list_layer_changes."
+    },
+    {
       "name": "list_plates",
       "description": "List the plates in the project: each one's 0-based index, name, whether it is the current plate (the one slice, get_gcode, render_plate and get_job_status act on), lock state, build volume and the objects it holds."
     },

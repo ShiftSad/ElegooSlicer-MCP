@@ -1008,6 +1008,98 @@ async def redo() -> dict:
         return _elegoo_err(e, "undo")
 
 
+# --- Changes at a layer height (ElegooSlicer MCP, capability "layer_changes") ----
+# The marks on the preview's layer slider: switch filament, swap colour by hand, or pause, from
+# a given height up. Stored per plate.
+
+_PLATE_OR_CURRENT = Field(description=(
+    "0-based plate index from list_plates. Leave it out for the current plate."))
+
+
+async def _plate_or_current(c, plate: int | None) -> int:
+    if plate is not None:
+        return plate
+    return int((await c.get_plates()).get("current") or 0)
+
+
+@mcp.tool()
+async def list_layer_changes(
+    plate: Annotated[int | None, _PLATE_OR_CURRENT] = None,
+) -> dict:
+    """List the changes set at a layer height on a plate, as the marks on the preview's layer
+    slider: filament switches (tool_change), manual colour swaps (color_change), pauses (pause)
+    and custom G-code (custom, which these tools can list but not add). Returns {"plate",
+    "items": [{z, type, slot?, message?}]}. Read-only. An unknown plate returns unknown_plate.
+    Needs ElegooSlicer MCP ('layer_changes' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.get_layer_changes(await _plate_or_current(c, plate))
+    except ApiError as e:
+        return _elegoo_err(e, "layer_changes")
+
+
+@mcp.tool()
+async def add_layer_change(
+    z: Annotated[float, Field(description=(
+        "Height in mm of the layer the change applies from, as the preview's layer slider shows "
+        "it: the change happens before that layer prints. It must lie within the height of the "
+        "plate's objects (bad_z otherwise)."))],
+    type: Annotated[Literal["tool_change", "color_change", "pause"], Field(description=(
+        "'tool_change': from this layer up, print with filament slot `slot`; a multi-material "
+        "unit (the CANVAS) switches by itself. 'color_change': stop for a manual filament swap "
+        "(M600), for a printer without automatic switching. 'pause': pause the print, to drop "
+        "in a nut or magnet for example."))],
+    slot: Annotated[int | None, Field(description=(
+        "1-based filament slot to switch to; required for tool_change (see "
+        "list_filament_slots)."))] = None,
+    message: Annotated[str | None, Field(description=(
+        "For pause: a short note, as the slider's Add pause asks for one; printers that support "
+        "it show it while paused."))] = None,
+    plate: Annotated[int | None, _PLATE_OR_CURRENT] = None,
+) -> dict:
+    """Add a filament switch, manual colour swap or pause at a layer height, as adding one on
+    the preview's layer slider does. Returns the plate's full list, as list_layer_changes.
+
+    A change at the same z replaces the one there. Use tool_change for a print that changes
+    colour by height (a striped vase, a two-colour sign), pause to embed something. The plate is
+    left unsliced: re-slice to see the change in the preview and in the time and filament
+    estimates. Errors: bad_z, bad_slot or bad_type (422), unknown_plate (404), slicing (409).
+    Needs ElegooSlicer MCP ('layer_changes' in get_status capabilities)."""
+    if type == "tool_change" and slot is None:
+        return {"error": "bad_slot",
+                "hint": "tool_change needs slot: the 1-based filament slot to print with from z up."}
+    change: dict = {"z": z, "type": type}
+    if slot is not None:
+        change["slot"] = slot
+    if message is not None:
+        change["message"] = message
+    try:
+        async with _client() as c:
+            return await c.add_layer_change(await _plate_or_current(c, plate), change)
+    except ApiError as e:
+        return _elegoo_err(e, "layer_changes")
+
+
+@mcp.tool()
+async def remove_layer_change(
+    z: Annotated[float, Field(description=(
+        "Height in mm of the change to remove, as list_layer_changes reports it (matched to "
+        "0.001 mm)."))],
+    plate: Annotated[int | None, _PLATE_OR_CURRENT] = None,
+) -> dict:
+    """Remove the change set at height z on a plate, as deleting a mark on the preview's layer
+    slider does. Returns the plate's remaining list, as list_layer_changes.
+
+    No change at that height returns no_change_at_z (404); take z from list_layer_changes. The
+    plate is left unsliced, so re-slice afterwards. Needs ElegooSlicer MCP ('layer_changes' in
+    get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.remove_layer_change(await _plate_or_current(c, plate), z)
+    except ApiError as e:
+        return _elegoo_err(e, "layer_changes")
+
+
 @mcp.tool()
 async def list_plates() -> dict:
     """List the plates in the project: each one's 0-based index, name, whether it is the
@@ -2148,6 +2240,9 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "set_filament_count": ("Set the number of filament slots", False, True),
     "undo": ("Undo the last change", False, False),
     "redo": ("Redo the last undone change", False, False),
+    "list_layer_changes": ("List filament changes and pauses by height", True, False),
+    "add_layer_change": ("Add a filament change or pause at a height", False, False),
+    "remove_layer_change": ("Remove a filament change or pause", False, True),
     "remember": ("Save a note", False, False),
     "load_model": ("Load a model file", False, False),
     "select_preset": ("Select preset", False, False),

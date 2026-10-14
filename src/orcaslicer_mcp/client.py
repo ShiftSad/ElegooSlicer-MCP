@@ -196,6 +196,18 @@ class OrcaClient:
     async def redo(self) -> dict:
         return await self._request("POST", "/api/v1/redo")
 
+    # Changes at a layer height: filament change, colour change (M600), pause (ElegooSlicer
+    # MCP, capability "layer_changes"). Plate indices are 0-based.
+    async def get_layer_changes(self, plate: int) -> dict:
+        return await self._request("GET", f"/api/v1/plates/{plate}/layer_changes")
+
+    async def add_layer_change(self, plate: int, change: dict) -> dict:
+        return await self._request("POST", f"/api/v1/plates/{plate}/layer_changes", json=change)
+
+    async def remove_layer_change(self, plate: int, z: float) -> dict:
+        return await self._request("DELETE", f"/api/v1/plates/{plate}/layer_changes",
+                                   params={"z": z})
+
     # Plates (fork v2.4.2-mcp.13 and later).
     async def get_plates(self) -> dict:
         return await self._request("GET", "/api/v1/plates")

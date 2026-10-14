@@ -186,3 +186,98 @@ async def test_undo_refused_while_slicing_and_on_an_older_build(monkeypatch):
 def test_undo_redo_hints():
     for name in ("undo", "redo"):
         assert _hints(name).read_only_hint is False and _hints(name).destructive_hint is False
+
+
+# --- changes at a layer height ----------------------------------------------------
+
+_PLATES = {"current": 1, "plates": [{"index": 0, "current": False}, {"index": 1, "current": True}]}
+_CHANGES = {"plate": 1, "items": [{"z": 5.0, "type": "tool_change", "slot": 2},
+                                  {"z": 12.4, "type": "pause", "message": "insert magnet"}]}
+
+
+@respx.mock
+async def test_list_layer_changes_defaults_to_the_current_plate(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{BASE}/plates").mock(return_value=httpx.Response(200, json=_PLATES))
+    route = respx.get(f"{BASE}/plates/1/layer_changes").mock(return_value=httpx.Response(200, json=_CHANGES))
+    assert (await srv.list_layer_changes()) == _CHANGES
+    assert route.called
+
+
+@respx.mock
+async def test_list_layer_changes_of_another_plate(monkeypatch):
+    _env(monkeypatch)
+    plates = respx.get(f"{BASE}/plates").mock(return_value=httpx.Response(200, json=_PLATES))
+    respx.get(f"{BASE}/plates/0/layer_changes").mock(return_value=httpx.Response(
+        200, json={"plate": 0, "items": []}))
+    assert (await srv.list_layer_changes(plate=0))["items"] == []
+    assert not plates.called  # no need to look up the current plate
+
+
+@respx.mock
+async def test_add_layer_change_tool_change(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{BASE}/plates").mock(return_value=httpx.Response(200, json=_PLATES))
+    route = respx.post(f"{BASE}/plates/1/layer_changes").mock(return_value=httpx.Response(201, json=_CHANGES))
+    out = await srv.add_layer_change(5.0, "tool_change", slot=2)
+    assert out == _CHANGES
+    assert _sent(route) == {"z": 5.0, "type": "tool_change", "slot": 2}
+
+
+@respx.mock
+async def test_add_layer_change_pause_with_message(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/plates/0/layer_changes").mock(return_value=httpx.Response(201, json=_CHANGES))
+    await srv.add_layer_change(12.4, "pause", message="insert magnet", plate=0)
+    assert _sent(route) == {"z": 12.4, "type": "pause", "message": "insert magnet"}
+
+
+@respx.mock
+async def test_add_layer_change_tool_change_needs_a_slot(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/plates/0/layer_changes").mock(return_value=httpx.Response(201, json={}))
+    out = await srv.add_layer_change(5.0, "tool_change", plate=0)
+    assert out["error"] == "bad_slot"
+    assert not route.called
+
+
+@respx.mock
+async def test_add_layer_change_errors_pass_through(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/plates/0/layer_changes").mock(return_value=httpx.Response(
+        422, json={"error": "bad_z", "detail": "z must be within 0.2..20 mm"}))
+    out = await srv.add_layer_change(99.0, "pause", plate=0)
+    assert out["error"] == "bad_z" and "20 mm" in out["detail"]
+    respx.post(f"{BASE}/plates/7/layer_changes").mock(return_value=httpx.Response(404, json={"error": "unknown_plate"}))
+    assert (await srv.add_layer_change(1.0, "pause", plate=7))["error"] == "unknown_plate"
+
+
+@respx.mock
+async def test_remove_layer_change_sends_z_as_a_query(monkeypatch):
+    _env(monkeypatch)
+    route = respx.delete(f"{BASE}/plates/0/layer_changes").mock(return_value=httpx.Response(
+        200, json={"plate": 0, "items": []}))
+    out = await srv.remove_layer_change(5.0, plate=0)
+    assert out["items"] == []
+    assert route.calls.last.request.url.params["z"] == "5.0"
+
+
+@respx.mock
+async def test_remove_layer_change_nothing_there(monkeypatch):
+    _env(monkeypatch)
+    respx.delete(f"{BASE}/plates/0/layer_changes").mock(return_value=httpx.Response(
+        404, json={"error": "no_change_at_z"}))
+    assert (await srv.remove_layer_change(3.3, plate=0))["error"] == "no_change_at_z"
+
+
+@respx.mock
+async def test_layer_changes_need_an_elegoo_build(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{BASE}/plates/0/layer_changes").mock(return_value=_route_missing())
+    _needs(await srv.list_layer_changes(plate=0), "layer_changes")
+
+
+def test_layer_change_hints():
+    assert _hints("list_layer_changes").read_only_hint is True
+    assert _hints("add_layer_change").destructive_hint is False
+    assert _hints("remove_layer_change").destructive_hint is True
