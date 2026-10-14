@@ -980,9 +980,42 @@ static const PrinterMmsTray *find_tray(const PrinterMmsGroup &group, const std::
     return nullptr;
 }
 
+// A filament name reduced for comparison, as the Print dialog reduces it (standardizeFilamentName
+// in resources/web/printer/print_send/printsend.js, same as in PrinterMmsManager.cpp): upper case,
+// without the vendor's name, "GENERIC" and an "@..." suffix, dashes as spaces.
+// "Elegoo PLA+ @ECC2" (vendor Elegoo) -> "PLA+".
+static std::string standard_filament_name(const std::string &name, const std::string &vendor)
+{
+    std::string       s            = upper_trimmed(name);
+    const std::string vendor_upper = upper_trimmed(vendor);
+    if (!vendor_upper.empty() && s.find(vendor_upper) != std::string::npos)
+        boost::algorithm::erase_all(s, vendor_upper);
+    boost::algorithm::erase_all(s, "GENERIC");
+    const size_t at = s.find('@');
+    if (at != std::string::npos)
+        s.resize(at);
+    std::replace(s.begin(), s.end(), '-', ' ');
+    return boost::algorithm::trim_copy(s);
+}
+
+// Whether a tray holds another filament than the slot's preset: the Print dialog's test for a tray
+// picked by hand (updateFilamentMapping in printsend.js), which refuses the tray only when both the
+// filament type and the filament name differ. A type alone is not enough: the CC2 may report a
+// tray of "Elegoo PLA+" as type "PLA+" while the preset's type is "PLA", and the dialog prints that.
+// tray_vendor is the tray's vendor from the CANVAS reply (the mapping does not copy it).
+static bool tray_holds_other_filament(const PrintFilamentMmsMapping &f, const PrinterMmsTray &t, const std::string &tray_vendor)
+{
+    const std::string tray_type = upper_trimmed(t.filamentType);
+    const std::string tray_name = standard_filament_name(t.filamentName, tray_vendor);
+    const bool other_type = !tray_type.empty() && tray_type != upper_trimmed(f.filamentType);
+    const bool other_name = !tray_name.empty() && tray_name != standard_filament_name(f.filamentName, f.vendor);
+    return other_type && other_name;
+}
+
 // One filament of the mapping, with its problems:
 // - no_tray: no tray was mapped (the Print dialog refuses to start: "some filaments not mapped");
-// - type_mismatch: the tray's filament type differs from the preset's;
+// - type_mismatch: the tray holds another filament: both its type and its name differ from the
+//   preset's (tray_holds_other_filament);
 // - color_mismatch: the tray's colour is another standard colour than the slot's;
 // - tray_not_ready: the tray is no longer loaded or preloaded.
 static nlohmann::json mapped_filament_json(const PrintFilamentMmsMapping &f, const PrinterMmsGroup &group, bool sliced)
@@ -997,11 +1030,11 @@ static nlohmann::json mapped_filament_json(const PrintFilamentMmsMapping &f, con
         issues.push_back("no_tray");
     } else {
         tray = {{"unit", t.mmsId}, {"tray", t.trayName}, {"type", t.filamentType}, {"color", hex_color(t.filamentColor)}};
-        if (upper_trimmed(t.filamentType) != upper_trimmed(f.filamentType))
+        const PrinterMmsTray *now = find_tray(group, t.mmsId, t.trayId);
+        if (tray_holds_other_filament(f, t, now != nullptr ? now->vendor : t.vendor))
             issues.push_back("type_mismatch");
         if (!same_standard_color(t.filamentColor, f.filamentColor))
             issues.push_back("color_mismatch");
-        const PrinterMmsTray *now = find_tray(group, t.mmsId, t.trayId);
         if (now == nullptr || (now->status != TRAY_STATUS_LOADED && now->status != TRAY_STATUS_PRELOADED))
             issues.push_back("tray_not_ready");
     }
@@ -1713,8 +1746,9 @@ Response Controller::handle_print_prepare(const std::string &api_id, const std::
             sent.filamentName  = f.mappedMmsFilament.filamentName;
             sent.filamentType  = f.mappedMmsFilament.filamentType;
             f.mappedMmsFilament = sent;
-            // A filament without a tray, on a tray that is not ready, or on a tray of another
-            // filament type is refused; another colour only warned about.
+            // A filament without a tray, on a tray that is not ready, or on a tray holding another
+            // filament (type and name differ, as the Print dialog tests it) is refused; another
+            // colour only warned about.
             nlohmann::json item = mapped_filament_json(f, group, /*sliced=*/true);
             // The Print dialog also refuses a tray that reports no colour (PrintSendDialogEx::onPrint).
             const nlohmann::json &issues = item["issues"];

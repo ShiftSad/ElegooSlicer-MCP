@@ -742,7 +742,9 @@ Read-only: nothing is saved, nothing is sent.
   until the plate is sliced.
 - `tray`: `unit` and `tray` as in `GET .../canvas` (`null` when no tray matched).
 - `issues`: `no_tray` (the Print dialog would refuse to start: "some filaments not
-  mapped"), `type_mismatch` (the tray's filament type differs from the preset's),
+  mapped"), `type_mismatch` (the tray holds another filament: both its filament type and
+  its filament name differ from the preset's, the test the Print dialog makes for a tray
+  picked by hand; a tray of `PLA+` for a `PLA` preset named "Elegoo PLA+" is not one),
   `color_mismatch` (the tray's colour is another colour of ElegooSlicer's standard palette
   than the slot's, the comparison the matching itself uses), `tray_not_ready` (the tray is
   not loaded or preloaded).
@@ -863,9 +865,8 @@ Errors (nothing was sent):
   prints with several filaments and the printer has no connected CANVAS; the Print dialog
   would send them without a mapping), `422 mapping_incomplete` + `issues: [{slot, issues}]`
   + `filaments` (a slot has no tray: `no_tray`, its tray is not ready or reports no colour:
-  `tray_not_ready`, or
-  its tray holds another filament type: `type_mismatch`; the Print dialog refuses a tray of
-  another type only when the filament name differs too). Load the filament, sync the CANVAS
+  `tray_not_ready`, or its tray holds another filament, type and name both different, as
+  the Print dialog tests it: `type_mismatch`). Load the filament, sync the CANVAS
   (`POST .../canvas/sync`) or pick trays with `mapping`. `422 bad_mapping` (unknown slot or
   tray, tray not loaded, no CANVAS to map to), `400 bad_mapping`;
 - the body: `400 bad_bed_side | bad_leveling | bad_timelapse | bad_auto_refill`;

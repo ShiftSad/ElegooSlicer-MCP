@@ -1390,7 +1390,8 @@ paths:
         "422":
           description: |
             `mapping_incomplete`: a slot has no tray (`no_tray`), a tray that is not ready
-            (`tray_not_ready`) or a tray of another filament type (`type_mismatch`); `issues`
+            (`tray_not_ready`) or a tray holding another filament, type and name both
+            different as the Print dialog tests it (`type_mismatch`); `issues`
             lists them, `filaments` the whole mapping. `bad_mapping`: unknown slot or tray, a
             tray that is not loaded, or no CANVAS to map to. `unsupported_option` (+ `option`):
             the printer does not have it. `filename_format_error`: the print profile's
