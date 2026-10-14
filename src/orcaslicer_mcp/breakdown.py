@@ -54,10 +54,16 @@ def purge_summary(purge: dict) -> str:
     and filament, but no feature role carries them, so the roles do not add up to the total
     without them."""
     n = int(purge.get("filament_changes") or 0)
-    if n <= 0:
-        return "No filament changes."
     time_s = float(purge.get("filament_change_time_s") or 0)
     flush_g = float(purge.get("flush_g") or 0)
+    if n <= 0:
+        if time_s <= 0 and flush_g <= 0:
+            return "No filament changes."
+        # The Centauri Carbon 2's start G-code loads the first filament with an M6211 that
+        # purges about 200 mm: time and flush with no change at all.
+        return (f"No filament changes; loading the first filament takes about "
+                f"{_duration(time_s)} and flushes {flush_g:.1f} g, already included in the total "
+                "time and filament.")
     changes = f"{n} filament change" + ("" if n == 1 else "s")
     return (f"{changes}: about {_duration(time_s)} and {flush_g:.1f} g of flushed filament, "
             "already included in the total time and filament (no feature role carries them).")

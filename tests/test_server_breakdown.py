@@ -57,6 +57,21 @@ async def test_get_slice_breakdown_single_filament_purge(monkeypatch):
 
 
 @respx.mock
+async def test_get_slice_breakdown_names_the_first_filament_load(monkeypatch):
+    # The CC2 start G-code loads the first filament with a purging M6211: time and flush with
+    # no filament change at all.
+    _env(monkeypatch)
+    purge = {"filament_changes": 0, "filament_change_time_s": 62.0, "flush_g": 0.6, "flush_mm": 200.0}
+    respx.get(url__regex=r"http://x:13130/api/v1/slice/status.*").mock(
+        return_value=httpx.Response(200, json={"state": "done", "breakdown": dict(_BREAKDOWN, purge=purge)}))
+    respx.get(url__regex=r"http://x:13130/api/v1/config.*").mock(
+        return_value=httpx.Response(200, json=_CONFIG))
+    out = await srv.get_slice_breakdown()
+    assert out["purge_summary"].startswith(
+        "No filament changes; loading the first filament takes about 1 min 2 s and flushes 0.6 g")
+
+
+@respx.mock
 async def test_get_slice_breakdown_without_purge_from_an_older_build(monkeypatch):
     _env(monkeypatch)
     respx.get(url__regex=r"http://x:13130/api/v1/slice/status.*").mock(

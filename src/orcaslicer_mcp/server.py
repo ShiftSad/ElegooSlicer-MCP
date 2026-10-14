@@ -234,8 +234,9 @@ async def get_slice_breakdown() -> dict:
     the time hog' directly instead of by trial slicing.
 
     On ElegooSlicer MCP ('breakdown_purge' in get_status capabilities) it also has `purge`:
-    {filament_changes, filament_change_time_s, flush_g, flush_mm} for a multi-filament print
-    (zeros for one filament), and `purge_summary`, a sentence to relay. That time and filament
+    {filament_changes, filament_change_time_s, flush_g, flush_mm}, what changing filament costs
+    (on the Centauri Carbon 2 even a single-filament print shows the first filament's load,
+    with filament_changes 0), and `purge_summary`, a sentence to relay. That time and filament
     is part of the totals but of no role, so mention it when the roles don't add up.
 
     Degrades to {"available": false, "reason": ...} on fork builds that don't emit the
