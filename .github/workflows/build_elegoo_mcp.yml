@@ -50,9 +50,16 @@ env:
   # Must stay below 4.0 (Elegoo README). Same version as the local build.
   CMAKE_VERSION: '3.31.6'
   # Where build_release_windows.bat installs the dependencies and where its slicer
-  # stage reads them from (-DCMAKE_PREFIX_PATH=<this>/usr/local). Only this folder is
-  # cached; the rest of deps\build is intermediate build output.
+  # stage reads them from (-DCMAKE_PREFIX_PATH=<this>/usr/local).
   DEPS_PREFIX: deps/build/ElegooSlicer_dep
+  # The only other dependency file the slicer reads: elegoolink's installed CMake config
+  # (lib/cmake/elegoolink/elegoolink_targets.cmake) links the Agora import library by its
+  # absolute path inside the elegoolink source tree, not from the prefix. The runner's
+  # workspace path never changes, so caching this folder next to the prefix is enough.
+  AGORA_LIB_DIR: deps/build/dep_elegoolink-prefix/src/dep_elegoolink/thirdparty/agora/windows/lib/x86_64
+  # Part of the dependency cache key. Bump it after changing how the dependencies are
+  # built or what is cached; other edits to this file keep the cache.
+  DEPS_CACHE_VERSION: '2'
 
 jobs:
   build:
@@ -70,15 +77,15 @@ jobs:
 
       # The key must be computed before anything is built: hashFiles() does not honour
       # .gitignore, so files written into deps\build later would change it.
-      # Any edit to deps/, cmake/modules/ (passed to some dependency builds) or to this
-      # workflow file starts a new dependency build. The repository cache limit is 10 GB;
-      # the cached prefix is about 1.1 GB before compression.
+      # Any edit to deps/ or cmake/modules/ (passed to some dependency builds), or a new
+      # DEPS_CACHE_VERSION, starts a new dependency build. The repository cache limit is
+      # 10 GB; the cached files are about 1.1 GB before compression.
       - name: Compute the dependency cache key
         id: key
         shell: pwsh
         run: |
-          $hash = '${{ hashFiles('deps/**', 'cmake/modules/**', '.github/workflows/build_elegoo_mcp.yml') }}'
-          "key=elegoo-mcp-deps-windows-2022-x64-$hash" >> $env:GITHUB_OUTPUT
+          $hash = '${{ hashFiles('deps/**', 'cmake/modules/**') }}'
+          "key=elegoo-mcp-deps-windows-2022-x64-v$env:DEPS_CACHE_VERSION-$hash" >> $env:GITHUB_OUTPUT
 
       - name: Show free disk space
         shell: pwsh
@@ -136,12 +143,14 @@ jobs:
         id: deps-cache
         uses: actions/cache/restore@v5
         with:
-          path: ${{ env.DEPS_PREFIX }}
+          path: |
+            ${{ env.DEPS_PREFIX }}
+            ${{ env.AGORA_LIB_DIR }}
           key: ${{ steps.key.outputs.key }}
 
-      # Same steps as tools\build.cmd: VS environment, then CMake and Perl first on PATH,
-      # then the Elegoo script. The output is shown live and also kept in build-logs\ for
-      # the failure artifact (pwsh's Tee-Object; cmd has no tee).
+      # Same steps as tools\remote-api\build.cmd: VS environment, then CMake and Perl first
+      # on PATH, then the Elegoo script. The output is shown live and also kept in
+      # build-logs\ for the failure artifact (pwsh's Tee-Object; cmd has no tee).
       - name: Build the dependencies (cache miss only)
         if: steps.deps-cache.outputs.cache-hit != 'true'
         timeout-minutes: 200
@@ -164,21 +173,10 @@ jobs:
         if: steps.deps-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: ${{ env.DEPS_PREFIX }}
+          path: |
+            ${{ env.DEPS_PREFIX }}
+            ${{ env.AGORA_LIB_DIR }}
           key: ${{ steps.key.outputs.key }}
-
-      # Free disk space for the slicer build: keep only the installed prefix, which is
-      # all the slicer stage reads (a cache hit restores nothing else either).
-      - name: Remove intermediate dependency build files
-        if: steps.deps-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          Get-ChildItem deps\build -Force | Where-Object Name -ne 'ElegooSlicer_dep' |
-            Remove-Item -Recurse -Force
-          if (Test-Path deps\DL_CACHE) { Remove-Item deps\DL_CACHE -Recurse -Force }
-          Get-PSDrive -PSProvider FileSystem |
-            Format-Table Name, @{ n = 'FreeGB'; e = { [math]::Round($_.Free / 1GB, 1) } }
 
       # dlweb downloads the CC2 Device-tab web UI (an Elegoo GitHub release asset) into
       # resources\; without it the Device tab is empty. `slicer` skips the deps stage.
@@ -189,6 +187,11 @@ jobs:
           call "%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" >nul
           if errorlevel 1 (
               echo vcvars64.bat failed
+              exit /b 1
+          )
+          rem Fail now instead of at the final link, about 40 minutes later.
+          if not exist "%AGORA_LIB_DIR:/=\%\agora_rtm_sdk.dll.lib" (
+              echo agora_rtm_sdk.dll.lib is missing from %AGORA_LIB_DIR%
               exit /b 1
           )
           set "PATH=%CMAKE_BIN%;%PERL_BIN%;%PATH%"
