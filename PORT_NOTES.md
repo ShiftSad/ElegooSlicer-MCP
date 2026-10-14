@@ -11,7 +11,11 @@ Line numbers refer to ElegooSlicer **v1.5.3.5 (`3f1042e`)** unless prefixed (`fo
 | 1 — prerequisites | **Done** | 2026-10-13 | GitHub fork, Perl, toolchain, deps build (~20 min) and **baseline build of unmodified v1.5.3.5** (~18 min, 0 errors, app starts) — see section 7. |
 | 1 — 1:1 port | **Done, waiting for Victor's test** | 2026-10-13 | Branch `remote-api` (see section 11): port + adaptations + review fixes, built, runtime-check 16/16, MCP 0.1.17 smoke 12/12 on the CC2 profile. |
 | 3 (part) + 3B | **Pulled forward, built and tested, waiting for Victor's test** | 2026-10-14 | Victor's request after the Claude Desktop sessions: orient one object, view switch, part volumes, project save, region painting, stale-slice fix (section 11.2). |
-| 2, rest of 3, 4–7 | Not started | | |
+| 2 — printers (read) | **Done, tested against the fake CC2, waiting for Victor + the real printer** | 2026-10-14 | Section 12. Real-printer acceptance after 17/10. |
+| 3 (rest), 5 | **Done, built and tested** | 2026-10-14 | Filament slots, split, undo/redo, layer changes, calibration, CANVAS sync + mapping (GUI parity checked), purge breakdown, D8 modal guards (section 12). |
+| 4 — print control | **Done, tested against the fake CC2 only** | 2026-10-14 | Off by default; byte-identical upload vs the window's Print checked. Phase 4.4 (cube on the real CC2 with Victor) still to do. |
+| 6 — MCP server | **Done, vendored in `mcp/`** | 2026-10-14 | `git subtree` of orcaslicer-mcp `elegoo` (history kept). pytest 1438 passed / 4 skipped. `.mcpb` not packed (needs `npx`). |
+| 7 — CI/release | **Workflow written, not run** | 2026-10-14 | Branch `ci` (local only): needs Victor to enable Actions. No release (D11 open, Victor's go needed). |
 
 ## 2. Workspace
 
@@ -218,6 +222,9 @@ build_release_windows.bat slicer
 | 2026-10-13 | Phase 0 run with local clones only; no GitHub fork created (outward-facing action left to Victor, D1). | Claude |
 | 2026-10-13 | Hook-map default for titles: change only the non-Apple branches (fork parity). | Claude (pending D12) |
 | 2026-10-13 | Victor approved installing everything needed to build and creating the GitHub repo → fork created, Perl portable installed, toolchain = v143 + CMake 3.31.6. | Victor |
+| 2026-10-14 | Victor went to sleep and approved every pending decision with Claude's recommendation (pinned in `tools/overnight/CONTRACT.md`: D9, D10, D13, D14, D15, D8 part 2, the 422 `config_rejected` token) and all remaining phases without phase-gate stops. Still never: force-push, release, real-printer tests. | Victor |
+| 2026-10-14 | Printer ids are an HMAC-SHA256 of PrinterManager's id with a random per-install key (`remote_api_printer_id_key`): the SDK's ids contain the serial number. Cloud (WAN) printers: no print control at all (`501 unsupported_on_wan`), the SDK can only pause/stop over LAN. | Claude (overnight, under Victor's blanket approval) |
+| 2026-10-14 | MCP vendored with `git subtree add --prefix=mcp` (full history: MaxEllis' authorship stays visible; `git subtree pull` takes upstream fixes). Python edits are made in the `orcaslicer-mcp` clone (branch `elegoo`, Claude Desktop's editable install) and pulled into `mcp/`. | Claude |
 | 2026-10-13 | **Single GitHub repo: `ShiftSad/ElegooSlicer-MCP`** (fork of `elegooofficial/ElegooSlicer`). No fork of `MaxEllis/orcaslicer-mcp`. Deviation from plan §4: in Phase 6 the MCP server is vendored into this repo under `mcp/` (keep its AGPL `LICENSE` and credits; module name stays `orcaslicer_mcp`). Install with `uvx --from <local clone>\mcp orcaslicer-mcp` or `uvx --from "git+https://github.com/ShiftSad/ElegooSlicer-MCP@<ref>#subdirectory=mcp" orcaslicer-mcp`. Upstream MCP fixes are copied by hand if ever wanted. Phase 1 parity tests use the unmodified MCP 0.1.17 clone. | Victor |
 
 ## 9. Pending decisions (for Victor)
@@ -243,6 +250,8 @@ Phase 1 behavior (recommendation in parentheses):
 - **D20** Rebrand Preferences tooltips and the `Server:` header. (tooltips yes, header no)
 
 Later phases (spec changes found in Phase 0):
+Overnight 2026-10-14: D9, D10, D13 (documented: README "Privacy and network"), D14 (as listed below, implemented), D15 (purge fields), D17 (MCP tests fixed on Windows, never write into the real home) are **resolved**. D11 stays open.
+
 - **D11** Public binary releases would redistribute closed Agora RTM DLLs, the unlicensed web bundles and prebuilt GMP/MPFR (rule 7). Decide before Phase 7.
 - **D14** Plan §6 vs SDK reality: `/tasks`, `/files`, `raw=1`, exception history are cloud-only (→ 501 `unsupported_on_lan`?); Canvas `temperature_c`, `humidity`, `bed_temp`, `external_spool` have no data source (→ null or remove); `resumePrint` not implemented for CC2 LAN (patch SDK / 501); `DELETE /uploads/{id}` cannot stop a print once the transfer finished (→ `too_late`); default `bed_side` (send dialog's B = btPC, sidebar's B = btPEI); save tray mapping to `filament_mms_mapping.json` like the GUI?; Phase 4 route: full Elegoo chain (~10 files touched) vs calling the SDK singleton from `RemoteAPIElegoo.cpp` (master instance only).
 - **D15** Add `filament_change_time_s`, `filament_changes`, `flush_g` to the slice breakdown (response change; needed for acceptance 8.2).
@@ -354,3 +363,35 @@ Open:
 - The 422 replies of the config writes have no `"error"` token (`{"applied":[],"errors":{…}}`); adding one changes an existing response format → ask Victor (rule 9).
 - The MCP keeps only `error`/`errors` from slicer error bodies, so extra fields (e.g. `path` on `file_exists`) do not reach the model.
 - Paint is triangle-granular (big triangles crossing the box edge are all-or-nothing); colour has no in-box erase, only `clear`.
+
+## 12. Overnight phases 2–6 (2026-10-14)
+
+Done by a 15-agent workflow (implement → review → fix per line, `cl /Zs` only), then merged, built and tested by the lead. Contract: `tools/overnight/CONTRACT.md`.
+
+Branches and commits (all on `remote-api` after `ca9cc885e`):
+- Elegoo C++ (`RemoteAPIElegoo.cpp`, ~2470 lines): printers + status + tasks/files (`da6050db8`), CANVAS read (`578dea2a4`), sync (`63349e016`, PlaterExt split into shared functions), mapping (`74d8cd3cb`, `PrintSendDialogEx::getPlateFilamentList` extracted), print-control preference (`9adace3bd`), prepare/print/uploads (`82d9a64d9`), pause/resume/stop (`ab3f7244c`), review fixes `85ee3e8dd`..`468db16a9` (no print control on WAN, Print-dialog type_mismatch rule, upload/cancel race, stop only in print states, PrinterUploadManager lock hook, command_in_progress, HMAC ids, raw-status secret scrub, 25 s request budget).
+- Generic C++ (branch `qol`, merged in `d425adb8a`; `RemoteAPIProject.cpp`, `RemoteAPICalibration.cpp`, `RemoteAPIDialogs.{hpp,cpp}`): `config_rejected` token, `/filaments`, split, undo/redo, layer changes, purge breakdown, calibration, D8 modal guards (GUI.cpp, ConfigManipulation.cpp, Tab.cpp, Plater.cpp, GCodeViewer.cpp hooks), review fixes.
+- Lead fixes after runtime tests: `951f3c689` (API move/rotate/scale, delete and duplicate now take the window's undo snapshot: before, `POST /undo` after an API move removed the object loaded before it), `26ddf519e` (pause/resume/stop notifications in words).
+- MCP: `mcp/` (subtree, `057239318` + pulls). New tools: printers, CANVAS, sync, mapping, prepare/start (MCP elicitation or `user_confirmed`), uploads, pause/resume/stop, camera snapshot, filament slots, split, undo/redo, layer changes, calibration. Lead fix `37e6adf` (stop asks only in the states the slicer stops in; hints for `command_in_progress`, `unsupported_on_wan`).
+- Docs cherry-picked from `ci`: `UPSTREAM_SYNC.md`, README notice, "Privacy and network" (+ the SDK log note below), release-notes draft. The workflow file itself stays on `ci` (not pushed).
+
+New hooks in Elegoo files (all `// elegoo-mcp:`): `PlaterExt.{hpp,cpp}` (sync split), `Elegoo/PrintSendDialogEx.{hpp,cpp}` (filament-list helper), `Utils/Elegoo/PrinterMmsManager.{hpp,cpp}` (optional nozzle list, so the worker reads no GUI data), `Utils/Elegoo/PrinterUploadManager.cpp` (task read/reap under its lock), `Preferences.cpp` (checkbox), `GUI.cpp`, `ConfigManipulation.cpp`, `Tab.cpp`, `Plater.cpp`, `GCodeViewer.cpp` (D8). List: `git diff ca9cc885e..remote-api -- . ':!src/slic3r/GUI/RemoteAPI' ':!docs' ':!mcp'`.
+
+Build: `tools\build.cmd slicer` 05:10→05:25 (14.5 min, 0 errors). New `tools\build_incremental.cmd` (no CMake re-configure: `cmake --build` + install) rebuilds after a few .cpp edits in ~50 s; `build_release_windows.bat` re-configures every time, which recompiles everything.
+
+Fake printer: `tools\fakecc2` (stdlib-only CC2: MQTT broker, HTTP upload, discovery, MJPEG camera, control port 18080), checked against the real elegoo-link SDK (37/37) and Paho (11/11). Register it with `tools\fakecc2\add_fake_printer.py tools\test-datadir` (app closed); toggle print control with `tools\set_print_control.py tools\test-datadir on|off`.
+
+Runtime results (test datadir, fake CC2 at 127.0.0.1):
+- `tools\phase4_fakecc2_e2e.py off`: **38/38**: printers/status/exceptions/501 on LAN/404, CANVAS (4 trays, matched presets, nulls), sync, mapping, every print route `403 print_control_disabled` with a warning notification, the fake got no print command, no secret in 28 printer replies.
+- `tools\phase4_fakecc2_e2e.py on`: **61/61** (twice): unknown_field, bad_mapping, printer_busy, plan expiry on a setting change (410), prepare summary, 202 upload → success, **the printer got the slicer's G-code byte for byte** (sha256 = `GET /gcode`), one 1020 start with the plan's options and slot map, plan used once, `too_late`, pause, `resume_unsupported`, `confirm_required`, stop, `not_printing`, a stop answered after 17 s → `504 printer_timeout` at 15 s and the printer stopped, offline → 409 and back, no secret in 66 replies.
+- `tools\phase4_mcp_e2e.py` (MCP stdio → app → fake): **all pass**: list/canvas/sync/slots/slice/mapping/status, prepare, start refused without confirmation, start with `user_confirmed`, upload success, `wait_for_printer(printing)`, camera JPEG, pause, resume_unsupported, stop refused/confirmed; a declined MCP prompt beats `user_confirmed=True`; an accepted prompt starts and stops.
+- GUI parity: the window's Upload and its Print (with CANVAS mapping) sent the **same bytes** (sha256 `d42298…`) and the **same 1020 request** (slot map, `print_layout` A, leveling off) as the API; the window's Sync button and `POST .../canvas/sync` from the same state left **identical** `filament_colour`, `filament_settings_id`, `filament_type` and `flush_volumes_matrix`. Phase 4.3 and the Phase 3 acceptance are met (on the fake).
+- `tools\phase2_project_check.py`: **42/42**: config_rejected, filaments (colour, unknown slot/preset, slot_in_use + force), undo/redo of move, duplicate and delete, layer changes (bad_z/slot/type, delete, unknown plate), a tool change at 10 mm writes `M6211 T1 …` and purge reports 1 change, split to parts, calibration (409 unsaved_project, discard, bad_type).
+- Regressions: rotation 8/8, phase1b features 39/39, phase1 MCP smoke 12/12, phase1b MCP smoke 22/22, `remote-api-runtime-check.py` 39 checks / 0 failed / 1 skipped.
+- MCP pytest: 1438 passed, 4 skipped; the real `%USERPROFILE%\.orcaslicer-mcp\gcode` stays empty.
+
+Found while testing:
+- The elegoo-link SDK writes the access code in clear text to `<datadir>/log/elegoolink.log` (`lan_service.cpp:347`); ElegooSlicer's own logs hold neither the code nor the serial. Documented in README "Privacy and network"; not patched (SDK code).
+- `409 secondary_instance` is not runtime-tested: the master lock is per data dir and a second window on the same data dir cannot bind the API port, so it is reachable only when the first window started with the API off.
+
+Still open: real-printer checks after 17/10 (model string, camera URL, tray numbering, type names such as "PLA+", Phase 4.4 cube print with Victor), `.mcpb` packing, CI run (Actions), D11 before any release.
