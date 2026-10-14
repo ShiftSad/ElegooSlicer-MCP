@@ -105,6 +105,15 @@ private:
     Response handle_save_project(const std::string &body);   // POST /project/save
     Response handle_paint(uint64_t id, const std::string &body); // POST /objects/{id}/paint
 
+    // elegoo-mcp: Elegoo printers and CANVAS, defined in RemoteAPIElegoo.cpp.
+    // {id} is the printer's API id (see api_printer_id there).
+    Response route_elegoo(const Request &req);            // every /api/v1/printers route
+    Response handle_get_printers();                       // GET /printers
+    Response handle_get_printer(const std::string &id);   // GET /printers/{id}
+    Response handle_get_printer_status(const std::string &id, const std::string &query); // GET /printers/{id}/status
+    Response handle_get_printer_history(const std::string &id, const std::string &what,  // GET /printers/{id}/tasks|files
+                                        const std::string &query);
+
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);
     // plates: make the stored slice state describe the current plate (GUI thread).

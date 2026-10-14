@@ -310,7 +310,9 @@ Response Controller::handle_status()
             {"api_version", "1.0"},
             {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates",
                               // elegoo-mcp: routes in RemoteAPIModelOps.cpp
-                              "orient_object", "view", "volumes", "project_save", "paint"}},
+                              "orient_object", "view", "volumes", "project_save", "paint",
+                              // elegoo-mcp: routes in RemoteAPIElegoo.cpp
+                              "printers"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
             {"objects", objects},
@@ -2561,6 +2563,7 @@ Response Controller::dispatch(const Request &req)
                 return { 404, {{"error", "not_found"}} };
             }
         }
+        if (t.rfind("/api/v1/printers", 0) == 0) return route_elegoo(req); // elegoo-mcp: RemoteAPIElegoo.cpp
         return { 404, {{"error", "not_found"}} };
     } catch (const std::exception &e) {
         if (std::string(e.what()) == "ui_timeout")
