@@ -64,3 +64,31 @@ async def test_auto_orient_unknown_object(monkeypatch):
     respx.post(f"{BASE}/orient").mock(return_value=httpx.Response(404, json={"error": "unknown_object"}))
     out = await srv.auto_orient(object_id=99)
     assert out["error"] == "unknown_object"
+
+
+# --- set_view -----------------------------------------------------------------
+
+
+@respx.mock
+async def test_set_view_sends_the_tab(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/view").mock(return_value=httpx.Response(200, json={"view": "preview"}))
+    out = await srv.set_view("preview")
+    assert out == {"view": "preview"}
+    assert _sent(route) == {"view": "preview"}
+
+
+@respx.mock
+async def test_set_view_bad_view_422(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/view").mock(return_value=httpx.Response(422, json={"error": "bad_view"}))
+    out = await srv.set_view("monitor")
+    assert out["error"] == "bad_view"
+
+
+@respx.mock
+async def test_set_view_needs_an_elegoo_build(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/view").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
+    out = await srv.set_view("prepare")
+    assert "ElegooSlicer MCP" in out["error"] and "'view'" in out["error"]

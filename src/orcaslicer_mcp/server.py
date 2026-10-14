@@ -587,6 +587,27 @@ async def auto_orient(
 
 
 @mcp.tool()
+async def set_view(
+    view: Annotated[Literal["prepare", "preview"], Field(description=(
+        "'prepare' is the 3D editor where objects are placed and edited; 'preview' shows "
+        "the sliced toolpaths of the current plate."))],
+) -> dict:
+    """Switch the slicer window to the Prepare tab (3D editor) or the Preview tab (sliced
+    toolpaths), like clicking the tab at the top. Returns {"view": ...}.
+
+    Use it to show the user the result: preview after a slice, prepare before editing objects.
+    As with a click on the tab, opening the preview starts slicing the current plate when it
+    holds objects and is not sliced yet; follow it with get_slice_status or slice_and_wait.
+    get_status reports the open tab as "view" (prepare, preview or other). Needs ElegooSlicer
+    MCP ('view' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.set_view(view)
+    except ApiError as e:
+        return _elegoo_err(e, "view")
+
+
+@mcp.tool()
 async def list_plates() -> dict:
     """List the plates in the project: each one's 0-based index, name, whether it is the
     current plate (the one slice, get_gcode, render_plate and get_job_status act on), lock
@@ -1650,6 +1671,7 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "select_plate": ("Select plate", False, False),
     "move_object_to_plate": ("Move object to plate", False, False),
     "auto_orient": ("Auto-orient objects", False, False),
+    "set_view": ("Switch the Prepare/Preview tab", False, False),
     "remember": ("Save a note", False, False),
     "load_model": ("Load a model file", False, False),
     "select_preset": ("Select preset", False, False),

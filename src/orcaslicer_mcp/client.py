@@ -123,6 +123,10 @@ class OrcaClient:
         body = {"object_id": object_id} if object_id is not None else None
         return await self._request("POST", "/api/v1/orient", json=body)
 
+    async def set_view(self, view: str) -> dict:
+        # ElegooSlicer MCP, capability "view": switches the window's Prepare/Preview tab.
+        return await self._request("POST", "/api/v1/view", json={"view": view})
+
     async def job_status(self) -> dict:
         return await self._request("GET", "/api/v1/jobs/status")
 

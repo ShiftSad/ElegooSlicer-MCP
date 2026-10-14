@@ -138,6 +138,10 @@
       "description": "Auto-orient objects for printing (async job; poll get_job_status until idle). With object_id only that object is turned, as selecting it and pressing Auto orient does in the window; without it, every object."
     },
     {
+      "name": "set_view",
+      "description": "Switch the slicer window to the Prepare tab (3D editor) or the Preview tab (sliced toolpaths), like clicking the tab at the top. Returns {\"view\": ...}."
+    },
+    {
       "name": "list_plates",
       "description": "List the plates in the project: each one's 0-based index, name, whether it is the current plate (the one slice, get_gcode, render_plate and get_job_status act on), lock state, build volume and the objects it holds."
     },

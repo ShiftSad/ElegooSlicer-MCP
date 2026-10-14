@@ -9,6 +9,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 - `auto_orient` takes an optional `object_id` to orient only that object, as selecting it and pressing Auto orient does in the window. Without it every object is oriented, as before. This needs ElegooSlicer MCP with `orient_object` in the `get_status` capabilities; an older build would ignore the id and orient everything, so the tool refuses instead of sending it.
+- `set_view` switches the slicer window to the Prepare tab (3D editor) or the Preview tab (sliced toolpaths), as a click on the tab does; opening the preview slices the current plate when it isn't sliced yet. `get_status` reports the open tab as `view`. Needs ElegooSlicer MCP with `view` in the capabilities.
 
 ### Fixed
 - `load_model` reports a model file that doesn't exist as `file not found: <path>`, with a hint to check that the file exists and to pass an absolute path, when the slicer answers 404 `file_not_found`. Before, that 404 read as a missing route ("not available on this OrcaSlicer build (needs M4a)"). A bare 404 `not_found` still means the route is missing.
