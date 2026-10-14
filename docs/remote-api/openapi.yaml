@@ -879,6 +879,75 @@ paths:
               example: { error: "save_failed" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /objects/{id}/paint:
+    post:
+      summary: Paint support, seam or color on an object's triangles
+      operationId: paintObject
+      description: |
+        Writes into the data the paint gizmos edit (support enforcers/blockers, seam,
+        color). A triangle of the object's solid parts is painted when its centroid,
+        in world mm of the first copy, is inside `box_mm` (no box: every triangle) and,
+        with `max_overhang_deg` = a, when it faces down tilted at most a degrees from
+        horizontal (outward normal within a degrees of -Z; the support tool's "paint on
+        overhangs only" test). `clear: true` first erases the layer on the whole
+        object; with no state/slot it only erases. The object's plates are marked
+        unsliced.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [layer]
+              properties:
+                layer: { type: string, enum: [support, seam, color] }
+                state: { type: string, enum: [enforce, block, none], description: "support and seam layers." }
+                slot: { type: integer, minimum: 1, description: "color layer: 1-based filament slot." }
+                box_mm:
+                  type: array
+                  items: { $ref: "#/components/schemas/Vec3" }
+                  minItems: 2
+                  maxItems: 2
+                max_overhang_deg: { type: number, exclusiveMinimum: 0, maximum: 90 }
+                clear: { type: boolean, default: false }
+            example: { layer: support, state: enforce, box_mm: [[0, 0, 0], [256, 256, 10]], max_overhang_deg: 30 }
+      responses:
+        "200":
+          description: Painted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  painted_triangles: { type: integer }
+                  layer: { type: string }
+                  cleared: { type: boolean }
+              example: { painted_triangles: 412, layer: support, cleared: false }
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown object, or one without a copy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Bad layer, state, slot, box or overhang angle.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                layer:    { value: { error: "bad_layer" } }
+                state:    { value: { error: "bad_state" } }
+                slot:     { value: { error: "bad_slot" } }
+                box:      { value: { error: "bad_box" } }
+                overhang: { value: { error: "bad_overhang" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:

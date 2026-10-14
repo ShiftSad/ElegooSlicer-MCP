@@ -9,6 +9,7 @@
 #include "libslic3r/Format/bbs_3mf.hpp"   // save_object_mesh (auto-backup)
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
@@ -156,13 +157,13 @@ static nlohmann::json volume_json(const ModelObject &mo, size_t index)
 }
 
 // Reads a [x, y, z] array of finite numbers.
-static bool read_vec3(const nlohmann::json &in, const char *key, Vec3d &out)
+static bool read_vec3(const nlohmann::json &value, Vec3d &out)
 {
-    if (!in.contains(key) || !in[key].is_array() || in[key].size() != 3)
+    if (!value.is_array() || value.size() != 3)
         return false;
     for (int i = 0; i < 3; ++i) {
-        if (!in[key][i].is_number()) return false;
-        out[i] = in[key][i].get<double>();
+        if (!value[i].is_number()) return false;
+        out[i] = value[i].get<double>();
         if (!std::isfinite(out[i])) return false;
     }
     return true;
@@ -236,9 +237,9 @@ Response Controller::handle_add_volume(uint64_t id, const std::string &body)
         return { 422, {{"error", "bad_shape"}, {"detail", "box | cylinder | sphere"}} };
 
     Vec3d size, position;
-    if (!read_vec3(in, "size_mm", size) || size.minCoeff() <= 0. || size.maxCoeff() > 10000.)
+    if (!in.contains("size_mm") || !read_vec3(in["size_mm"], size) || size.minCoeff() <= 0. || size.maxCoeff() > 10000.)
         return { 422, {{"error", "bad_size"}, {"detail", "size_mm: [x, y, z], each > 0 and <= 10000 mm"}} };
-    if (!read_vec3(in, "position_mm", position))
+    if (!in.contains("position_mm") || !read_vec3(in["position_mm"], position))
         return { 422, {{"error", "bad_position"}, {"detail", "position_mm: [x, y, z], world mm of the centre"}} };
     if (in.contains("name") && !in["name"].is_string())
         return { 400, {{"error", "name_must_be_string"}} };
@@ -470,6 +471,160 @@ Response Controller::handle_save_project(const std::string &body)
         if (e == "not_3mf" || e == "bad_path") return { 422, r };
         if (e == "save_failed")                return { 500, r };
         return { 409, r }; // project_unnamed, file_exists
+    }
+    return { 200, r };
+}
+
+// --- POST /objects/{id}/paint ------------------------------------------------
+//   {"layer": "support" | "seam" | "color",
+//    "state": "enforce" | "block" | "none"   (support, seam)
+//    "slot": n                               (color: 1-based filament slot),
+//    "box_mm": [[x0,y0,z0], [x1,y1,z1]]      (optional, world mm),
+//    "max_overhang_deg": a                   (optional, 0 < a <= 90),
+//    "clear": true                           (optional)}
+// Paints whole triangles of the object's solid parts into the store the paint gizmos
+// use (ModelVolume::supported_facets / seam_facets / mmu_segmentation_facets, through
+// a TriangleSelector). A triangle is painted when its centroid, in world coordinates
+// of the object's first copy, is inside the box (no box: every triangle) and, with
+// max_overhang_deg, when it faces down at most that many degrees from horizontal -
+// the test of the support gizmo's "paint on overhangs only". "clear" first erases
+// that layer on the whole object; with no state/slot it only erases.
+Response Controller::handle_paint(uint64_t id, const std::string &body)
+{
+    nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in dispatch
+    if (!in.is_object())
+        return { 400, {{"error", "body_must_be_object"}} };
+
+    const std::string layer = in.contains("layer") && in["layer"].is_string() ? in["layer"].get<std::string>() : "";
+    if (layer != "support" && layer != "seam" && layer != "color")
+        return { 422, {{"error", "bad_layer"}, {"detail", "support | seam | color"}} };
+
+    if (in.contains("clear") && !in["clear"].is_boolean())
+        return { 400, {{"error", "clear_must_be_boolean"}} };
+    const bool clear = in.value("clear", false);
+
+    // What to paint with. Support and seam take a state; color takes a filament slot,
+    // which TriangleSelector stores as Extruder1 + (slot - 1).
+    bool                has_state = false;
+    EnforcerBlockerType state     = EnforcerBlockerType::NONE;
+    int                 slot      = 0;
+    if (layer == "color") {
+        if (in.contains("slot")) {
+            if (!in["slot"].is_number_integer()) return { 422, {{"error", "bad_slot"}, {"detail", "1-based filament slot"}} };
+            slot = in["slot"].get<int>();
+            if (slot < 1 || slot > int(EnforcerBlockerType::ExtruderMax))
+                return { 422, {{"error", "bad_slot"}, {"detail", "1-based filament slot"}} };
+            state     = EnforcerBlockerType(int(EnforcerBlockerType::Extruder1) + slot - 1);
+            has_state = true;
+        }
+    } else if (in.contains("state")) {
+        const std::string s = in["state"].is_string() ? in["state"].get<std::string>() : "";
+        if      (s == "enforce") state = EnforcerBlockerType::ENFORCER;
+        else if (s == "block")   state = EnforcerBlockerType::BLOCKER;
+        else if (s == "none")    state = EnforcerBlockerType::NONE;
+        else return { 422, {{"error", "bad_state"}, {"detail", "enforce | block | none"}} };
+        has_state = true;
+    }
+
+    bool  has_box = false;
+    Vec3d box_min = Vec3d::Zero(), box_max = Vec3d::Zero();
+    if (in.contains("box_mm")) {
+        const nlohmann::json &b = in["box_mm"];
+        Vec3d c0, c1;
+        if (!b.is_array() || b.size() != 2 || !read_vec3(b[0], c0) || !read_vec3(b[1], c1))
+            return { 422, {{"error", "bad_box"}, {"detail", "box_mm: [[x0,y0,z0], [x1,y1,z1]] in world mm"}} };
+        box_min = c0.cwiseMin(c1);
+        box_max = c0.cwiseMax(c1);
+        has_box = true;
+    }
+
+    bool   has_overhang = false;
+    double max_overhang_deg = 0.;
+    if (in.contains("max_overhang_deg")) {
+        max_overhang_deg = in["max_overhang_deg"].is_number() ? in["max_overhang_deg"].get<double>() : -1.;
+        if (!(max_overhang_deg > 0. && max_overhang_deg <= 90.))
+            return { 422, {{"error", "bad_overhang"}, {"detail", "0 < max_overhang_deg <= 90"}} };
+        has_overhang = true;
+    }
+
+    if (!has_state && !clear)
+        return { 422, {{"error", layer == "color" ? "bad_slot" : "bad_state"},
+                       {"detail", layer == "color" ? "give \"slot\" (or \"clear\": true)" : "give \"state\" (or \"clear\": true)"}} };
+    if (!has_state && (has_box || has_overhang))
+        return { 422, {{"error", layer == "color" ? "bad_slot" : "bad_state"},
+                       {"detail", "box_mm and max_overhang_deg choose where to paint; say with what"}} };
+
+    nlohmann::json r = run_on_ui([=]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        const int idx = find_object_index(plater->model(), id);
+        if (idx < 0) return {{"error", "unknown_object"}};
+        ModelObject *mo = plater->model().objects[idx];
+        if (mo->instances.empty()) return {{"error", "no_instance"}};
+        if (slot > wxGetApp().filaments_cnt())
+            return {{"error", "bad_slot"}, {"detail", "the project has " + std::to_string(wxGetApp().filaments_cnt()) + " filament(s)"}};
+
+        // An open paint gizmo holds its own copy of the paint and writes it back on its
+        // next stroke, so close it first, as the object list does before it erases
+        // support paint (ObjectList::del_info_item).
+        GLCanvas3D *canvas = plater->get_view3D_canvas3D();
+        canvas->get_gizmos_manager().reset_all_states();
+        plater->take_snapshot("Paint " + layer);
+
+        const Transform3d instance_matrix = mo->instances.front()->get_matrix();
+        const double      cos_limit       = -std::cos(max_overhang_deg * PI / 180.);
+        int painted = 0;
+        for (ModelVolume *mv : mo->volumes) {
+            if (!mv->is_model_part()) continue; // the gizmos paint solid parts only
+            FacetsAnnotation &facets = layer == "support" ? mv->supported_facets :
+                                       layer == "seam"    ? mv->seam_facets :
+                                                            mv->mmu_segmentation_facets;
+            if (clear)
+                facets.reset();
+            if (!has_state)
+                continue;
+
+            const TriangleMesh &mesh  = mv->mesh();
+            const Transform3d   trafo = instance_matrix * mv->get_matrix();
+            // A mirrored copy reverses the triangles' winding, so their normals flip.
+            const bool mirrored = trafo.linear().determinant() < 0.;
+            TriangleSelector selector(mesh);
+            selector.deserialize(facets.get_data()); // keep the paint already there
+            for (int f = 0; f < (int) mesh.its.indices.size(); ++f) {
+                const auto &tri = mesh.its.indices[f]; // three vertex indices
+                const Vec3d a = trafo * mesh.its.vertices[tri[0]].cast<double>();
+                const Vec3d b = trafo * mesh.its.vertices[tri[1]].cast<double>();
+                const Vec3d c = trafo * mesh.its.vertices[tri[2]].cast<double>();
+                const Vec3d centroid = (a + b + c) / 3.;
+                if (has_box && !((centroid.array() >= box_min.array()).all() && (centroid.array() <= box_max.array()).all()))
+                    continue;
+                if (has_overhang) {
+                    Vec3d normal = (b - a).cross(c - a);
+                    if (mirrored) normal = -normal;
+                    const double length = normal.norm();
+                    // Same rule as TriangleSelector::select_patch: the normal must be
+                    // within max_overhang_deg of straight down.
+                    if (length <= 0. || normal.z() / length >= cos_limit)
+                        continue;
+                }
+                selector.set_facet(f, state);
+                ++painted;
+            }
+            facets.set(selector);
+        }
+
+        // What the gizmos do after a stroke (update_model_object): refresh the object's
+        // info rows ("Support painting", "Color painting"...) and reschedule slicing.
+        wxGetApp().obj_list()->update_info_items(idx);
+        plater->schedule_background_process();
+        invalidate_object_plates(idx);
+        canvas->set_as_dirty(); // color paint shows in the 3D view on the next frame
+        api_notify("Painted " + std::to_string(painted) + " triangle(s) (" + layer + ") on '" + mo->name + "'" +
+                   (clear ? " after clearing" : ""));
+        return {{"painted_triangles", painted}, {"layer", layer}, {"cleared", clear}};
+    });
+    if (r.contains("error")) {
+        if (r["error"] == "unknown_object" || r["error"] == "no_instance") return { 404, r };
+        return { 422, r }; // bad_slot
     }
     return { 200, r };
 }

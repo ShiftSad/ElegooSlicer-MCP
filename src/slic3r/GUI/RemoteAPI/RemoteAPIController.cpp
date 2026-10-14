@@ -2549,6 +2549,10 @@ Response Controller::dispatch(const Request &req)
                     try { return route_volumes(req, oid, action); }
                     catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
                 }
+                if (req.method == "POST" && action == "paint") { // elegoo-mcp
+                    try { return handle_paint(oid, req.body); }
+                    catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
+                }
                 return { 404, {{"error", "not_found"}} };
             }
         }

@@ -56,6 +56,7 @@ Base URL: `http://<host>:13130/api/v1`
 | PUT | `/objects/{id}/volumes/{vid}/config` | Set one volume's own settings (atomic) |
 | DELETE | `/objects/{id}/volumes/{vid}` | Remove a volume |
 | POST | `/project/save` | Save the project as a .3mf (current file, or a new path) |
+| POST | `/objects/{id}/paint` | Paint support / seam / color on the triangles inside a box |
 
 ### GET /status
 
@@ -457,6 +458,41 @@ takes that name: the path must be absolute, in an existing folder, and end in `.
 dropped, as in the window. Waits up to 120 s for big projects. Errors also:
 `500 save_failed`, `400 body_must_be_object | path_must_be_string |
 overwrite_must_be_boolean | invalid_json`.
+
+### POST /objects/{id}/paint
+
+```bash
+# support enforcers under the downward faces of the lower 10 mm
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"layer":"support","state":"enforce","box_mm":[[0,0,0],[256,256,10]],"max_overhang_deg":30}' \
+  http://localhost:13130/api/v1/objects/832/paint
+```
+```json
+{ "painted_triangles": 412, "layer": "support", "cleared": false }
+```
+Paints into the same data the paint gizmos edit, so the result shows (and can be
+retouched) in the window's Support painting, Seam painting and Color painting tools.
+- `layer`: `support` (enforcers/blockers), `seam` or `color`.
+- `state` (`support`, `seam`): `enforce`, `block` or `none` (erase).
+  `slot` (`color`): 1-based filament slot, at most the project's filament count.
+- `box_mm` (optional): `[[x0,y0,z0],[x1,y1,z1]]` in world mm. A triangle is painted
+  when its centroid, measured on the object's first copy, is inside the box (edges
+  included). Without a box every triangle of the object is a candidate.
+- `max_overhang_deg` (optional, `0 < a <= 90`): only triangles facing **down** and
+  tilted at most `a` degrees from horizontal are painted, i.e. whose outward normal
+  is within `a` degrees of straight down (-Z). It is the test of the support tool's
+  "paint on overhangs only" with `a` as the threshold angle: 90 keeps every
+  downward-facing triangle, 30 only the flatter overhangs.
+- `clear` (optional): `true` first erases that layer on the whole object; without
+  `state`/`slot` that is all it does.
+
+Only the object's solid parts are painted (as in the gizmos), whole triangles at a
+time: big triangles crossing the box edge are painted or not as a whole. An open paint
+tool is closed first so it cannot write its old copy back. The object's plates are
+marked unsliced and the change can be undone in the window. Errors:
+`422 bad_layer | bad_state | bad_slot | bad_box | bad_overhang`,
+`404 unknown_object | no_instance`, `400 body_must_be_object | clear_must_be_boolean |
+invalid_json`.
 
 ## Notes & limits
 
