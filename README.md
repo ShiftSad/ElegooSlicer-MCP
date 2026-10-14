@@ -13,7 +13,7 @@ This copy of the server is a fork of [OrcaSlicer MCP](https://github.com/MaxElli
 
 - The slicing tools of OrcaSlicer MCP work with it unchanged, on the stock Elegoo profiles (checked with the Centauri Carbon 2 0.4 nozzle profile). The printer tools read an Elegoo printer through ElegooSlicer, and new tools read the CANVAS, send prints with your confirmation and take camera pictures. See [Printers, CANVAS and printing (ElegooSlicer MCP)](#printers-canvas-and-printing-elegooslicer-mcp).
 - The tools for routes only ElegooSlicer MCP has check the capabilities `get_status` lists. On a build without one they say which capability is missing instead of guessing. See [Project tools (ElegooSlicer MCP)](#project-tools-elegooslicer-mcp).
-- It is not on PyPI, and the `orcaslicer-mcp` package there is the upstream server without these tools. Run it from git: `uvx --from "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp" orcaslicer-mcp` (uv needs git for that). The Claude Desktop extension does the same.
+- It is not on PyPI, and the `orcaslicer-mcp` package there is the upstream server without these tools. Run it from git at a release tag: `uvx --from "git+https://github.com/ShiftSad/ElegooSlicer-MCP@v1.5.3.5-mcp.1#subdirectory=mcp" orcaslicer-mcp` (uv needs git for that; take the latest tag from the releases page, made for the ElegooSlicer MCP build of the same release). The Claude Desktop extension does the same with its own release's tag. `@remote-api` in place of the tag runs the development branch, untested between releases.
 - The module, the command and the environment variables keep their OrcaSlicer names (`orcaslicer_mcp`, `orcaslicer-mcp`, `ORCA_API_TOKEN`, ...), so fixes from upstream can still be merged.
 
 What the ElegooSlicer MCP build does on its own, outside this server:
@@ -168,7 +168,7 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first, bec
       "mcpServers": {
         "orcaslicer": {
           "command": "uvx",
-          "args": ["--from", "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp", "orcaslicer-mcp"],
+          "args": ["--from", "git+https://github.com/ShiftSad/ElegooSlicer-MCP@v1.5.3.5-mcp.1#subdirectory=mcp", "orcaslicer-mcp"],
           "env": {
             "ORCA_API_TOKEN": "<token from Preferences>"
           }
@@ -183,10 +183,10 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first, bec
     >
     > ```powershell
     > python -m venv "$env:USERPROFILE\.venvs\orcaslicer-mcp"
-    > & "$env:USERPROFILE\.venvs\orcaslicer-mcp\Scripts\python" -m pip install "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp"
+    > & "$env:USERPROFILE\.venvs\orcaslicer-mcp\Scripts\python" -m pip install "git+https://github.com/ShiftSad/ElegooSlicer-MCP@v1.5.3.5-mcp.1#subdirectory=mcp"
     > ```
     >
-    > Then set `"command"` to `C:\Users\<you>\.venvs\orcaslicer-mcp\Scripts\orcaslicer-mcp.exe` with no `args`. Upgrade later with the same pip command plus `-U --force-reinstall`.
+    > Then set `"command"` to `C:\Users\<you>\.venvs\orcaslicer-mcp\Scripts\orcaslicer-mcp.exe` with no `args`. Upgrade later with the same pip command, naming the new release's tag, plus `-U --force-reinstall`.
 
     > **macOS note for GUI clients other than Claude Desktop:** apps launched from the Dock do not inherit your terminal's PATH, so `"command": "uvx"` can fail silently. Run `which uvx` in Terminal, then paste the full path it prints into `"command"`. It is usually `~/.local/bin/uvx`.
 

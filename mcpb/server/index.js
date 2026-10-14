@@ -17,8 +17,10 @@ const path = require("path");
 
 const WIN = process.platform === "win32";
 const EXE = WIN ? "uvx.exe" : "uvx";
-// Where uvx gets the server: the mcp/ folder of the remote-api branch.
-const SOURCE = "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp";
+// Where uvx gets the server: the mcp/ folder at the release tag this extension was packed for
+// (scripts/cut-release.sh writes it). Never a branch: a push to it would change what every
+// installed extension runs, untested and maybe newer than the user's ElegooSlicer build.
+const SOURCE = "git+https://github.com/ShiftSad/ElegooSlicer-MCP@v1.5.3.5-mcp.1#subdirectory=mcp";
 
 function candidateDirs() {
   const home = os.homedir();

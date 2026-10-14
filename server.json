@@ -13,7 +13,7 @@
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "published": false,
-      "install": "uvx --from \"git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp\" orcaslicer-mcp",
+      "install": "uvx --from \"git+https://github.com/ShiftSad/ElegooSlicer-MCP@v1.5.3.5-mcp.1#subdirectory=mcp\" orcaslicer-mcp",
       "transport": "stdio",
       "environmentVariables": [
         {
