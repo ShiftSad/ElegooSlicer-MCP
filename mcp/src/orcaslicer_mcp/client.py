@@ -1,0 +1,461 @@
+from __future__ import annotations
+import asyncio
+import json
+import math
+from urllib.parse import quote
+import httpx
+import websockets
+from .config import Config
+from .errors import error_from_status, NotReachable, ApiError, UiTimeout
+from .guard import (BlockedKey, sensitive_keys, changed_keys, check_placeholders,
+                    redact_secrets, scrub_printer_secrets)
+
+
+class OrcaClient:
+    def __init__(self, cfg: Config):
+        self._cfg = cfg
+        self._http = httpx.AsyncClient(
+            base_url=cfg.base_url,
+            headers={"X-Api-Token": cfg.token},
+            timeout=cfg.timeout,
+        )
+
+    async def __aenter__(self) -> "OrcaClient":
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self._http.aclose()
+
+    async def _request(self, method: str, path: str, *, json=None, params=None,
+                       timeout: float | None = None) -> dict:
+        try:
+            resp = await self._http.request(
+                method, path, json=json, params=params,
+                timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT)
+        except httpx.TimeoutException as e:
+            raise UiTimeout(f"OrcaSlicer did not respond in time: {e}") from e
+        except httpx.TransportError as e:
+            raise NotReachable(f"OrcaSlicer not reachable at {self._cfg.base_url}: {e}") from e
+        if resp.status_code >= 400:
+            try:
+                body = resp.json()
+            except Exception:
+                body = {}
+            raise error_from_status(resp.status_code, body)
+        return resp.json()
+
+    async def get_status(self) -> dict:
+        data = await self._request("GET", "/api/v1/status")
+        # F4: the fork emits presets.filaments (plural), but the rest of the API
+        # surface is singular (type=filament, /presets keys, modified.filament).
+        # Normalize here so callers see one convention (it holds a list either way).
+        presets = data.get("presets")
+        if isinstance(presets, dict) and "filaments" in presets:
+            presets["filament"] = presets.pop("filaments")
+        return data
+
+    async def get_objects(self) -> dict:
+        data = await self._request("GET", "/api/v1/objects")
+        # F5: transform_object takes rotate in DEGREES, but the fork reports
+        # transform.rotation in RADIANS. Convert the readback to degrees so a
+        # set-then-read round-trip is consistent. (placement uses size_mm, not
+        # rotation, so this is safe for internal consumers.)
+        for obj in data.get("objects") or []:
+            rot = obj.get("transform", {}).get("rotation")
+            if isinstance(rot, list):
+                obj["transform"]["rotation"] = [math.degrees(v) for v in rot]
+        return data
+
+    async def delete_object(self, obj_id: int) -> dict:
+        return await self._request("DELETE", f"/api/v1/objects/{obj_id}")
+
+    async def duplicate_object(self, obj_id: int) -> dict:
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/duplicate")
+
+    async def _guard_config(self, changes: dict) -> None:
+        """Refuse writes that would change a sensitive key (see guard.py). Writing a key
+        back to its current value is allowed."""
+        check_placeholders(changes)
+        hits = sensitive_keys(changes or {})
+        if not hits:
+            return
+        current = await self.get_config(hits)
+        changed = changed_keys(changes, hits, current)
+        if changed:
+            raise BlockedKey(changed)
+
+    async def guard_preset_edit(self, ptype: str, name: str, changes: dict) -> None:
+        """The same refusal for edit_preset, judged against the named preset's stored values
+        and BEFORE anything is selected: selecting a preset discards the user's unsaved
+        overrides, so a refusal must not come after it."""
+        check_placeholders(changes)
+        hits = sensitive_keys(changes or {})
+        if not hits:
+            return
+        stored = (await self._request("POST", "/api/v1/preset/config",
+                                      json={"type": ptype, "name": name})).get("config", {})
+        changed = changed_keys(changes, hits, stored)
+        if changed:
+            raise BlockedKey(changed)
+
+    @staticmethod
+    def _guard_object_config(changes: dict | None) -> None:
+        """Refuse sensitive keys in a per-object or per-part write. There is no current value
+        to compare with here (an override is new by nature), so any sensitive key is refused."""
+        check_placeholders(changes)
+        hits = sensitive_keys(changes or {})
+        if hits:
+            raise BlockedKey(hits)
+
+    async def set_object_config(self, obj_id: int, changes: dict) -> dict:
+        self._guard_object_config(changes)
+        return await self._request("PUT", f"/api/v1/objects/{obj_id}/config", json=changes)
+
+    # Parts of an object: its model part(s), modifiers, negative parts and support
+    # enforcers/blockers (ElegooSlicer MCP, capability "volumes"). The API calls them volumes.
+    async def get_volumes(self, obj_id: int) -> dict:
+        return await self._request("GET", f"/api/v1/objects/{obj_id}/volumes")
+
+    async def add_volume(self, obj_id: int, vtype: str, shape: str, size_mm: list[float],
+                         position_mm: list[float], name: str | None = None,
+                         config: dict | None = None) -> dict:
+        self._guard_object_config(config)
+        body: dict = {"type": vtype, "shape": shape, "size_mm": size_mm,
+                      "position_mm": position_mm}
+        if name is not None:
+            body["name"] = name
+        if config:
+            body["config"] = config
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/volumes", json=body)
+
+    async def set_volume_config(self, obj_id: int, vol_id: int, changes: dict) -> dict:
+        self._guard_object_config(changes)
+        return await self._request("PUT", f"/api/v1/objects/{obj_id}/volumes/{vol_id}/config",
+                                   json=changes)
+
+    async def delete_volume(self, obj_id: int, vol_id: int) -> dict:
+        return await self._request("DELETE", f"/api/v1/objects/{obj_id}/volumes/{vol_id}")
+
+    async def paint(self, obj_id: int, body: dict) -> dict:
+        # ElegooSlicer MCP, capability "paint": support/seam/color painting of a region.
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/paint", json=body)
+
+    async def transform_object(self, obj_id: int, translate=None, rotate=None, scale=None) -> dict:
+        body = {}
+        if translate is not None:
+            body["translate"] = translate
+        if rotate is not None:
+            body["rotate"] = rotate
+        if scale is not None:
+            body["scale"] = scale
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/transform", json=body)
+
+    async def arrange(self) -> dict:
+        return await self._request("POST", "/api/v1/arrange")
+
+    async def orient(self, object_id: int | None = None) -> dict:
+        # No body orients every object, as before; {"object_id": id} orients only that one
+        # (ElegooSlicer MCP, capability "orient_object").
+        body = {"object_id": object_id} if object_id is not None else None
+        return await self._request("POST", "/api/v1/orient", json=body)
+
+    async def set_view(self, view: str) -> dict:
+        # ElegooSlicer MCP, capability "view": switches the window's Prepare/Preview tab.
+        return await self._request("POST", "/api/v1/view", json={"view": view})
+
+    async def job_status(self) -> dict:
+        return await self._request("GET", "/api/v1/jobs/status")
+
+    # Filament slots (ElegooSlicer MCP, capability "filaments"). Slots are 1-based, as the
+    # window numbers them.
+    async def get_filaments(self) -> dict:
+        return await self._request("GET", "/api/v1/filaments")
+
+    async def set_filament_count(self, count: int, force: bool = False) -> dict:
+        body: dict = {"count": count}
+        if force:
+            body["force"] = True
+        return await self._request("PUT", "/api/v1/filaments", json=body)
+
+    async def set_filament_slot(self, slot: int, preset: str | None = None,
+                                color: str | None = None) -> dict:
+        body: dict = {}
+        if preset is not None:
+            body["preset"] = preset
+        if color is not None:
+            body["color"] = color
+        return await self._request("PUT", f"/api/v1/filaments/{slot}", json=body)
+
+    async def split_object(self, obj_id: int, to: str, volume_id: int | None = None,
+                           drop_to_bed: bool = True) -> dict:
+        # ElegooSlicer MCP, capability "split". volume_id picks the part to split into parts;
+        # drop_to_bed False keeps floating pieces at their height (the window asks about it).
+        body: dict = {"to": to}
+        if volume_id is not None:
+            body["volume_id"] = volume_id
+        if not drop_to_bed:
+            body["drop_to_bed"] = False
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/split", json=body)
+
+    # Undo / redo of the window's history (ElegooSlicer MCP, capability "undo").
+    async def undo(self) -> dict:
+        return await self._request("POST", "/api/v1/undo")
+
+    async def redo(self) -> dict:
+        return await self._request("POST", "/api/v1/redo")
+
+    # Changes at a layer height: filament change, colour change (M600), pause (ElegooSlicer
+    # MCP, capability "layer_changes"). Plate indices are 0-based.
+    async def get_layer_changes(self, plate: int) -> dict:
+        return await self._request("GET", f"/api/v1/plates/{plate}/layer_changes")
+
+    async def add_layer_change(self, plate: int, change: dict) -> dict:
+        return await self._request("POST", f"/api/v1/plates/{plate}/layer_changes", json=change)
+
+    async def remove_layer_change(self, plate: int, z: float) -> dict:
+        return await self._request("DELETE", f"/api/v1/plates/{plate}/layer_changes",
+                                   params={"z": z})
+
+    async def run_calibration(self, ctype: str, params: dict | None = None,
+                              discard_project: bool = False) -> dict:
+        # ElegooSlicer MCP, capability "calibration". It builds a new project with the test
+        # objects, which can take a while: stay under Claude Desktop's ~60 s tool-call limit.
+        body: dict = {"type": ctype, "params": params or {}}
+        if discard_project:
+            body["discard_project"] = True
+        return await self._request("POST", "/api/v1/calibration", json=body, timeout=50.0)
+
+    # Elegoo printers and their CANVAS (ElegooSlicer MCP, capabilities "printers" and
+    # "canvas"). The slicer builds these replies field by field and never sends a printer's
+    # secrets; every reply and error body is still scrubbed here, so a slicer bug or an older
+    # build can't leak one to the model (guard.scrub_printer_secrets).
+    async def _printer_request(self, method: str, path: str, **kwargs):
+        try:
+            return scrub_printer_secrets(await self._request(method, path, **kwargs))
+        except ApiError as e:
+            e.body = scrub_printer_secrets(e.body)
+            raise
+
+    @staticmethod
+    def _printer_path(printer_id: str, action: str = "") -> str:
+        # Printer ids are opaque strings from GET /printers: quoted so none can change the path.
+        path = f"/api/v1/printers/{quote(str(printer_id), safe='')}"
+        return f"{path}/{action}" if action else path
+
+    async def get_printers(self) -> dict:
+        return await self._printer_request("GET", "/api/v1/printers")
+
+    async def get_printer_status(self, printer_id: str) -> dict:
+        return await self._printer_request("GET", self._printer_path(printer_id, "status"))
+
+    async def get_printer_tasks(self, printer_id: str, page: int = 1, size: int = 20) -> dict:
+        return await self._printer_request("GET", self._printer_path(printer_id, "tasks"),
+                                           params={"page": page, "size": size})
+
+    async def get_canvas(self, printer_id: str) -> dict:
+        return await self._printer_request("GET", self._printer_path(printer_id, "canvas"))
+
+    async def sync_canvas(self, printer_id: str, mode: str | None = None,
+                          discard_changes: bool = False) -> dict:
+        body: dict = {}
+        if mode is not None:
+            body["mode"] = mode
+        if discard_changes:
+            body["discard_changes"] = True
+        return await self._printer_request("POST", self._printer_path(printer_id, "canvas/sync"),
+                                           json=body)
+
+    async def get_canvas_mapping(self, printer_id: str, plate: int | None = None) -> dict:
+        params = {"plate": plate} if plate is not None else None
+        return await self._printer_request("GET", self._printer_path(printer_id, "canvas/mapping"),
+                                           params=params)
+
+    # Sending and controlling prints (ElegooSlicer MCP, capability "print_control"). The slicer
+    # refuses every one of these (403 print_control_disabled) until the user allows it in its
+    # Preferences, and it only ever sends G-code it sliced itself: no file or path goes from here.
+    async def prepare_print(self, printer_id: str, options: dict) -> dict:
+        return await self._printer_request("POST", self._printer_path(printer_id, "print/prepare"),
+                                           json=options)
+
+    async def start_print(self, printer_id: str, plan_id: str) -> dict:
+        # The slicer checks the printer and the plate again before it answers, each step with its
+        # own 10 s limit (about 30 s at worst), so wait longer than usual, but stay under Claude
+        # Desktop's ~60 s tool-call limit.
+        return await self._printer_request("POST", self._printer_path(printer_id, "print"),
+                                           json={"plan_id": plan_id}, timeout=50.0)
+
+    async def get_upload(self, upload_id: str) -> dict:
+        return await self._printer_request("GET", f"/api/v1/uploads/{quote(str(upload_id), safe='')}")
+
+    async def cancel_upload(self, upload_id: str) -> dict:
+        return await self._printer_request("DELETE",
+                                           f"/api/v1/uploads/{quote(str(upload_id), safe='')}")
+
+    async def printer_command(self, printer_id: str, action: str) -> dict:
+        # pause, resume or stop. A printer can take long to confirm these, so wait longer than
+        # usual, but stay under Claude Desktop's ~60 s tool-call limit.
+        body = {"confirm": "stop"} if action == "stop" else None
+        return await self._printer_request("POST", self._printer_path(printer_id, action),
+                                           json=body, timeout=50.0)
+
+    # Plates (fork v2.4.2-mcp.13 and later).
+    async def get_plates(self) -> dict:
+        return await self._request("GET", "/api/v1/plates")
+
+    async def create_plate(self, select: bool = True) -> dict:
+        return await self._request("POST", "/api/v1/plates", json={"select": select})
+
+    async def select_plate(self, index: int) -> dict:
+        return await self._request("POST", f"/api/v1/plates/{index}/select")
+
+    async def delete_plate(self, index: int) -> dict:
+        return await self._request("DELETE", f"/api/v1/plates/{index}")
+
+    async def set_object_plate(self, obj_id: int, plate: int, instance: int = 0) -> dict:
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/plate",
+                                   json={"plate": plate, "instance": instance})
+
+    async def get_config(self, keys: list[str] | None) -> dict:
+        # The fork's /config `keys` filter splits the RAW query string on ',' without
+        # URL-decoding first, so httpx's percent-encoded comma (%2C) matches nothing and
+        # returns {}. Rather than depend on that fragile path, fetch the full config
+        # (~20KB on LAN) and filter locally — parser-independent. See test_client_config.
+        data = await self._request("GET", "/api/v1/config")
+        cfg = data.get("config", {})
+        if keys:
+            return {k: cfg[k] for k in keys if k in cfg}
+        return cfg
+
+    async def put_config(self, changes: dict) -> dict:
+        await self._guard_config(changes)
+        return await self._request("PUT", "/api/v1/config", json=changes)
+
+    async def restore_config(self, snapshot: dict) -> dict:
+        """Write back values read with get_config earlier in the same call (compare_*
+        resets and restores). They are the slicer's own current values, so the guard has
+        nothing to judge, and skipping it keeps a restore from depending on one more GET."""
+        return await self._request("PUT", "/api/v1/config", json=snapshot)
+
+    async def slice(self) -> dict:
+        return await self._request("POST", "/api/v1/slice")
+
+    async def slice_status(self) -> dict:
+        return await self._request("GET", "/api/v1/slice/status")
+
+    async def cancel_slice(self) -> dict:
+        return await self._request("POST", "/api/v1/slice/cancel")
+
+    async def load_model(self, path: str) -> dict:
+        # STEP tessellation can far exceed the default timeout (the fork holds
+        # the request up to 120 s); give the read a matching allowance.
+        return await self._request("POST", "/api/v1/model", json={"path": path},
+                                   timeout=130.0)
+
+    async def save_project(self, path: str | None = None, overwrite: bool = False) -> dict:
+        # ElegooSlicer MCP, capability "project_save". No path = the project's current file.
+        body: dict = {"overwrite": overwrite}
+        if path is not None:
+            body["path"] = path
+        # Writing a big project (meshes, painting, plate thumbnails) can outlast the default
+        # timeout. Stay under Claude Desktop's ~60 s tool-call limit, as slice_and_wait does,
+        # so a slow save still gets our own answer instead of being cut off with none.
+        return await self._request("POST", "/api/v1/project/save", json=body, timeout=50.0)
+
+    async def select_preset(self, ptype: str, name: str) -> dict:
+        return await self._request("PUT", "/api/v1/preset", json={"type": ptype, "name": name})
+
+    async def save_preset(self, ptype: str, name: str, detach: bool = False) -> dict:
+        return await self._request("POST", "/api/v1/preset/save",
+                                   json={"type": ptype, "name": name, "detach": detach})
+
+    async def get_presets(self) -> dict:
+        return await self._request("GET", "/api/v1/presets")
+
+    async def get_preset_config(self, ptype: str, name: str) -> dict:
+        # Fork builds before v2.4.2-mcp.10 return this unfiltered (printhost_apikey/user/password
+        # included); later ones redact it too. This pass covers both.
+        return redact_secrets(await self._request(
+            "POST", "/api/v1/preset/config", json={"type": ptype, "name": name}))
+
+    async def delete_preset(self, ptype: str, name: str) -> dict:
+        return await self._request("DELETE", "/api/v1/preset", json={"type": ptype, "name": name})
+
+    async def set_layer_height(self, obj_id: int, mode: str, quality: float = 0.5) -> dict:
+        body = {"mode": mode}
+        if mode == "adaptive":
+            body["quality"] = quality
+        return await self._request("PUT", f"/api/v1/objects/{obj_id}/layer_height", json=body)
+
+    async def set_height_range(self, obj_id: int, min_z: float | None = None,
+                               max_z: float | None = None, layer_height: float | None = None,
+                               clear: bool = False) -> dict:
+        body = {"clear": True} if clear else {"min_z": min_z, "max_z": max_z, "layer_height": layer_height}
+        return await self._request("PUT", f"/api/v1/objects/{obj_id}/height_range", json=body)
+
+    async def get_gcode(self) -> bytes:
+        try:
+            resp = await self._http.get("/api/v1/gcode")
+        except httpx.TimeoutException as e:
+            raise UiTimeout(f"OrcaSlicer did not respond in time: {e}") from e
+        except httpx.TransportError as e:
+            raise NotReachable(f"OrcaSlicer not reachable at {self._cfg.base_url}: {e}") from e
+        if resp.status_code >= 400:
+            try:
+                body = resp.json()
+            except Exception:
+                body = {}
+            raise error_from_status(resp.status_code, body)
+        return resp.content
+
+    async def get_plate_render(self, view: str = "editor", angle: str = "iso",
+                               width: int = 800, height: int = 600,
+                               frame: str | None = None) -> bytes:
+        params: dict[str, str | int] = {
+            "view": view, "angle": angle, "width": width, "height": height}
+        if frame is not None:
+            params["frame"] = frame
+        try:
+            resp = await self._http.get("/api/v1/plate/render", params=params)
+        except httpx.TimeoutException as e:
+            raise UiTimeout(f"OrcaSlicer did not respond in time: {e}") from e
+        except httpx.TransportError as e:
+            raise NotReachable(f"OrcaSlicer not reachable at {self._cfg.base_url}: {e}") from e
+        if resp.status_code >= 400:
+            try:
+                body = resp.json()
+            except Exception:
+                body = {}
+            raise error_from_status(resp.status_code, body)
+        return resp.content
+
+    def _ws_url(self) -> str:
+        base = self._cfg.base_url
+        ws = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        return f"{ws}/api/v1/events?token={self._cfg.token}"
+
+    async def collect_events(self, seconds: float, stop_on: set[str] | None = None) -> list[dict]:
+        events: list[dict] = []
+        deadline = asyncio.get_event_loop().time() + seconds
+        try:
+            async with websockets.connect(self._ws_url()) as ws:
+                while True:
+                    remaining = deadline - asyncio.get_event_loop().time()
+                    if remaining <= 0:
+                        break
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        break
+                    try:
+                        evt = json.loads(raw)
+                    except (ValueError, TypeError):
+                        continue
+                    if not isinstance(evt, dict):
+                        continue
+                    events.append(evt)
+                    if stop_on and evt.get("event") in stop_on:
+                        break
+        except Exception:
+            # A closed/failed WS (e.g. bad token) just yields what we have.
+            pass
+        return events

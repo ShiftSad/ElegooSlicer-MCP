@@ -1,0 +1,193 @@
+from orcaslicer_mcp.physics_check import run_checks, cross_section, predicted_flows
+
+BASE = {
+    "nozzle_diameter": "0.8", "layer_height": "0.4", "line_width": "0.85",
+    "outer_wall_line_width": "0.8", "inner_wall_line_width": "0.88",
+    "outer_wall_speed": "35", "inner_wall_speed": "45",
+    "filament_max_volumetric_speed": "16", "filament_type": "PLA",
+    "nozzle_temperature": "215", "retraction_length": "1",
+    "fan_min_speed": "80", "fan_max_speed": "100",
+    "slow_down_layer_time": "8", "initial_layer_print_height": "0.4",
+}
+
+def _by(results, name):
+    return next(r for r in results if r.name == name)
+
+def test_cross_section_matches_rounded_rectangle_model():
+    assert abs(cross_section(0.85, 0.4) - 0.30567) < 1e-4
+
+def test_tuned_sidewinder_profile_passes():
+    rs = run_checks(BASE)
+    assert all(r.status != "fail" for r in rs), [r.detail for r in rs if r.status == "fail"]
+
+def test_cold_pla_at_high_flow_fails_temp_adequacy():
+    # demand 14.3 is above both the estimate and the preset's own (lowered) limit
+    cfg = BASE | {"nozzle_temperature": "205", "filament_max_volumetric_speed": "12"}
+    r = _by(run_checks(cfg), "temp_vs_flow")
+    assert r.status == "fail" and "8.3" in r.detail  # (205-195)/1.2 sustainable
+
+
+def test_cold_pla_within_the_preset_limit_only_warns():
+    # demand 14.3 is above the generic estimate (8.3) but within the preset's declared 16:
+    # the preset limit is the authority, so the estimate can only warn.
+    cfg = BASE | {"nozzle_temperature": "205"}
+    r = _by(run_checks(cfg), "temp_vs_flow")
+    assert r.status == "warn"
+    assert "8.3" in r.detail and "authority" in r.detail and "16" in r.detail
+
+
+def test_stock_elegoo_cc2_pla_is_not_blocked():
+    # Elegoo Centauri Carbon 2 stock profile: PLA at 210C (generic estimate 12.5 mm3/s),
+    # outer wall 232 mm/s x 0.45 x 0.2 = 18.9 mm3/s, Elegoo filament preset limit 21.
+    cfg = {"layer_height": "0.2", "nozzle_diameter": "0.4", "line_width": "0.45",
+           "outer_wall_speed": "232", "filament_max_volumetric_speed": "21",
+           "filament_type": "PLA", "nozzle_temperature": "210"}
+    rs = run_checks(cfg)
+    assert not [r for r in rs if r.status == "fail"], [r.detail for r in rs if r.status == "fail"]
+    assert _by(rs, "flow_ceiling").status == "pass"
+    assert _by(rs, "temp_vs_flow").status == "warn"
+
+def test_flow_ceiling_violation_fails():
+    cfg = BASE | {"inner_wall_speed": "80"}  # 80*0.3169=25.4 > 16
+    r = _by(run_checks(cfg), "flow_ceiling")
+    assert r.status == "fail" and "inner_wall" in r.detail
+
+def test_layer_height_over_80pct_of_nozzle_fails():
+    cfg = BASE | {"layer_height": "0.7"}
+    assert _by(run_checks(cfg), "layer_height_ratio").status == "fail"
+
+def test_long_retraction_warns():
+    cfg = BASE | {"retraction_length": "4"}
+    assert _by(run_checks(cfg), "retraction_range").status == "warn"
+
+def test_firmware_retraction_warns_orca_value_not_authoritative():
+    # F10: with use_firmware_retraction on, Orca's retraction_length is ignored;
+    # the printer firmware governs, so the sane-looking 1mm must NOT read as pass.
+    cfg = BASE | {"use_firmware_retraction": "1", "retraction_length": "1"}
+    r = _by(run_checks(cfg), "retraction_range")
+    assert r.status == "warn" and "firmware" in r.detail.lower()
+
+def test_firmware_retraction_flagged_even_without_orca_length():
+    cfg = {"use_firmware_retraction": "1"}
+    r = _by(run_checks(cfg), "retraction_range")
+    assert r.status == "warn" and "firmware" in r.detail.lower()
+
+def test_firmware_retraction_off_uses_orca_value():
+    cfg = BASE | {"use_firmware_retraction": "0", "retraction_length": "1"}
+    assert _by(run_checks(cfg), "retraction_range").status == "pass"
+
+def test_initial_layer_temp_below_bulk_warns():
+    # F11: first-layer nozzle temp below bulk risks first-layer adhesion (real user error).
+    cfg = BASE | {"nozzle_temperature": "230", "nozzle_temperature_initial_layer": "215"}
+    r = _by(run_checks(cfg), "initial_layer_temp")
+    assert r.status == "warn" and "215" in r.detail and "230" in r.detail
+
+def test_initial_layer_temp_equal_or_hotter_passes():
+    cfg = BASE | {"nozzle_temperature": "230", "nozzle_temperature_initial_layer": "230"}
+    assert _by(run_checks(cfg), "initial_layer_temp").status == "pass"
+    cfg2 = BASE | {"nozzle_temperature": "230", "nozzle_temperature_initial_layer": "235"}
+    assert _by(run_checks(cfg2), "initial_layer_temp").status == "pass"
+
+def test_initial_layer_temp_insufficient_data_warns():
+    assert _by(run_checks({}), "initial_layer_temp").status == "warn"
+
+def test_missing_data_warns_not_raises():
+    r = _by(run_checks({}), "flow_ceiling")
+    assert r.status == "warn" and "insufficient" in r.detail
+
+def test_all_checks_always_present():
+    names = {r.name for r in run_checks({})}
+    assert names == {"flow_ceiling", "temp_vs_flow", "layer_height_ratio",
+                     "line_width_ratio", "retraction_range", "cooling_sanity",
+                     "first_layer_height", "initial_layer_temp"}
+    assert all(r.status == "warn" for r in run_checks({}))
+
+def test_zero_flow_demand_passes_temp_check():
+    cfg = {"layer_height": "0.4", "line_width": "0.85", "nozzle_diameter": "0.8",
+           "filament_max_volumetric_speed": "16", "filament_type": "PLA",
+           "nozzle_temperature": "215", "outer_wall_speed": "0",
+           "outer_wall_line_width": "0.8"}
+    r = _by(run_checks(cfg), "temp_vs_flow")
+    assert r.status == "pass"
+
+def test_subbase_temp_reports_zero_not_negative():
+    cfg = {"layer_height": "0.4", "line_width": "0.85", "nozzle_diameter": "0.8",
+           "filament_max_volumetric_speed": "16", "filament_type": "PLA",
+           "nozzle_temperature": "180", "inner_wall_speed": "45",
+           "inner_wall_line_width": "0.88"}
+    r = _by(run_checks(cfg), "temp_vs_flow")
+    assert r.status == "fail" and "~0.0mm3/s" in r.detail
+
+
+def test_cold_nozzle_fails_even_within_the_preset_limit():
+    # PLA at 180C is below the 195C base, so the generic estimate is zero. The preset's
+    # limit (21) was set for a warmer nozzle and cannot vouch for this one: still blocked,
+    # although the demand (16.3 mm3/s) is within that limit and flow_ceiling passes.
+    cfg = {"layer_height": "0.2", "nozzle_diameter": "0.4", "line_width": "0.45",
+           "outer_wall_speed": "200", "filament_max_volumetric_speed": "21",
+           "filament_type": "PLA", "nozzle_temperature": "180"}
+    rs = run_checks(cfg)
+    assert _by(rs, "flow_ceiling").status == "pass"
+    r = _by(rs, "temp_vs_flow")
+    assert r.status == "fail" and "~0.0mm3/s" in r.detail
+    # At exactly the base temperature the estimate is still zero, so it still fails.
+    assert _by(run_checks(cfg | {"nozzle_temperature": "195"}), "temp_vs_flow").status == "fail"
+    # Just above it the preset's limit is trusted again (warning only).
+    assert _by(run_checks(cfg | {"nozzle_temperature": "196"}), "temp_vs_flow").status == "warn"
+
+def test_line_width_ratio_bounds():
+    base = {"nozzle_diameter": "0.8", "layer_height": "0.4"}
+    assert _by(run_checks(base | {"line_width": "0.5"}), "line_width_ratio").status == "warn"   # 0.625x
+    assert _by(run_checks(base | {"line_width": "0.4"}), "line_width_ratio").status == "fail"   # 0.5x
+    assert _by(run_checks(base | {"line_width": "0.9"}), "line_width_ratio").status == "pass"   # 1.125x
+
+def test_cooling_fan_inversion_fails():
+    cfg = {"fan_min_speed": "100", "fan_max_speed": "80"}
+    assert _by(run_checks(cfg), "cooling_sanity").status == "fail"
+
+def test_first_layer_height_cap():
+    cfg = {"nozzle_diameter": "0.4", "initial_layer_print_height": "0.36"}
+    assert _by(run_checks(cfg), "first_layer_height").status == "fail"  # 90% > 80%
+
+def test_percent_line_width_resolves_against_nozzle():
+    cfg = {"nozzle_diameter": "0.8", "layer_height": "0.4", "line_width": "105%",
+           "inner_wall_speed": "45", "filament_max_volumetric_speed": "16",
+           "filament_type": "PLA", "nozzle_temperature": "215"}
+    r = _by(run_checks(cfg), "flow_ceiling")
+    assert r.status == "pass"  # 105% of 0.8 = 0.84mm, flow ~14.2 <= 16
+    assert _by(run_checks(cfg), "line_width_ratio").status == "pass"  # 1.05x
+
+def test_zero_auto_width_treated_as_missing():
+    cfg = {"nozzle_diameter": "0.8", "layer_height": "0.4", "line_width": "0",
+           "inner_wall_speed": "45", "filament_max_volumetric_speed": "16"}
+    assert _by(run_checks(cfg), "flow_ceiling").status == "warn"
+    assert _by(run_checks(cfg), "line_width_ratio").status == "warn"
+
+def test_vector_value_first_element_used():
+    cfg = {"fan_min_speed": "80,80", "fan_max_speed": "100,100", "slow_down_layer_time": "8"}
+    assert _by(run_checks(cfg), "cooling_sanity").status == "pass"
+
+def test_predicted_flows_per_feature():
+    cfg = {
+        "layer_height": "0.5", "nozzle_diameter": "0.8", "line_width": "0.85",
+        "outer_wall_speed": "45", "inner_wall_speed": "50",
+        "sparse_infill_speed": "50", "sparse_infill_line_width": "0.9",
+    }
+    flows = predicted_flows(cfg)
+    # cross_section(0.85, 0.5) = (0.85 - 0.5*(1-pi/4))*0.5 = 0.371 mm^2 -> 45*0.371 = 16.7
+    assert abs(flows["outer_wall"] - 16.7) < 0.1
+    assert abs(flows["inner_wall"] - 18.6) < 0.2      # 50 * 0.371
+    assert abs(flows["sparse_infill"] - 19.8) < 0.2   # 50 * cross_section(0.9,0.5)=0.396
+    assert "bridge" not in flows                        # no bridge_speed given
+
+def test_predicted_flows_skips_unparseable():
+    cfg = {"layer_height": "0.5", "nozzle_diameter": "0.8", "outer_wall_speed": ""}
+    assert predicted_flows(cfg) == {}
+
+
+def test_every_check_declares_its_preset_layers():
+    from orcaslicer_mcp.physics_check import run_checks, CHECK_LAYERS
+    names = {r.name for r in run_checks({})}
+    assert names, "run_checks({}) should still emit one result per check"
+    assert names <= set(CHECK_LAYERS), names - set(CHECK_LAYERS)
+    assert all(v <= {"print", "filament", "printer"} and v for v in CHECK_LAYERS.values())

@@ -1,0 +1,410 @@
+"""Tools for routes only ElegooSlicer MCP has: orient one object, switch the view, parts,
+saving the project and region painting."""
+import json
+
+import httpx
+import respx
+
+import orcaslicer_mcp.server as srv
+
+BASE = "http://x:13130/api/v1"
+
+
+def _env(m):
+    m.setenv("ORCA_API_TOKEN", "tok"); m.setenv("ORCA_API_URL", "http://x:13130")
+
+
+def _status(*capabilities):
+    return httpx.Response(200, json={"app": "ElegooSlicer", "mcp_build": 2,
+                                     "capabilities": ["status", "objects", *capabilities]})
+
+
+def _sent(route):
+    return json.loads(route.calls.last.request.content)
+
+
+# --- auto_orient(object_id) ---------------------------------------------------
+
+
+@respx.mock
+async def test_auto_orient_one_object_sends_its_id(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{BASE}/status").mock(return_value=_status("orient_object"))
+    route = respx.post(f"{BASE}/orient").mock(return_value=httpx.Response(202, json={"started": True}))
+    out = await srv.auto_orient(object_id=7)
+    assert out["started"] is True
+    assert _sent(route) == {"object_id": 7}
+
+
+@respx.mock
+async def test_auto_orient_without_id_orients_all_with_no_body(monkeypatch):
+    _env(monkeypatch)
+    status = respx.get(f"{BASE}/status").mock(return_value=_status())
+    route = respx.post(f"{BASE}/orient").mock(return_value=httpx.Response(202, json={"started": True}))
+    assert (await srv.auto_orient())["started"] is True
+    assert route.calls.last.request.content == b""
+    assert not status.called  # no capability check when every object is meant
+
+
+@respx.mock
+async def test_auto_orient_one_object_is_refused_on_a_build_without_it(monkeypatch):
+    # An older build ignores the body and would orient EVERY object, so nothing is sent.
+    _env(monkeypatch)
+    respx.get(f"{BASE}/status").mock(return_value=_status())
+    route = respx.post(f"{BASE}/orient").mock(return_value=httpx.Response(202, json={"started": True}))
+    out = await srv.auto_orient(object_id=7)
+    assert "orient_object" in out["error"] and "ElegooSlicer MCP" in out["error"]
+    assert not route.called
+
+
+@respx.mock
+async def test_auto_orient_unknown_object(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{BASE}/status").mock(return_value=_status("orient_object"))
+    respx.post(f"{BASE}/orient").mock(return_value=httpx.Response(404, json={"error": "unknown_object"}))
+    out = await srv.auto_orient(object_id=99)
+    assert out["error"] == "unknown_object"
+
+
+# --- set_view -----------------------------------------------------------------
+
+
+@respx.mock
+async def test_set_view_sends_the_tab(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/view").mock(return_value=httpx.Response(200, json={"view": "preview"}))
+    out = await srv.set_view("preview")
+    assert out == {"view": "preview"}
+    assert _sent(route) == {"view": "preview"}
+
+
+@respx.mock
+async def test_set_view_bad_view_422(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/view").mock(return_value=httpx.Response(422, json={"error": "bad_view"}))
+    out = await srv.set_view("monitor")
+    assert out["error"] == "bad_view"
+
+
+@respx.mock
+async def test_set_view_needs_an_elegoo_build(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/view").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
+    out = await srv.set_view("prepare")
+    assert "ElegooSlicer MCP" in out["error"] and "'view'" in out["error"]
+
+
+# --- parts (volumes) ----------------------------------------------------------
+
+_VOLUME = {"id": 901, "index": 1, "name": "Modifier", "type": "modifier", "extruder": 0,
+           "size_mm": [10, 10, 5], "position_mm": [128, 128, 2.5],
+           "config": {"sparse_infill_density": "50%"}}
+
+
+@respx.mock
+async def test_list_parts(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{BASE}/objects/42/volumes").mock(return_value=httpx.Response(200, json={
+        "object": 42, "volumes": [dict(_VOLUME, id=900, index=0, type="part", name="cube"), _VOLUME]}))
+    out = await srv.list_parts(42)
+    assert out["object"] == 42
+    assert [v["type"] for v in out["volumes"]] == ["part", "modifier"]
+
+
+@respx.mock
+async def test_list_parts_needs_an_elegoo_build(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{BASE}/objects/42/volumes").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
+    out = await srv.list_parts(42)
+    assert "ElegooSlicer MCP" in out["error"] and "'volumes'" in out["error"]
+
+
+@respx.mock
+async def test_list_parts_unknown_object_is_not_a_capability_gap(monkeypatch):
+    _env(monkeypatch)
+    respx.get(f"{BASE}/objects/5/volumes").mock(return_value=httpx.Response(404, json={"error": "unknown_object"}))
+    out = await srv.list_parts(5)
+    assert out["error"] == "unknown_object"
+
+
+@respx.mock
+async def test_add_part_composes_the_body(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/volumes").mock(
+        return_value=httpx.Response(201, json={"volume": _VOLUME}))
+    out = await srv.add_part(42, "modifier", "box", [10, 10, 5], [128, 128, 2.5],
+                             name="base infill", config={"sparse_infill_density": "50%"})
+    assert out["volume"]["id"] == 901
+    assert _sent(route) == {"type": "modifier", "shape": "box", "size_mm": [10, 10, 5],
+                            "position_mm": [128, 128, 2.5], "name": "base infill",
+                            "config": {"sparse_infill_density": "50%"}}
+
+
+@respx.mock
+async def test_add_part_leaves_out_name_and_config_when_not_given(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/volumes").mock(
+        return_value=httpx.Response(201, json={"volume": _VOLUME}))
+    await srv.add_part(42, "support_blocker", "sphere", [8, 8, 8], [100, 100, 4])
+    assert _sent(route) == {"type": "support_blocker", "shape": "sphere",
+                            "size_mm": [8, 8, 8], "position_mm": [100, 100, 4]}
+
+
+@respx.mock
+async def test_add_part_bad_shape_422(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/objects/42/volumes").mock(return_value=httpx.Response(422, json={"error": "bad_shape"}))
+    out = await srv.add_part(42, "modifier", "cone", [10, 10, 10], [0, 0, 5])
+    assert out["error"] == "bad_shape"
+
+
+@respx.mock
+async def test_add_part_refuses_a_sensitive_key_before_sending(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/volumes").mock(
+        return_value=httpx.Response(201, json={"volume": _VOLUME}))
+    out = await srv.add_part(42, "modifier", "box", [10, 10, 10], [0, 0, 5],
+                             config={"post_process": "evil.exe"})
+    assert out["error"].startswith("blocked_by_local_policy") and "post_process" in out["error"]
+    assert not route.called
+
+
+@respx.mock
+async def test_remove_part(monkeypatch):
+    _env(monkeypatch)
+    respx.delete(f"{BASE}/objects/42/volumes/901").mock(return_value=httpx.Response(200, json={"ok": True}))
+    assert await srv.remove_part(42, 901) == {"ok": True}
+
+
+@respx.mock
+async def test_remove_last_model_part_409(monkeypatch):
+    _env(monkeypatch)
+    respx.delete(f"{BASE}/objects/42/volumes/900").mock(return_value=httpx.Response(409, json={"error": "last_part"}))
+    out = await srv.remove_part(42, 900)
+    assert out["error"] == "last_part"
+
+
+@respx.mock
+async def test_set_part_config(monkeypatch):
+    _env(monkeypatch)
+    route = respx.put(f"{BASE}/objects/42/volumes/901/config").mock(return_value=httpx.Response(200, json={
+        "applied": ["wall_loops"], "errors": {}}))
+    out = await srv.set_part_config(42, 901, {"wall_loops": 4})
+    assert out["applied"] == ["wall_loops"]
+    assert _sent(route) == {"wall_loops": 4}
+
+
+@respx.mock
+async def test_set_part_config_invalid_key_422(monkeypatch):
+    _env(monkeypatch)
+    # The real reply of a refused config write, as PUT /objects/{id}/config sends it.
+    respx.put(f"{BASE}/objects/42/volumes/901/config").mock(return_value=httpx.Response(422, json={
+        "error": "config_rejected", "applied": [], "errors": {"no_such_key": "unknown_key"}}))
+    out = await srv.set_part_config(42, 901, {"no_such_key": 1})
+    assert out["errors"] == {"no_such_key": "unknown_key"}
+    assert out["error"] == "config_rejected"
+    assert "Nothing was applied" in out["message"]
+
+
+@respx.mock
+async def test_set_part_config_refuses_custom_gcode(monkeypatch):
+    _env(monkeypatch)
+    route = respx.put(f"{BASE}/objects/42/volumes/901/config").mock(return_value=httpx.Response(200, json={}))
+    out = await srv.set_part_config(42, 901, {"machine_start_gcode": "M104 S300"})
+    assert "machine_start_gcode" in out["error"]
+    assert not route.called
+
+
+@respx.mock
+async def test_set_part_config_unknown_volume(monkeypatch):
+    _env(monkeypatch)
+    respx.put(f"{BASE}/objects/42/volumes/77/config").mock(return_value=httpx.Response(404, json={"error": "unknown_volume"}))
+    out = await srv.set_part_config(42, 77, {"wall_loops": 4})
+    assert out["error"] == "unknown_volume"
+
+
+@respx.mock
+async def test_set_part_filament_sends_extruder(monkeypatch):
+    _env(monkeypatch)
+    route = respx.put(f"{BASE}/objects/42/volumes/901/config").mock(return_value=httpx.Response(200, json={
+        "applied": ["extruder"], "errors": {}}))
+    out = await srv.set_part_filament(42, 901, 2)
+    assert out["applied"] == ["extruder"]
+    assert _sent(route) == {"extruder": 2}
+
+
+# --- save_project -------------------------------------------------------------
+
+
+@respx.mock
+async def test_save_project_to_a_path(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save").mock(
+        return_value=httpx.Response(200, json={"path": "C:/prints/bracket.3mf"}))
+    out = await srv.save_project("C:/prints/bracket.3mf", overwrite=True)
+    assert out == {"path": "C:/prints/bracket.3mf"}
+    assert _sent(route) == {"path": "C:/prints/bracket.3mf", "overwrite": True}
+
+
+@respx.mock
+async def test_save_project_without_path_saves_the_current_file(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save").mock(
+        return_value=httpx.Response(200, json={"path": "C:/prints/old.3mf"}))
+    out = await srv.save_project()
+    assert out["path"] == "C:/prints/old.3mf"
+    assert _sent(route) == {"overwrite": False}
+
+
+@respx.mock
+async def test_save_project_errors_pass_through(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save")
+    route.mock(return_value=httpx.Response(409, json={"error": "project_unnamed"}))
+    assert (await srv.save_project())["error"] == "project_unnamed"
+    route.mock(return_value=httpx.Response(409, json={"error": "file_exists", "path": "C:/a.3mf"}))
+    assert (await srv.save_project("C:/a.3mf"))["error"] == "file_exists"
+    route.mock(return_value=httpx.Response(422, json={"error": "not_3mf"}))
+    assert (await srv.save_project("C:/a.stl"))["error"] == "not_3mf"
+
+
+@respx.mock
+async def test_save_project_needs_an_elegoo_build(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/project/save").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
+    out = await srv.save_project("C:/a.3mf")
+    assert "ElegooSlicer MCP" in out["error"] and "'project_save'" in out["error"]
+
+
+
+@respx.mock
+async def test_save_project_waits_under_the_desktop_tool_limit(monkeypatch):
+    # Claude Desktop drops a tool call after ~60 s; our own timeout must fire first.
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save").mock(return_value=httpx.Response(200, json={"path": "C:/a.3mf"}))
+    await srv.save_project("C:/a.3mf")
+    assert route.calls.last.request.extensions["timeout"]["read"] == 50.0
+
+
+@respx.mock
+async def test_save_project_timeout_says_the_save_may_still_run(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/project/save")
+    route.mock(return_value=httpx.Response(504, json={"error": "ui_timeout"}))
+    out = await srv.save_project("C:/a.3mf")
+    assert out["error"] == "save_still_running" and "overwrite=True" in out["hint"]
+    route.mock(side_effect=httpx.ReadTimeout("slow"))
+    assert (await srv.save_project("C:/a.3mf"))["error"] == "save_still_running"
+
+# --- paint_region -------------------------------------------------------------
+
+
+@respx.mock
+async def test_paint_support_in_a_box_with_an_overhang_filter(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={
+        "painted_triangles": 120, "layer": "support"}))
+    out = await srv.paint_region(42, "support", state="enforce", box_min=[100, 100, 0],
+                                 box_max=[140, 140, 10], max_overhang_deg=45)
+    assert out == {"painted_triangles": 120, "layer": "support"}
+    assert _sent(route) == {"layer": "support", "state": "enforce",
+                            "box_mm": [[100, 100, 0], [140, 140, 10]], "max_overhang_deg": 45}
+
+
+@respx.mock
+async def test_paint_color_on_the_whole_object(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={
+        "painted_triangles": 900, "layer": "color"}))
+    await srv.paint_region(42, "color", slot=2)
+    assert _sent(route) == {"layer": "color", "slot": 2}
+
+
+@respx.mock
+async def test_paint_clear_a_layer(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={
+        "painted_triangles": 0, "layer": "seam"}))
+    await srv.paint_region(42, "seam", clear=True)
+    assert _sent(route) == {"layer": "seam", "clear": True}
+
+
+@respx.mock
+async def test_paint_needs_both_box_corners(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={}))
+    out = await srv.paint_region(42, "support", state="block", box_min=[0, 0, 0])
+    assert out["error"] == "box_needs_both_corners"
+    assert not route.called
+
+
+@respx.mock
+async def test_paint_bad_state_422(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(422, json={"error": "bad_state"}))
+    out = await srv.paint_region(42, "support", state="maybe")
+    assert out["error"] == "bad_state"
+
+
+@respx.mock
+async def test_paint_needs_an_elegoo_build(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(404, json={"error": "not_found"}))
+    out = await srv.paint_region(42, "seam", state="enforce")
+    assert "ElegooSlicer MCP" in out["error"] and "'paint'" in out["error"]
+
+
+@respx.mock
+async def test_paint_clear_with_a_box_is_refused(monkeypatch):
+    # clear erases the whole layer; with a box the caller most likely meant state='none'.
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={}))
+    out = await srv.paint_region(42, "support", box_min=[0, 0, 0], box_max=[10, 10, 10], clear=True)
+    assert out["error"] == "clear_takes_no_box"
+    assert not route.called
+
+
+@respx.mock
+async def test_paint_overhang_angle_outside_0_to_90_is_refused(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={}))
+    for angle in (-5, 95):
+        out = await srv.paint_region(42, "support", state="enforce", max_overhang_deg=angle)
+        assert out["error"] == "bad_overhang"
+    assert not route.called
+
+
+@respx.mock
+async def test_paint_overhang_angle_0_and_90_are_sent(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/42/paint").mock(return_value=httpx.Response(200, json={
+        "painted_triangles": 3, "layer": "support"}))
+    for angle in (0, 90):
+        await srv.paint_region(42, "support", state="enforce", max_overhang_deg=angle)
+        assert _sent(route)["max_overhang_deg"] == angle
+
+
+@respx.mock
+async def test_part_tools_keep_unknown_object_apart_from_a_missing_route(monkeypatch):
+    # unknown_object / unknown_volume are resource errors; only a bare not_found means an
+    # older build without the route.
+    _env(monkeypatch)
+    respx.get(f"{BASE}/objects/99/volumes").mock(return_value=httpx.Response(404, json={"error": "unknown_object"}))
+    assert (await srv.list_parts(99))["error"] == "unknown_object"
+    respx.delete(f"{BASE}/objects/42/volumes/77").mock(return_value=httpx.Response(404, json={"error": "unknown_volume"}))
+    assert (await srv.remove_part(42, 77))["error"] == "unknown_volume"
+    respx.post(f"{BASE}/objects/99/paint").mock(return_value=httpx.Response(404, json={"error": "unknown_object"}))
+    assert (await srv.paint_region(99, "seam", state="enforce"))["error"] == "unknown_object"
+
+
+# --- error details reach the model -------------------------------------------
+
+
+@respx.mock
+async def test_elegoo_error_details_are_passed_on(monkeypatch):
+    # save_project's file_exists names the path; before, only the error token got through.
+    _env(monkeypatch)
+    respx.post(f"{BASE}/project/save").mock(return_value=httpx.Response(
+        409, json={"error": "file_exists", "path": "C:\\prints\\a.3mf"}))
+    out = await srv.save_project("C:\\prints\\a.3mf")
+    assert out == {"error": "file_exists", "path": "C:\\prints\\a.3mf"}

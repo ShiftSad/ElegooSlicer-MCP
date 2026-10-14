@@ -1,0 +1,446 @@
+{
+  "identifier": "shiftsad-elegooslicer-mcp",
+  "version": "0.1.17",
+  "name": "ElegooSlicer MCP",
+  "description": "Work a running ElegooSlicer (MCP build) with AI: load models, arrange the plate, tune settings, set up multi-colour prints, slice, and understand the result through slice breakdowns, setting explanations, and physics checks. Talks to the slicer on localhost or a host you configure; no cloud calls from this server.",
+  "category": "developer",
+  "tags": [
+    "mcp",
+    "elegooslicer",
+    "orcaslicer",
+    "3d-printing",
+    "slicer",
+    "claude",
+    "model-context-protocol"
+  ],
+  "connectionType": "local",
+  "author": "maxellis, shiftsad",
+  "github": {
+    "url": "https://github.com/ShiftSad/ElegooSlicer-MCP",
+    "language": "Python",
+    "license": "AGPL-3.0"
+  },
+  "deploymentOptions": [
+    {
+      "installationMethod": "uvx",
+      "isRecommended": true,
+      "description": "Run from the ElegooSlicer-MCP repository with uv (needs git); not on PyPI.",
+      "connection": {
+        "type": "stdio",
+        "command": "uvx",
+        "args": [
+          "--from",
+          "git+https://github.com/ShiftSad/ElegooSlicer-MCP@remote-api#subdirectory=mcp",
+          "orcaslicer-mcp"
+        ],
+        "configSchema": {
+          "type": "object",
+          "required": [
+            "ORCA_API_TOKEN"
+          ],
+          "properties": {
+            "ORCA_API_TOKEN": {
+              "type": "string",
+              "description": "Remote API token from the ElegooSlicer MCP build (Preferences -> Remote API)"
+            },
+            "ORCA_API_URL": {
+              "type": "string",
+              "default": "http://127.0.0.1:13130",
+              "description": "ElegooSlicer MCP Remote API address"
+            }
+          }
+        }
+      },
+      "systemDependencies": []
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_status",
+      "description": "Snapshot of the current OrcaSlicer session: app and project info, the active print/filament/printer presets with which of their keys are modified (dirty), whether the last slice is still valid, and whether a slice is running. Read-only."
+    },
+    {
+      "name": "get_config",
+      "description": "Read merged config values (optionally filtered to `keys`)."
+    },
+    {
+      "name": "set_config",
+      "description": "Apply config changes to the active project as unsaved overrides, atomically: if any key is invalid the whole batch is rejected and nothing changes."
+    },
+    {
+      "name": "slice",
+      "description": "Start slicing the current plate in the background and return immediately, without waiting for the result. The reply is 'started' (a slice began), 'already_valid' (the plate is unchanged and the last result still holds), or a conflict if a slice is already running."
+    },
+    {
+      "name": "get_slice_status",
+      "description": "State of the current or most recent slice: state (slicing, done, error, or idle), stats (print time and filament use when done), and any warnings or errors. Read-only."
+    },
+    {
+      "name": "get_slice_warnings",
+      "description": "Just the warnings/errors from the last (or current) slice, plus validity: the fast 'did anything go wrong' check and the way to confirm a fix cleared."
+    },
+    {
+      "name": "get_slice_breakdown",
+      "description": "Per-feature breakdown of the last slice + a stateless predicted-vs-observed flow check."
+    },
+    {
+      "name": "cancel_slice",
+      "description": "Abort a running slice, or unwedge a stale 'slicing' state (e.g. after an object outside the bed). Safe when idle."
+    },
+    {
+      "name": "slice_and_wait",
+      "description": "Slice the current plate and wait up to `timeout` seconds (50 by default) for it to finish, then return the final stats and warnings in one call. If the plate is already sliced and unchanged, it returns the existing result without re-slicing."
+    },
+    {
+      "name": "apply_and_slice",
+      "description": "Apply config overrides and then slice in one step, returning {applied, errors, result} with the resulting stats and warnings. The changes are atomic (any invalid key rejects the whole batch) and unsaved, exactly like set_config, so they revert if the preset is reselected."
+    },
+    {
+      "name": "compare_settings",
+      "description": "For each value of `key`, slice and collect stats/warnings; restore the original when done."
+    },
+    {
+      "name": "compare_slices",
+      "description": "Slice the current plate under several named variants and compare the cost of each."
+    },
+    {
+      "name": "list_objects",
+      "description": "List objects in the project: id (stable), name, size_mm, transform (offset/rotation/scale) and, on fork v2.4.2-mcp.13 and later, the 0-based plate each one sits on (-1 when it is off every plate)."
+    },
+    {
+      "name": "set_object_config",
+      "description": "Set per-object config overrides on an object by id, e.g. {\"wall_loops\": 4, \"sparse_infill_density\": \"30%\"}. Atomic (nothing applied if any key is invalid: the reply is then config_rejected with the reason per key in errors)."
+    },
+    {
+      "name": "duplicate_object",
+      "description": "Duplicate an object on the plate by id (adds a copy, offset from the original)."
+    },
+    {
+      "name": "delete_object",
+      "description": "Remove one object from the current plate by id. This is permanent within the session and cannot be undone through the API; the other objects keep their ids."
+    },
+    {
+      "name": "transform_object",
+      "description": "Move/rotate/scale an object by id. translate=[dx,dy,dz] mm (relative), rotate=[rx,ry,rz] degrees (relative), scale=[sx,sy,sz] absolute factor. Provide at least one."
+    },
+    {
+      "name": "arrange_plate",
+      "description": "Auto-arrange all objects on the plate (async job; poll get_job_status until idle)."
+    },
+    {
+      "name": "auto_orient",
+      "description": "Auto-orient objects for printing (async job; poll get_job_status until idle). With object_id only that object is turned, as selecting it and pressing Auto orient does in the window; without it, every object."
+    },
+    {
+      "name": "set_view",
+      "description": "Switch the slicer window to the Prepare tab (3D editor) or the Preview tab (sliced toolpaths), like clicking the tab at the top. Returns {\"view\": ...}."
+    },
+    {
+      "name": "list_parts",
+      "description": "List the parts of one object: its model part(s) plus any modifiers, negative parts and support enforcers or blockers, as the object list in the window shows them. Read-only."
+    },
+    {
+      "name": "add_part",
+      "description": "Add a modifier, negative part, support enforcer or support blocker to an object, made the way the window's right-click menu makes one (Add modifier, Add negative part, Support enforcer or Support blocker, then Box, Cylinder or Sphere), then sized and placed."
+    },
+    {
+      "name": "remove_part",
+      "description": "Remove one part from an object: a modifier, negative part, support enforcer or blocker, or one of several model parts. Cannot be undone through the API; returns {\"ok\": true}."
+    },
+    {
+      "name": "set_part_config",
+      "description": "Set config overrides on one part of an object, e.g. what a modifier changes inside its volume. Atomic like set_object_config: if any key is invalid nothing is applied."
+    },
+    {
+      "name": "set_part_filament",
+      "description": "Print one part with another filament, like picking it in the object list's filament column. Shortcut for set_part_config with {\"extruder\": slot}."
+    },
+    {
+      "name": "paint_region",
+      "description": "Paint support, seam or color onto the faces of one object inside a box, as the paint tools in the window do with a brush. A face is painted when its centre lies in the box (and, with max_overhang_deg, when it faces down steeply enough). Returns {\"painted_triangles\": n, \"layer\": ...}."
+    },
+    {
+      "name": "split_object",
+      "description": "Split an object whose mesh is made of separate pieces (a model exported with loose shells, say), as the window's Split to objects and Split to parts do, without their dialogs."
+    },
+    {
+      "name": "list_filament_slots",
+      "description": "List the project's filament slots as the sidebar's filament list shows them."
+    },
+    {
+      "name": "set_filament_slot",
+      "description": "Change one filament slot: load another filament preset into it, as picking one in the sidebar's filament list does, and/or set its colour. Returns the slot as list_filament_slots shows it."
+    },
+    {
+      "name": "set_filament_count",
+      "description": "Set how many filament slots the project has, as the plus and minus buttons of the sidebar's filament list do: new slots are added at the end, and removing takes slots off the end (the highest numbers). Returns the slots as list_filament_slots does."
+    },
+    {
+      "name": "undo",
+      "description": "Undo the last change in the slicer window's history, like Ctrl+Z. Returns {\"ok\", \"can_undo\", \"can_redo\"}; ok is false when there was nothing to undo."
+    },
+    {
+      "name": "redo",
+      "description": "Redo the change undo last reverted, like Ctrl+Y. Returns {\"ok\", \"can_undo\", \"can_redo\"}; ok is false when there was nothing to redo (a new change after an undo clears what could be redone)."
+    },
+    {
+      "name": "list_layer_changes",
+      "description": "List the changes set at a layer height on a plate, as the marks on the preview's layer slider."
+    },
+    {
+      "name": "add_layer_change",
+      "description": "Add a filament switch or a pause at a layer height, as adding one on the preview's layer slider does. Returns the plate's full list, as list_layer_changes."
+    },
+    {
+      "name": "remove_layer_change",
+      "description": "Remove the change set at height z on a plate, whatever its type (custom G-code included), as deleting a mark on the preview's layer slider does. Returns the plate's remaining list, as list_layer_changes."
+    },
+    {
+      "name": "run_calibration",
+      "description": "Set up a calibration print, as the window's Calibration menu does without its dialogs: the open project is replaced by a new one holding the test model, and the print, filament and printer settings are changed the way the test needs (unsaved edits, shown by get_status under modified)."
+    },
+    {
+      "name": "list_plates",
+      "description": "List the plates in the project: each one's 0-based index, name, whether it is the current plate (the one slice, get_gcode, render_plate and get_job_status act on), lock state, build volume and the objects it holds."
+    },
+    {
+      "name": "add_plate",
+      "description": "Add an empty plate to the project, the same way the toolbar's \"Add plate\" button does. Returns the new plate's 0-based index for move_object_to_plate and select_plate."
+    },
+    {
+      "name": "select_plate",
+      "description": "Make a plate the current one, exactly like clicking it: slice_and_wait, get_gcode, render_plate, get_slice_status and get_job_status then act on that plate."
+    },
+    {
+      "name": "delete_plate",
+      "description": "Delete a plate. The objects it held are NOT deleted: OrcaSlicer parks them beside the bed, as the toolbar's delete does, and the reply says how many were moved off-plate (objects_moved_off_plate). Use move_object_to_plate to put them somewhere printable."
+    },
+    {
+      "name": "move_object_to_plate",
+      "description": "Move an object onto another plate. Coming from a plate it keeps its position relative to that plate (front-left of plate 1 lands front-left of plate 2); coming from off-plate (parked beside the bed) it lands at the destination's centre."
+    },
+    {
+      "name": "get_job_status",
+      "description": "Whether the plate's background job worker is idle or still running. Read-only."
+    },
+    {
+      "name": "watch_events",
+      "description": "Collect live events (slice.*/config.changed/project.opened) over a bounded window."
+    },
+    {
+      "name": "find_config_keys",
+      "description": "Find config keys containing `substring` (helps discover among the ~600 keys)."
+    },
+    {
+      "name": "diagnose_plate",
+      "description": "One-call plate diagnosis: app/slice status, objects on the plate, bed + active skirt/brim/clearance settings, and the last slice's warnings, so you don't have to chain status->objects->config. Start here for 'why won't this slice / fit'."
+    },
+    {
+      "name": "check_placement",
+      "description": "Estimate whether every object (plus its skirt/brim ring) fits inside the printable area. Returns per-object fit, expanded first-layer bbox, per-edge clearance (mm), and overflow."
+    },
+    {
+      "name": "consult",
+      "description": "Retrieve curated slicing knowledge + saved context notes for a topic, symptom, or intent. ALWAYS call before deriving or changing settings for a user goal. Composes principles per situation, never returns preset bundles. Falls back to find_config_keys/web search if empty."
+    },
+    {
+      "name": "check_profile_physics",
+      "description": "Deterministic pre-save gate: fetches the live config, overlays optional proposed `changes`, and runs flow/temperature/geometry/cooling math. RUN THIS BEFORE save_preset. verdict=blocked means DO NOT SAVE."
+    },
+    {
+      "name": "remember",
+      "description": "Persist a context fact for future sessions. scope: 'machine:<printer>/<filament>', 'user', or 'project:<name>'. Local plain files; user-readable and deletable."
+    },
+    {
+      "name": "describe_setting",
+      "description": "Authoritative definition of one OrcaSlicer setting: label, tooltip, type, unit, valid range, enum values, and default. Read-only and offline, so it works even when OrcaSlicer is not running."
+    },
+    {
+      "name": "search_settings",
+      "description": "Search settings by keyword across key/label/tooltip; returns compact matches (key, label, category, short tooltip), ranked key/label first. Offline."
+    },
+    {
+      "name": "load_model",
+      "description": "Load a model file (path on the OrcaSlicer host) onto the current plate. Accepts .stl/.obj/.3mf, plus .step/.stp on fork v2.3.2-mcp.3+. Large STEP files can take a minute to tessellate; the call waits."
+    },
+    {
+      "name": "save_project",
+      "description": "Save the project as a .3mf file, the way File > Save project does, without any dialog. Returns {\"path\": ...} with the file written."
+    },
+    {
+      "name": "select_preset",
+      "description": "Make the named preset the active one for its group (print, filament, or printer)."
+    },
+    {
+      "name": "save_preset",
+      "description": "Save the currently edited settings as a named user preset (create or update, visible in the GUI immediately). type = print|filament|printer. detach=True saves it standalone instead of inheriting the current base preset; use it when creating a filament preset for a DIFFERENT material than the one selected, otherwise the new preset inherits the base's filament_type and temperatures."
+    },
+    {
+      "name": "list_presets",
+      "description": "List print/filament/printer presets with system/selected/visible flags."
+    },
+    {
+      "name": "set_layer_height",
+      "description": "Variable layer height for one object. mode='adaptive' (quality 0..1, higher = finer detail) generates an adaptive profile; mode='reset' (aliases: 'default', 'none') restores uniform layers."
+    },
+    {
+      "name": "set_height_range",
+      "description": "Override the layer height over a Z band of one object (e.g. 0 to 5 mm printed at 0.1 mm for finer detail near the base). Passing the same min_z and max_z again updates that band's height; clear=True removes every band on the object."
+    },
+    {
+      "name": "get_preset_config",
+      "description": "Read the full settings of a named preset without selecting it. type = print|filament|printer."
+    },
+    {
+      "name": "delete_preset",
+      "description": "Delete a USER preset (system presets and the currently-selected one are refused). type = print|filament|printer."
+    },
+    {
+      "name": "edit_preset",
+      "description": "Edit a named preset's settings and persist them: selects it, applies the changes atomically, saves under the same name."
+    },
+    {
+      "name": "rename_preset",
+      "description": "Rename a user preset by copying it to new_name, selecting the copy, and deleting the original. Only user presets can be renamed; system presets are read-only."
+    },
+    {
+      "name": "get_gcode",
+      "description": "Retrieve the last successful slice's G-code as text."
+    },
+    {
+      "name": "describe_plate",
+      "description": "Machine-readable plate facts from the last slice's G-code, per object, so you can answer orientation and placement questions instead of guessing from Euler angles or a picture: how the part stands (flat / tilted / on an edge or corner, from first-layer contact versus its widest layer), the first-layer footprint as islands, where overhang extrusions concentrate by 10 mm height band, where support stands and where its interface touches the part, and which side the outer-wall seams sit on (checked against seam_position)."
+    },
+    {
+      "name": "save_gcode",
+      "description": "Save the last successful slice's G-code and record the slice (model, a fingerprint of the objects' names and sizes, full settings snapshot, and OrcaSlicer's time and filament estimates) in the local outcome store under that filename."
+    },
+    {
+      "name": "recall_prints",
+      "description": "How did past prints of THIS model actually turn out? Matches the current plate by geometry (or by model_name if given / the slicer is offline), returning each past print's result (success/cancelled/error), your recorded verdict (e.g. 'warped'), and the settings it was sliced with."
+    },
+    {
+      "name": "render_plate",
+      "description": "Render a PNG picture of the current plate so you can SEE it."
+    },
+    {
+      "name": "get_printer_status",
+      "description": "What the 3D printer is doing right now: state (idle, heating, printing, paused, finished, cancelled, error, shutdown, offline), nozzle and bed temperatures with their targets, the current job (file, progress, layer, time elapsed and left, and what the time left is based on), and any problems the printer reports, each in the printer's own words with a plain-English hint for common ones."
+    },
+    {
+      "name": "wait_for_printer",
+      "description": "Wait until the printer reaches a point in a print, checking every 5 seconds. Returns as soon as it happens (met: true), or at the timeout with the latest status (met: false)."
+    },
+    {
+      "name": "list_print_history",
+      "description": "How did recent prints on the printer actually end? For each finished job: result (success, cancelled or error), how long it took against the slicer's estimate, filament used, and for failed or stopped jobs the printer's own reason while its console still holds it."
+    },
+    {
+      "name": "check_printer_match",
+      "description": "Does the active OrcaSlicer profile match the printer it will print on? Compares nozzle size, bed size and height, the highest speeds and accelerations, nozzle and bed temperatures, and firmware retraction against the printer's own Klipper settings."
+    },
+    {
+      "name": "list_printers",
+      "description": "List the printers in ElegooSlicer's Device tab and what each is doing. Returns {\"printers\": [...], \"selected_id\", \"summary\"}. Read-only; it reads ElegooSlicer's own printer list and does not contact the printers."
+    },
+    {
+      "name": "get_canvas",
+      "description": "Read the printer's CANVAS multi-material unit: each tray's filament and whether it is ready, as ElegooSlicer's CANVAS sync and Print dialogs see them. Read-only (asks the printer)."
+    },
+    {
+      "name": "sync_canvas_to_project",
+      "description": "Make the CANVAS trays the project's filaments, as the window's 'Sync filaments with MMS' button does, without its dialogs. Returns {synced, slots: [{slot, preset, type, color, tray}], unknown: [{tray, type, reason, detail?}], summary}."
+    },
+    {
+      "name": "preview_filament_mapping",
+      "description": "Show which CANVAS tray each filament of a plate would print from, decided exactly as the Print dialog decides it, with any problem. Read-only: nothing is saved or sent."
+    },
+    {
+      "name": "prepare_print",
+      "description": "Prepare printing the current, sliced plate on an Elegoo printer, WITHOUT starting it."
+    },
+    {
+      "name": "start_print",
+      "description": "Start the print prepared by prepare_print: ElegooSlicer sends the plate's G-code, the one it sliced itself, to the printer, which then starts printing. This runs the real printer."
+    },
+    {
+      "name": "get_upload_status",
+      "description": "How the transfer start_print began is going. Returns {\"status\", \"progress\", \"bytes\": [sent, total], \"message\", \"summary\"}; status is exporting, uploading, success (the printer has the file and starts printing it), failed (message says why) or cancelled. Read-only."
+    },
+    {
+      "name": "cancel_upload",
+      "description": "Cancel a transfer start_print began, before the printer has the whole file. Returns {\"ok\": true}. Once the file has arrived the printer may already be printing: the reply is then too_late (409), and stopping the print takes stop_print."
+    },
+    {
+      "name": "pause_print",
+      "description": "Pause the print running on an Elegoo printer, as its Pause button does. Returns {\"ok\": true}. Resume with resume_print (or on the printer's screen: the Centauri Carbon 2 can only be resumed there over LAN)."
+    },
+    {
+      "name": "resume_print",
+      "description": "Resume a paused print on an Elegoo printer. Returns {\"ok\": true}. The Centauri Carbon 2 can't be resumed over the network by ElegooSlicer: the reply is then resume_unsupported (501) with a hint to resume on the printer's screen; relay that."
+    },
+    {
+      "name": "stop_print",
+      "description": "Stop (cancel) the print running on an Elegoo printer. A stopped print can't be resumed: the part is lost. Returns {\"ok\": true}."
+    },
+    {
+      "name": "get_camera_snapshot",
+      "description": "Take a picture with an Elegoo printer's camera and return it as an image: to check the first layer, see how a print is going or whether the bed is clear. Read-only."
+    }
+  ],
+  "prompts": [
+    {
+      "name": "slice-a-model",
+      "description": "Guided load -> check -> slice -> read-back workflow for one model file.",
+      "arguments": [
+        {
+          "name": "model_path",
+          "description": "",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "optimize-print-time",
+      "description": "Data-driven print-time reduction from a real slice breakdown, never adjectives alone.",
+      "arguments": [
+        {
+          "name": "constraints",
+          "description": "",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "edit-preset-safely",
+      "description": "Preset change with the physics gate: consult -> set_config -> check_profile_physics -> save_preset.",
+      "arguments": [
+        {
+          "name": "change",
+          "description": "",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "uri": "orca://knowledge",
+      "name": "knowledge_index_resource",
+      "mimeType": "text/plain"
+    },
+    {
+      "uri": "orca://knowledge/{slug}",
+      "name": "Slicing knowledge chunk",
+      "mimeType": "text/markdown"
+    },
+    {
+      "uri": "orca://setting/{key}",
+      "name": "Setting definition",
+      "mimeType": "application/json"
+    }
+  ],
+  "overview": {
+    "summary": "MCP server that lets Claude or any MCP client operate a real, running ElegooSlicer: load models, arrange plates, set up multi-colour prints, tune ~850 settings with a physics sanity gate, slice, and read per-feature results back. Requires the ElegooSlicer MCP build (ElegooSlicer with an embedded, token-authenticated local control API)."
+  }
+}

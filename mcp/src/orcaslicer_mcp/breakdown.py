@@ -1,0 +1,90 @@
+"""Pure shaping + stateless prediction-check for the fork's slice breakdown (spec 2026-07-20)."""
+from __future__ import annotations
+from .physics_check import predicted_flows, _f
+
+_FLOW_TOL = 0.10      # +/-10% flow tolerance
+_NEAR_CEILING = 0.95  # observed within 5% of ceiling counts as clamped
+
+
+def prediction_check(cfg: dict, breakdown: dict) -> list[dict]:
+    preds = predicted_flows(cfg)
+    ceiling = _f(cfg, "filament_max_volumetric_speed")
+    out: list[dict] = []
+    for role in breakdown.get("roles", []):
+        name = role.get("role")
+        flow = (role.get("flow_mm3_s") or {}).get("max")
+        if name not in preds or flow is None:
+            continue
+        predicted = preds[name]
+        # clamped: the profile's demanded flow exceeds the ceiling, and the observed max
+        # sits at the ceiling because Orca throttled it to stay under the limit.
+        clamped = (ceiling is not None and predicted > ceiling
+                   and flow >= ceiling * _NEAR_CEILING)
+        if clamped:
+            verdict = "clamped"
+            detail = (f"{name}: profile demands {predicted:.1f}mm3/s but observed max "
+                      f"{flow:.1f} is pinned at ceiling {ceiling:g} - speed silently throttled")
+        elif flow > predicted * (1 + _FLOW_TOL):
+            verdict = "anomaly"
+            detail = f"{name}: observed {flow:.1f}mm3/s exceeds predicted {predicted:.1f} (>10%)"
+        else:
+            verdict = "matches"
+            detail = f"{name}: predicted {predicted:.1f}mm3/s vs observed {flow:.1f} (within tolerance)"
+        out.append({"role": name, "verdict": verdict,
+                    "predicted_mm3_s": round(predicted, 2),
+                    "observed_max_mm3_s": round(flow, 2), "detail": detail})
+    return out
+
+
+def _duration(seconds: float) -> str:
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s} s"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m} min {s} s" if s else f"{m} min"
+    h, m = divmod(m, 60)
+    return f"{h} h {m} min" if m else f"{h} h"
+
+
+def purge_summary(purge: dict) -> str:
+    """One sentence on the filament changes of a slice, from the breakdown's "purge" block
+    (ElegooSlicer MCP, capability breakdown_purge): {filament_changes, filament_change_time_s,
+    flush_g, flush_mm}. The time and flushed filament are already part of the slice's total time
+    and filament, but no feature role carries them, so the roles do not add up to the total
+    without them."""
+    n = int(purge.get("filament_changes") or 0)
+    time_s = float(purge.get("filament_change_time_s") or 0)
+    flush_g = float(purge.get("flush_g") or 0)
+    if n <= 0:
+        if time_s <= 0 and flush_g <= 0:
+            return "No filament changes."
+        # The Centauri Carbon 2's start G-code loads the first filament with an M6211 that
+        # purges about 200 mm: time and flush with no change at all.
+        return (f"No filament changes; loading the first filament takes about "
+                f"{_duration(time_s)} and flushes {flush_g:.1f} g, already included in the total "
+                "time and filament.")
+    changes = f"{n} filament change" + ("" if n == 1 else "s")
+    return (f"{changes}: about {_duration(time_s)} and {flush_g:.1f} g of flushed filament, "
+            "already included in the total time and filament (no feature role carries them).")
+
+
+def build_breakdown(status: dict, cfg: dict) -> dict:
+    bd = status.get("breakdown")
+    if not bd:
+        return {"available": False,
+                "reason": "no breakdown in slice status (fork build predates this feature, "
+                          "or no valid slice yet)"}
+    out = {"available": True,
+           "mode": bd.get("mode"),
+           "total_time_s": bd.get("total_time_s"),
+           "roles": bd.get("roles", []),
+           "metrics": bd.get("metrics", {}),
+           "layers": bd.get("layers", []),
+           "prediction_check": prediction_check(cfg, bd)}
+    # Filament changes and flushing (ElegooSlicer MCP): only builds that measure them send it.
+    purge = bd.get("purge")
+    if isinstance(purge, dict):
+        out["purge"] = purge
+        out["purge_summary"] = purge_summary(purge)
+    return out
