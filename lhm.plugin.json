@@ -166,6 +166,10 @@
       "description": "Paint support, seam or color onto the faces of one object inside a box, as the paint tools in the window do with a brush. A face is painted when its centre lies in the box (and, with max_overhang_deg, when it faces down steeply enough). Returns {\"painted_triangles\": n, \"layer\": ...}."
     },
     {
+      "name": "split_object",
+      "description": "Split an object whose mesh is made of separate pieces (a model exported with loose shells, say), as the window's Split to objects and Split to parts buttons do, without their dialogs. Returns {\"ids\": [...]}: the new objects' ids for 'objects', or the object's part ids (list_parts) for 'parts'."
+    },
+    {
       "name": "list_filament_slots",
       "description": "List the project's filament slots as the sidebar's filament list shows them."
     },

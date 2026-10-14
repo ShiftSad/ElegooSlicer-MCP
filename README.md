@@ -85,6 +85,7 @@ These tools need the ElegooSlicer MCP build, a port of the same API to ElegooSli
 - `paint_region` paints support, seam or a filament color onto the faces whose centre lies in a box, or on the whole object, optionally only faces pointing down at least `max_overhang_deg` below horizontal (`paint`).
 - `get_slice_breakdown` and `describe_plate` report a multi-filament print's filament changes, their time and the flushed filament, which are in the totals but in no feature role (`breakdown_purge`).
 - `list_filament_slots`, `set_filament_slot` and `set_filament_count` show and change the project's filament slots as the sidebar's filament list does: preset and colour per slot, and how many slots there are (`filaments`).
+- `split_object` splits an object made of separate pieces into objects or parts, without dialogs (`split`).
 
 ### Plate renders
 

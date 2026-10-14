@@ -860,6 +860,32 @@ async def paint_region(
         return _elegoo_err(e, "paint")
 
 
+@mcp.tool()
+async def split_object(
+    object_id: Annotated[int, _OBJECT_ID],
+    to: Annotated[Literal["objects", "parts"], Field(description=(
+        "'objects': each separate piece of the mesh becomes an object of its own, as the "
+        "window's Split to objects does. 'parts': the pieces stay one object as separate parts "
+        "(Split to parts), each of which can then get its own filament."))],
+) -> dict:
+    """Split an object whose mesh is made of separate pieces (a model exported with loose
+    shells, say), as the window's Split to objects and Split to parts buttons do, without their
+    dialogs. Returns {"ids": [...]}: the new objects' ids for 'objects', or the object's part
+    ids (list_parts) for 'parts'.
+
+    Splitting to parts is the usual first step for a multi-colour model: then give each part
+    its slot with set_part_filament. After splitting to objects, use the returned ids (see
+    list_objects): the split object is replaced by its pieces. A one-piece object cannot be
+    split (not_splittable, 422); an unknown id returns unknown_object. The plate is left
+    unsliced, so re-slice afterwards. Needs ElegooSlicer MCP ('split' in get_status
+    capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.split_object(object_id, to)
+    except ApiError as e:
+        return _elegoo_err(e, "split")
+
+
 # --- Filament slots (ElegooSlicer MCP, capability "filaments") -----------------
 # The project's filament list in the window's sidebar: slots 1, 2, ... each holding a filament
 # preset and a colour. Objects, parts and painted regions print with a slot number.
@@ -2076,6 +2102,7 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "save_project": ("Save project as .3mf (can replace a file)", False, True),
     # Painting replaces whatever paint was there, including the user's own brush work.
     "paint_region": ("Paint support, seam or color on a region", False, True),
+    "split_object": ("Split an object into objects or parts", False, False),
     "list_filament_slots": ("List filament slots", True, False),
     "set_filament_slot": ("Set a filament slot's preset or colour", False, False),
     # Removing slots (with force) moves objects and parts that used them to another filament.

@@ -129,3 +129,31 @@ def test_filament_tools_hints():
     assert _hints("set_filament_slot").destructive_hint is False
     # Removing slots moves what used them to another filament.
     assert _hints("set_filament_count").destructive_hint is True
+
+
+# --- split ----------------------------------------------------------------------
+
+
+@respx.mock
+async def test_split_object(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/7/split").mock(return_value=httpx.Response(200, json={"ids": [8, 9]}))
+    out = await srv.split_object(7, "objects")
+    assert out == {"ids": [8, 9]}
+    assert _sent(route) == {"to": "objects"}
+
+
+@respx.mock
+async def test_split_object_errors(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/objects/7/split").mock(return_value=httpx.Response(422, json={"error": "not_splittable"}))
+    assert (await srv.split_object(7, "parts"))["error"] == "not_splittable"
+    respx.post(f"{BASE}/objects/5/split").mock(return_value=httpx.Response(404, json={"error": "unknown_object"}))
+    assert (await srv.split_object(5, "parts"))["error"] == "unknown_object"
+    respx.post(f"{BASE}/objects/6/split").mock(return_value=_route_missing())
+    _needs(await srv.split_object(6, "parts"), "split")
+
+
+def test_split_object_hints():
+    assert _hints("split_object").read_only_hint is False
+    assert _hints("split_object").destructive_hint is False

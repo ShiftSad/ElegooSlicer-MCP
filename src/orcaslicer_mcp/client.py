@@ -185,6 +185,10 @@ class OrcaClient:
             body["color"] = color
         return await self._request("PUT", f"/api/v1/filaments/{slot}", json=body)
 
+    async def split_object(self, obj_id: int, to: str) -> dict:
+        # ElegooSlicer MCP, capability "split".
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/split", json={"to": to})
+
     # Plates (fork v2.4.2-mcp.13 and later).
     async def get_plates(self) -> dict:
         return await self._request("GET", "/api/v1/plates")
