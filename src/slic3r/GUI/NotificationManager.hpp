@@ -169,6 +169,8 @@ enum class NotificationType
 	// Remote API change toasts (RemoteAPIController); own type so coalescing
 	// close/re-push never touches other features' notifications.
 	RemoteAPIChange,
+	// elegoo-mcp: the Remote API could not open its port (closed again when it later starts).
+	RemoteAPIPortUnavailable,
     NotificationTypeCount
 
 };

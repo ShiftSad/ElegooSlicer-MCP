@@ -7523,6 +7523,10 @@ RemoteAPI::Server &GUI_App::remote_api_server() { return *m_remote_api_server; }
 
 void GUI_App::start_remote_api()
 {
+    // elegoo-mcp: clear an earlier "port unavailable" warning; it is shown again below if
+    // the port still cannot be opened (also cleared when the API gets switched off).
+    if (plater_ != nullptr)
+        plater_->get_notification_manager()->close_notification_of_type(NotificationType::RemoteAPIPortUnavailable);
     auto cfg = RemoteAPI::Config::load();
     if (!cfg.enabled) return;
     if (!m_remote_api_controller)
@@ -7538,9 +7542,9 @@ void GUI_App::start_remote_api()
         BOOST_LOG_TRIVIAL(warning) << "remote-api: port " << cfg.port << " in use, API is off in this instance";
         if (plater_ != nullptr)
             plater_->get_notification_manager()->push_notification(
-                NotificationType::CustomNotification, NotificationManager::NotificationLevel::WarningNotificationLevel,
-                "Remote API port " + std::to_string(cfg.port) +
-                    " is in use (another ElegooSlicer window or app has it). The API is off in this window.");
+                NotificationType::RemoteAPIPortUnavailable, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                "Remote API could not listen on port " + std::to_string(cfg.port) +
+                    " (in use by another ElegooSlicer window or app, or blocked by the system). The API is off in this window.");
     }
 }
 
