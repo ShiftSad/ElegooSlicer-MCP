@@ -394,7 +394,8 @@ curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 { "started": true, "object_id": 832 }
 ```
 Starts the window's auto-orient job and answers `202` at once; poll
-`GET /jobs/status` until `idle`. With `{"object_id": id}` only that object is turned:
+`GET /jobs/status` until `idle` (`{"idle": true, "last_error": null}`; `last_error` is
+the error of the last arrange/orient job the API started, see [Dialogs](#dialogs)). With `{"object_id": id}` only that object is turned:
 it is selected in the 3D view, as a click on it does, and the job orients the
 selection (the object stays selected afterwards). Without a body, or with `{}`, every
 object is oriented and any selection in the window is cleared first. The plates of
@@ -807,6 +808,7 @@ things as they are; the entry then ends with `(answered No)`.
 | `POST /model` | several objects at different heights: "load as a single object with multiple parts?" | loaded as separate objects, the dialog's No (as in MaxEllis/OrcaSlicer; no `skipped_dialogs` entry) |
 | `POST /preset/save` of a filament preset | "Temperature Safety Check": the first-layer and other-layer temperatures differ by more than 30 °C (nozzle) or 15 °C (a bed type); "Continue anyway?" | refused, nothing saved: `422 {"error":"temperature_safety_check","detail":"<the question>"}`. Add `"ignore_temperature_check": true` to the body to save anyway (answered Yes) |
 | `GET /plate/render?view=preview` | the G-code preview cannot start its OpenGL renderer (an error box) | notification + `skipped_dialogs`; the render then fails with `500 render_failed` |
+| `POST /arrange`, `POST /orient` (the job ends after the reply) | "Arrange failed. Found some exceptions when processing object geometries.", "An unexpected error occurred: ..." | notification, and the text in `GET /jobs/status` as `last_error` (null when the last job the API started had no error); jobs started in the window keep their dialog |
 
 ## Notes & limits
 

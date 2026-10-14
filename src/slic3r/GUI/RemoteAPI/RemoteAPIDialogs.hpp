@@ -6,7 +6,9 @@
 // may be at the machine to answer a dialog: a modal one would block that thread, and
 // with it every later API call, until someone closes it. So the GUI code an API request
 // can reach asks api_skips_dialogs() before opening a dialog and, when it is true, calls
-// skip_dialog() (a message box) or api_question() (a Yes/No question) instead.
+// skip_dialog() (a message box) or api_question() (a Yes/No question) instead. The same
+// holds while an arrange/orient job the API started reports its result, after the request
+// has returned (ApiJob in RemoteAPIDialogs.cpp).
 //
 // No Boost.Asio in here (unlike RemoteAPIController.hpp), so any GUI source file can
 // include this header wherever it likes.

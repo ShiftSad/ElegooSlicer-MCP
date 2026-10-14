@@ -1402,6 +1402,27 @@ paths:
               example: { error: "calibration_failed" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /jobs/status:
+    get:
+      summary: Whether the arrange/orient job has finished
+      operationId: getJobStatus
+      description: |
+        Poll after POST /arrange or POST /orient until `idle`. `last_error` is the error
+        of the last arrange/orient job the API started (the window would have shown it
+        in a dialog; it is also shown as a notification), or null.
+      responses:
+        "200":
+          description: The UI job worker's state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  idle: { type: boolean }
+                  last_error: { type: string, nullable: true }
+              example: { idle: true, last_error: null }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:

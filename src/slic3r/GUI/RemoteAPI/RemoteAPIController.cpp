@@ -2158,7 +2158,7 @@ Response Controller::handle_arrange()
         // like the GUI's own arrange button does, or this call would quietly
         // only move the objects that are off the bed.
         plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
-        plater->arrange();
+        api_arrange(); // elegoo-mcp (D8): plater->arrange(), with its errors as notifications
         return {{"started", true}};
     });
     if (r.contains("error")) return { 422, r };
@@ -2184,7 +2184,7 @@ Response Controller::handle_orient()
         // elegoo-mcp: the job's finish re-checks only the current plate; the objects on
         // every plate may turn, so mark them all now (see invalidate_object_plates).
         plater->get_partplate_list().invalid_all_slice_result();
-        plater->orient();
+        api_orient(); // elegoo-mcp (D8): plater->orient(), with its errors as notifications
         return {{"started", true}};
     });
     if (r.contains("error")) return { 422, r };
@@ -2196,7 +2196,11 @@ Response Controller::handle_jobs_status()
 {
     nlohmann::json r = run_on_ui([]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
-        return {{"idle", plater->get_ui_job_worker().is_idle()}};
+        // elegoo-mcp (D8): the error of the last arrange/orient job the API started,
+        // which the window would have shown in a dialog.
+        const std::string error = last_api_job_error();
+        return {{"idle", plater->get_ui_job_worker().is_idle()},
+                {"last_error", error.empty() ? nlohmann::json(nullptr) : nlohmann::json(error)}};
     });
     return { 200, r };
 }

@@ -7,6 +7,10 @@
 
 #include "slic3r/GUI/ConfigManipulation.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/Jobs/ArrangeJob.hpp"
+#include "slic3r/GUI/Jobs/OrientJob.hpp"
+#include "slic3r/GUI/Jobs/Worker.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/GUI/Plater.hpp"
 
@@ -78,5 +82,61 @@ std::vector<std::string> print_settings_questions(const DynamicPrintConfig &prin
     checks.update_print_fff_config(&copy, /*is_global_config=*/true);
     return dry_run.questions;
 }
+
+// --- arrange / orient jobs started by the API ---------------------------------------
+// These jobs run on a worker thread and finish on the GUI thread after the request has
+// returned. A failure then opened an error dialog: the job's own (ArrangeJob: "Arrange
+// failed...") or PlaterWorker's "An unexpected error occurred". For a job the API
+// started, ApiJob reports it as a notification instead and keeps it for
+// GET /jobs/status. Jobs started in the window are untouched.
+
+static std::string s_last_api_job_error; // GUI thread only
+
+namespace {
+class ApiJob : public Job
+{
+public:
+    explicit ApiJob(std::unique_ptr<Job> job) : m_job(std::move(job)) {}
+
+    void process(Ctl &ctl) override { m_job->process(ctl); }
+
+    void finalize(bool canceled, std::exception_ptr &eptr) override
+    {
+        DialogLog errors; // show_error() inside the job's finalize is skipped into this log
+        m_job->finalize(canceled, eptr);
+        if (eptr) {
+            // What PlaterWorker would show for an exception the job left unhandled.
+            try {
+                std::rethrow_exception(eptr);
+            } catch (const std::exception &e) {
+                skip_dialog(_u8L("An unexpected error occurred") + ": " + e.what(), /*error=*/true);
+                eptr = nullptr;
+            } catch (...) {
+                // Not an std::exception: left to the worker, as for every other job.
+            }
+        }
+        if (!errors.skipped.empty())
+            s_last_api_job_error = errors.skipped.back();
+    }
+
+private:
+    std::unique_ptr<Job> m_job;
+};
+} // namespace
+
+// Plater::arrange / Plater::orient: an undo snapshot, then the job (callers check that
+// the worker is idle first).
+static void start_api_job(std::unique_ptr<Job> job, const std::string &snapshot_name)
+{
+    Plater *plater = wxGetApp().plater();
+    s_last_api_job_error.clear();
+    plater->take_snapshot(snapshot_name);
+    replace_job(plater->get_ui_job_worker(), std::make_unique<ApiJob>(std::move(job)));
+}
+
+void api_arrange() { start_api_job(std::make_unique<ArrangeJob>(), _u8L("Arrange")); }
+void api_orient()  { start_api_job(std::make_unique<OrientJob>(), _u8L("Orient")); }
+
+std::string last_api_job_error() { return s_last_api_job_error; }
 
 }}} // namespace

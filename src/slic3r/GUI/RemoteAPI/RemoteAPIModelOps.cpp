@@ -68,7 +68,7 @@ Response Controller::handle_orient_object(const std::string &body)
         // current plate, so mark the object's plates now, like every per-object edit
         // (see invalidate_object_plates). Harmless if the job ends up turning nothing.
         invalidate_object_plates(idx);
-        plater->orient();
+        api_orient(); // plater->orient(), with its errors as notifications (D8)
         return {{"started", true}, {"object_id", id}};
     });
     if (r.contains("error")) {
