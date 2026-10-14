@@ -777,6 +777,10 @@ routes move a real machine, so they work under these rules:
 - **First window only.** With several ElegooSlicer windows open, only the first one is
   connected to the printers; the others answer `409 {"error": "secondary_instance", "hint":
   "close the other ElegooSlicer windows"}`.
+- **LAN printers only.** The Elegoo SDK sends pause, resume and stop over the LAN only, so
+  the API neither starts nor controls a print on a cloud printer (`network: "wan"`): it
+  could not stop it. `print/prepare`, `pause`, `resume` and `stop` answer
+  `501 {"error": "unsupported_on_wan", "hint"}` for one, without sending anything.
 - **Telemetry.** ElegooSlicer records the file transfer and the print start as it does for
   the window's Print button (uploaded only while logged in to an Elegoo account).
 
@@ -849,8 +853,8 @@ Errors (nothing was sent):
   gcode_check_failed | filament_not_printable`: the window's Print button is disabled
   then too), `409 preview_only` (a G-code file is open: it was not sliced from this
   project);
-- the printer: `409 printer_busy` + `status` (only an `idle` or `print_completed` printer
-  takes a print), `409 upload_in_progress` + `upload_id`, `409 printer_model_mismatch` +
+- the printer: `501 unsupported_on_wan` (a cloud printer), `409 printer_busy` + `status`
+  (only an `idle` or `print_completed` printer takes a print), `409 upload_in_progress` + `upload_id`, `409 printer_model_mismatch` +
   `printer_model`, `project_model` (the G-code is made for the profile's printer model; the
   Print dialog only warns), `409 not_elegoolink_profile` (the project's printer profile
   does not send through ElegooLink), `409 upload_format_unsupported` (the profile sends
@@ -915,4 +919,5 @@ printing; stop: it is idle, its print completed or was canceled), `409 not_pause
 - `501 {"error": "resume_unsupported", "hint": "resume on the printer's screen"}`: the
   Elegoo SDK of this build cannot resume a Centauri Carbon 2 over the LAN.
   `501 command_unsupported` for another command the SDK does not have for the printer.
+  `501 unsupported_on_wan` for a cloud printer (nothing is sent).
 - `409 printer_busy`, `502 printer_error` + `code`.

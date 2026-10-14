@@ -1083,6 +1083,8 @@ Response Controller::handle_canvas_mapping(const std::string &api_id, const std:
 //   controlling prints" (403 print_control_disabled), read again on every request;
 // - they run in the first ElegooSlicer window only: it is the one connected to the printers
 //   (a second window forwards printer reads to it, but not uploads);
+// - they work with LAN printers only: the SDK cannot pause or stop a cloud printer, so the API
+//   neither starts nor controls prints on one (501 unsupported_on_wan);
 // - a print is sent in two steps. prepare makes the checks the Print dialog makes (and a few
 //   more) and answers a summary and a plan id; print sends that plan only, within
 //   PLAN_EXPIRES_S, and only while the plate still holds the slice result that was checked;
@@ -1141,6 +1143,12 @@ bool Controller::check_print_control(const std::string &what, Response &refused)
         return false;
     }
     return true;
+}
+
+// The answer of a print-control route for a cloud (WAN) printer. Nothing was sent.
+static Response unsupported_on_wan(const std::string &hint)
+{
+    return { 501, {{"error", "unsupported_on_wan"}, {"hint", hint}} };
 }
 
 // Reads a request body that may be empty (= {}). False, with the answer in `error`, when it is
@@ -1610,6 +1618,11 @@ Response Controller::handle_print_prepare(const std::string &api_id, const std::
     PrinterNetworkInfo p;
     if (!find_printer(api_id, p))
         return { 404, {{"error", "printer_not_found"}} };
+    // The SDK sends pause, resume and stop to LAN printers only (see handle_print_command), so
+    // the API does not start a print on a cloud printer: it could not stop it.
+    if (p.networkType == NETWORK_TYPE_WAN)
+        return unsupported_on_wan("the API cannot pause or stop a cloud printer, so it does not start prints on one: "
+                                  "add the printer on the LAN, or print from ElegooSlicer's Print dialog");
     if (!printer_free(p, error))
         return error;
 
@@ -1653,7 +1666,8 @@ Response Controller::handle_print_prepare(const std::string &api_id, const std::
     if (!has_mms && !choices.empty())
         return { 422, {{"error", "bad_mapping"}, {"detail", "the printer has no connected CANVAS to map filaments to"}} };
 
-    // The options. Time-lapse is offered on LAN printers only, auto refill with a CANVAS only.
+    // The options. Time-lapse is offered on LAN printers only (the only ones that get here),
+    // auto refill with a CANVAS only.
     bool leveling = false, timelapse = false, auto_refill = false, side_b = false;
     const bool can_switch_bed = p.printCapabilities.supportsHeatedBedSwitching;
     if (!choose_option("leveling", leveling_asked, info["recent_leveling"].get<bool>(),
@@ -2167,6 +2181,11 @@ Response Controller::handle_print_command(const std::string &api_id, const std::
     PrinterNetworkInfo p;
     if (!find_printer(api_id, p))
         return { 404, {{"error", "printer_not_found"}} };
+    // The SDK's pausePrint, resumePrint and stopPrint always go to its LAN service, which does
+    // not know a cloud printer (it would answer "printer not found"). Say so instead.
+    if (p.networkType == NETWORK_TYPE_WAN)
+        return unsupported_on_wan("the Elegoo SDK sends pause, resume and stop over the LAN only: "
+                                  "use the printer's screen");
     if (p.connectStatus != PRINTER_CONNECT_STATUS_CONNECTED)
         return { 409, {{"error", "printer_offline"}} };
     // Whether the command fits the printer's state, from ElegooSlicer's cache: pause a print that

@@ -1316,7 +1316,8 @@ paths:
         the plate's slice result: slicing again, changing a setting or selecting another plate
         expires it. Options default to the Print dialog's last choices; an option the printer
         does not have is off. `mapping` picks trays for some slots; the others get the Print
-        dialog's own choice (GET /printers/{id}/canvas/mapping). Nothing is saved.
+        dialog's own choice (GET /printers/{id}/canvas/mapping). Nothing is saved. LAN
+        printers only (501 unsupported_on_wan for a cloud printer).
       requestBody:
         required: false
         content:
@@ -1402,6 +1403,12 @@ paths:
                   value: { error: "mapping_incomplete", issues: [{ slot: 2, issues: ["no_tray"] }], filaments: [],
                            hint: "load the filaments, sync the CANVAS (POST /printers/{id}/canvas/sync) or pick trays with \"mapping\"" }
                 option: { value: { error: "unsupported_option", option: "timelapse" } }
+        "501":
+          description: A cloud (WAN) printer. The SDK cannot pause or stop one, so the API does not start prints on it. Nothing was sent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unsupported_on_wan", hint: "the API cannot pause or stop a cloud printer, so it does not start prints on one: add the printer on the LAN, or print from ElegooSlicer's Print dialog" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "502": { $ref: "#/components/responses/PrinterError" }
         "503": { $ref: "#/components/responses/PrintersUnavailable" }
@@ -1710,13 +1717,14 @@ components:
             offline:      { value: { error: "printer_offline" } }
             secondary:    { value: { error: "secondary_instance", hint: "close the other ElegooSlicer windows" } }
     PrintCommandUnsupported:
-      description: The Elegoo SDK has no such command for this printer.
+      description: The Elegoo SDK has no such command for this printer, or the printer is a cloud (WAN) printer (the SDK sends these commands over the LAN only; nothing was sent).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           examples:
             resume:  { value: { error: "resume_unsupported", hint: "resume on the printer's screen" } }
             command: { value: { error: "command_unsupported", command: "pause" } }
+            wan:     { value: { error: "unsupported_on_wan", hint: "the Elegoo SDK sends pause, resume and stop over the LAN only: use the printer's screen" } }
     PrintCommandTimeout:
       description: No answer within 20 s. The printer may still carry the command out; check GET /printers/{id}/status.
       content:
