@@ -170,8 +170,7 @@ For each new key, decide:
 
 ### 1.7 Regenerate the MCP settings schema
 
-In the MCP server (`mcp/` once it is vendored into this repository; until then the
-`orcaslicer-mcp` clone, branch `elegoo`):
+In the MCP server (`mcp/`):
 
 ```bash
 uv run python scripts/extract_settings_schema.py --src <this repo>/src/libslic3r/PrintConfig.cpp
@@ -256,10 +255,21 @@ If MaxEllis moved to a newer OrcaSlicer base (a new `remote-api-*` branch), the 
 have changed shape as well:
 `git diff fa3c9ee orcamcp/<new branch> -- src version.inc ':!src/slic3r/GUI/RemoteAPI'`.
 
-The MCP server (`MaxEllis/orcaslicer-mcp`) is not forked: useful upstream fixes are copied
-by hand into our copy (`mcp/` once vendored, until then the `orcaslicer-mcp` clone on
-branch `elegoo`). List them with `git log --oneline v0.1.17..origin/main` in a clone of
-upstream.
+The MCP server lives in `mcp/`, added with `git subtree` from `MaxEllis/orcaslicer-mcp`
+(0.1.17 plus our `elegoo` branch, full history kept, module name unchanged). New upstream
+versions merge in with:
+
+```bash
+git remote add mcpupstream https://github.com/MaxEllis/orcaslicer-mcp.git   # once
+git fetch mcpupstream
+git log --oneline v0.1.17..mcpupstream/main          # what is new upstream
+git subtree pull --prefix=mcp mcpupstream main       # merge it into mcp/
+```
+
+Expect conflicts in `server.py`, `client.py`, `README.md`, `lhm.plugin.json` and the
+tests. Afterwards run `uv run pytest` and `uv run python scripts/gen_lhm_tools.py --check`
+in `mcp/`. Our root `.gitignore` ignores every `docs/` folder; `mcp/.gitignore` re-includes
+`mcp/docs/`.
 
 ## CI notes
 
