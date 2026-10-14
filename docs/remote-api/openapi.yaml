@@ -597,6 +597,56 @@ paths:
               example: { error: "empty" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /view:
+    post:
+      summary: Show the Prepare or Preview tab
+      operationId: setView
+      description: |
+        Switches the main window to the Prepare (3D editor) or Preview tab, as the tab
+        buttons do. With a G-code file open the window is preview-only and `prepare` is
+        refused (the Prepare button would ask whether to close that file).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [view]
+              properties:
+                view: { type: string, enum: [prepare, preview] }
+            example: { view: preview }
+      responses:
+        "200":
+          description: The tab now showing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  view: { type: string, enum: [prepare, preview, other] }
+              example: { view: preview }
+        "400":
+          description: Missing view or malformed JSON.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                missing:  { value: { error: "missing_view" } }
+                bad_json: { value: { error: "invalid_json" } }
+        "409":
+          description: A G-code file is open (preview-only window).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "preview_only" }
+        "422":
+          description: Unknown view name.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "bad_view" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -668,6 +718,10 @@ components:
             filament: { type: array, items: { type: string } }
             printer: { type: array, items: { type: string } }
         slice_result_valid: { type: boolean }
+        view:
+          type: string
+          enum: [prepare, preview, other]
+          description: "Main-window tab on screen (other: home, device and other pages)."
         slicing: { type: boolean, description: "True while a slice is in progress." }
     Plate:
       type: object

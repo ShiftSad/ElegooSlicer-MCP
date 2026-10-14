@@ -16,6 +16,7 @@ namespace Slic3r { namespace GUI { namespace RemoteAPI {
 // GUI thread only (call them inside run_on_ui).
 int  find_object_index(const Model &model, uint64_t id); // index in Model::objects, -1 if none
 void api_notify(const std::string &text, bool warning = false); // on-screen toast
+std::string main_view_name(); // main-window tab: "prepare" | "preview" | "other"
 
 // Snapshot of the last/current slice, maintained on the GUI thread by wx event
 // subscriptions (Task 10), read by API threads under the mutex.
@@ -89,6 +90,7 @@ private:
 
     // elegoo-mcp: model operations, defined in RemoteAPIModelOps.cpp.
     Response handle_orient_object(const std::string &body);  // POST /orient {"object_id": id}
+    Response handle_set_view(const std::string &body);       // POST /view {"view"}
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);

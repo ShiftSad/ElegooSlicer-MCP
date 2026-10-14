@@ -322,7 +322,8 @@ Response Controller::handle_status()
                 {"filament", bundle->filaments.current_dirty_options(true)},
                 {"printer",  bundle->printers.current_dirty_options(true)}
             }},
-            {"slice_result_valid", plate_valid}
+            {"slice_result_valid", plate_valid},
+            {"view", main_view_name()} // elegoo-mcp: main-window tab, see POST /view
         };
     });
     j["slicing"] = slice_state().state == "slicing";
@@ -2464,6 +2465,10 @@ Response Controller::dispatch(const Request &req)
             catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
         }
         if (is("GET",  "/api/v1/jobs/status"))  return handle_jobs_status();
+        if (is("POST", "/api/v1/view")) { // elegoo-mcp
+            try { return handle_set_view(req.body); }
+            catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
+        }
         if (is("GET",  "/api/v1/plates"))       return handle_get_plates();
         if (is("POST", "/api/v1/plates")) {
             try { return handle_create_plate(req.body); }

@@ -10,6 +10,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Selection.hpp"
 
@@ -54,6 +55,42 @@ Response Controller::handle_orient_object(const std::string &body)
         return { 409, r }; // job_running
     }
     return { 202, r };
+}
+
+// --- POST /view {"view": "prepare" | "preview"} ------------------------------
+// Which main-window tab is showing: "prepare" (3D editor), "preview" or "other"
+// (home, device, ... pages).
+std::string main_view_name()
+{
+    const int tab = wxGetApp().mainframe->current_tab();
+    if (tab == MainFrame::tp3DEditor) return "prepare";
+    if (tab == MainFrame::tpPreview)  return "preview";
+    return "other";
+}
+
+// Switches the main window to the Prepare or Preview tab with the call the GUI uses
+// for this (MainFrame::select_tab).
+Response Controller::handle_set_view(const std::string &body)
+{
+    nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in dispatch
+    if (!in.is_object() || !in.contains("view") || !in["view"].is_string())
+        return { 400, {{"error", "missing_view"}, {"detail", "body {\"view\": \"prepare\" | \"preview\"}"}} };
+    const std::string view = in["view"].get<std::string>();
+    if (view != "prepare" && view != "preview")
+        return { 422, {{"error", "bad_view"}, {"detail", "prepare | preview"}} };
+
+    nlohmann::json r = run_on_ui([view]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        // With a G-code file open the window is preview-only, and its Prepare button
+        // asks whether to close that file (MainFrame::preview_only_hint). An API call
+        // cannot answer a question, so refuse instead.
+        if (view == "prepare" && (plater->only_gcode_mode() || plater->using_exported_file()))
+            return {{"error", "preview_only"}};
+        wxGetApp().mainframe->select_tab(size_t(view == "prepare" ? MainFrame::tp3DEditor : MainFrame::tpPreview));
+        return {{"view", main_view_name()}};
+    });
+    if (r.contains("error")) return { 409, r };
+    return { 200, r };
 }
 
 }}} // namespace

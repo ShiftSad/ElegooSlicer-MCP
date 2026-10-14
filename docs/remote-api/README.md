@@ -50,6 +50,7 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/objects/{id}/plate` | Move an object onto plate `i` |
 | POST | `/objects/{id}/transform` | Move, rotate and/or scale an object |
 | POST | `/orient` | Auto-orient every object, or one object with `{"object_id": id}` |
+| POST | `/view` | Show the Prepare or Preview tab |
 
 ### GET /status
 
@@ -66,9 +67,12 @@ curl -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/status
   "presets": {"printer":"...","print":"...","filaments":["..."]},
   "modified": {"print":["layer_height"],"filament":[],"printer":[]},
   "slice_result_valid": false,
+  "view": "prepare",
   "slicing": false
 }
 ```
+`view` is the main-window tab on screen: `prepare`, `preview` or `other` (home,
+device and other pages).
 
 ### GET /config
 
@@ -358,6 +362,21 @@ selection (the object stays selected afterwards). Without a body, or with `{}`, 
 object is oriented and any selection in the window is cleared first. Objects on a
 locked plate are left alone. Errors: `404 unknown_object`, `409 job_running`,
 `422 empty` (no objects), `400 bad_object_id | body_must_be_object | invalid_json`.
+
+### POST /view
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"view": "preview"}' http://localhost:13130/api/v1/view
+```
+```json
+{ "view": "preview" }
+```
+Switches the main window to the `prepare` (3D editor) or `preview` tab, as the tab
+buttons do; the reply names the tab now showing. Opening Preview on an unsliced plate
+behaves as in the window. With a G-code file open the window is preview-only, and
+the Prepare button would ask whether to close that file, so `prepare` is refused
+with `409 preview_only`. Errors: `400 missing_view | invalid_json`, `422 bad_view`.
 
 ## Notes & limits
 
