@@ -378,6 +378,11 @@ static bool is_sensitive_config_key(const std::string &key)
     if (key == "post_process" || key == "printer_model" || key == "filename_format" ||
         key.rfind("printhost_", 0) == 0)
         return true;
+    // elegoo-mcp: ElegooSlicer-only printer switches. support_mms turns the CANVAS
+    // (multi-material) handling on/off and support_wan_network the cloud (WAN) device
+    // path, so they decide how and where prints are sent, like the host options below.
+    if (key == "support_mms" || key == "support_wan_network")
+        return true;
     if (key.size() > gcode_suffix.size() &&
         key.compare(key.size() - gcode_suffix.size(), gcode_suffix.size(), gcode_suffix) == 0)
         return key != "emit_machine_limits_to_gcode"; // a toggle, not a template
