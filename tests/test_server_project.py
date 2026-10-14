@@ -144,6 +144,17 @@ async def test_split_object(monkeypatch):
 
 
 @respx.mock
+async def test_split_object_part_and_heights(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/objects/7/split").mock(return_value=httpx.Response(
+        200, json={"ids": [70, 71, 72], "object_id": 7}))
+    await srv.split_object(7, "parts", part_id=71)
+    assert _sent(route) == {"to": "parts", "volume_id": 71}
+    await srv.split_object(7, "objects", drop_to_bed=False)
+    assert _sent(route) == {"to": "objects", "drop_to_bed": False}
+
+
+@respx.mock
 async def test_split_object_errors(monkeypatch):
     _env(monkeypatch)
     respx.post(f"{BASE}/objects/7/split").mock(return_value=httpx.Response(422, json={"error": "not_splittable"}))

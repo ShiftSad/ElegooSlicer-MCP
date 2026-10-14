@@ -864,24 +864,33 @@ async def paint_region(
 async def split_object(
     object_id: Annotated[int, _OBJECT_ID],
     to: Annotated[Literal["objects", "parts"], Field(description=(
-        "'objects': each separate piece of the mesh becomes an object of its own, as the "
-        "window's Split to objects does. 'parts': the pieces stay one object as separate parts "
-        "(Split to parts), each of which can then get its own filament."))],
+        "'objects': an object with several parts becomes one object per solid part (modifiers "
+        "are left out, as in the window), and a single part is cut into its separate shells, "
+        "each an object of its own (Split to objects). 'parts': one part is cut into its "
+        "separate shells, which stay parts of the object (Split to parts), each of which can "
+        "then get its own filament."))],
+    part_id: Annotated[int | None, Field(description=(
+        "For to='parts' on an object with several parts: the id of the part to cut, from "
+        "list_parts. Not needed when the object has a single part."))] = None,
+    drop_to_bed: Annotated[bool, Field(description=(
+        "For to='objects': put every piece on the bed (default). False keeps each piece at its "
+        "height and stops it from dropping later, the window's 'Yes' when it asks whether to "
+        "keep the heights of floating pieces."))] = True,
 ) -> dict:
     """Split an object whose mesh is made of separate pieces (a model exported with loose
-    shells, say), as the window's Split to objects and Split to parts buttons do, without their
-    dialogs. Returns {"ids": [...]}: the new objects' ids for 'objects', or the object's part
-    ids (list_parts) for 'parts'.
+    shells, say), as the window's Split to objects and Split to parts do, without their
+    dialogs. Returns {"ids": [...]}: the new objects' ids for 'objects' (the split object is
+    gone; see list_objects), or the object's part ids afterwards for 'parts' (see list_parts).
 
     Splitting to parts is the usual first step for a multi-colour model: then give each part
-    its slot with set_part_filament. After splitting to objects, use the returned ids (see
-    list_objects): the split object is replaced by its pieces. A one-piece object cannot be
-    split (not_splittable, 422); an unknown id returns unknown_object. The plate is left
-    unsliced, so re-slice afterwards. Needs ElegooSlicer MCP ('split' in get_status
-    capabilities)."""
+    its slot with set_part_filament. The split can be undone with undo, and the plates holding
+    the result are left unsliced, so re-slice afterwards. Errors: not_splittable (422: a single
+    solid piece, or 'parts' on a multi-part object without part_id; detail says which),
+    unknown_object or unknown_volume (404), job_running, gizmo_editing or select_failed (409).
+    Needs ElegooSlicer MCP ('split' in get_status capabilities)."""
     try:
         async with _client() as c:
-            return await c.split_object(object_id, to)
+            return await c.split_object(object_id, to, part_id, drop_to_bed)
     except ApiError as e:
         return _elegoo_err(e, "split")
 

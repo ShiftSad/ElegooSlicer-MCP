@@ -161,7 +161,7 @@
     },
     {
       "name": "split_object",
-      "description": "Split an object whose mesh is made of separate pieces (a model exported with loose shells, say), as the window's Split to objects and Split to parts buttons do, without their dialogs. Returns {\"ids\": [...]}: the new objects' ids for 'objects', or the object's part ids (list_parts) for 'parts'."
+      "description": "Split an object whose mesh is made of separate pieces (a model exported with loose shells, say), as the window's Split to objects and Split to parts do, without their dialogs."
     },
     {
       "name": "list_filament_slots",

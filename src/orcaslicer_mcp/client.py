@@ -185,9 +185,16 @@ class OrcaClient:
             body["color"] = color
         return await self._request("PUT", f"/api/v1/filaments/{slot}", json=body)
 
-    async def split_object(self, obj_id: int, to: str) -> dict:
-        # ElegooSlicer MCP, capability "split".
-        return await self._request("POST", f"/api/v1/objects/{obj_id}/split", json={"to": to})
+    async def split_object(self, obj_id: int, to: str, volume_id: int | None = None,
+                           drop_to_bed: bool = True) -> dict:
+        # ElegooSlicer MCP, capability "split". volume_id picks the part to split into parts;
+        # drop_to_bed False keeps floating pieces at their height (the window asks about it).
+        body: dict = {"to": to}
+        if volume_id is not None:
+            body["volume_id"] = volume_id
+        if not drop_to_bed:
+            body["drop_to_bed"] = False
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/split", json=body)
 
     # Undo / redo of the window's history (ElegooSlicer MCP, capability "undo").
     async def undo(self) -> dict:
