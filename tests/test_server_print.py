@@ -481,7 +481,7 @@ async def test_stop_refuses_when_the_printer_started_while_asking():
 def test_print_tools_annotations():
     tools = srv.mcp._tool_manager._tools
     assert tools["prepare_print"].annotations.read_only_hint is True
-    for name in ("start_print", "stop_print", "cancel_upload"):
+    for name in ("start_print", "stop_print", "cancel_upload", "pause_print"):
         ann = tools[name].annotations
         assert ann.read_only_hint is False and ann.destructive_hint is True, name
     for name in ("prepare_print", "start_print", "stop_print", "pause_print", "get_upload_status"):

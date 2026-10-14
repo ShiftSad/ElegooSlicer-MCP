@@ -3159,6 +3159,9 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "paint_region": ("Paint support, seam or color on a region", False, True),
     "split_object": ("Split an object into objects or parts", False, False),
     "list_filament_slots": ("List filament slots", True, False),
+    # Not destructive, unlike sync_canvas_to_project: it changes one slot, whose preset and colour
+    # list_filament_slots shows beforehand and this tool puts back, as set_config does for a
+    # setting; the sync replaces every slot at once from the printer.
     "set_filament_slot": ("Set a filament slot's preset or colour", False, False),
     # Removing slots (with force) moves objects and parts that used them to another filament.
     "set_filament_count": ("Set the number of filament slots", False, True),
@@ -3195,7 +3198,10 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "start_print": ("Start a print on the printer (asks the user)", False, True),
     "get_upload_status": ("Get the print file transfer status", True, False),
     "cancel_upload": ("Cancel the print file transfer", False, True),
-    "pause_print": ("Pause the print", False, False),
+    # Destructive although it asks nobody: the API can't resume a Centauri Carbon 2 over LAN, so
+    # the print waits at temperature until someone reaches the printer's screen. The hint keeps
+    # the permission prompt of clients that skip it for non-destructive tools.
+    "pause_print": ("Pause the print", False, True),
     "resume_print": ("Resume the print", False, False),
     # A stopped print can't be resumed; asks the user first (elicitation) or needs user_confirmed.
     "stop_print": ("Stop the print (asks the user)", False, True),
