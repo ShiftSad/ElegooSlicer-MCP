@@ -47,14 +47,20 @@ struct MmsFilamentSyncData
     std::string                       device_id;
 };
 
-std::optional<MmsFilamentSyncData> load_mms_filament_sync_data()
+// elegoo-mcp: the dialog part of the former load_mms_filament_sync_data; its conversion part
+// is make_mms_filament_sync_data below, which the Remote API reaches without the dialog.
+std::optional<PrinterMmsGroup> choose_mms_group_in_dialog()
 {
     std::unique_ptr<PrinterMmsSyncView> view = std::make_unique<PrinterMmsSyncView>(wxGetApp().mainframe);
     if (view->ShowModal() != wxID_OK)
         return std::nullopt;
 
-    PrinterMmsGroup mms_info = view->getSyncedMmsGroup();
+    return view->getSyncedMmsGroup();
+}
 
+// elegoo-mcp: the conversion part of the former load_mms_filament_sync_data, unchanged.
+MmsFilamentSyncData make_mms_filament_sync_data(const PrinterMmsGroup& mms_info)
+{
     MmsFilamentSyncData sync_data;
     int filament_index = 0;
     int mms_index      = 0;
@@ -107,18 +113,51 @@ void PlaterExt::sync_mms_filament()
         return;
     Sidebar& sidebar = plater->sidebar();
 
-    std::optional<MmsFilamentSyncData> sync_data = load_mms_filament_sync_data();
-    if (!sync_data)
+    std::optional<PrinterMmsGroup> mms = choose_mms_group_in_dialog(); // elegoo-mcp: see above
+    if (!mms)
         return;
 
-    if (wxGetApp().preset_bundle->filament_ams_list != sync_data->filament_list) {
-        wxGetApp().preset_bundle->filament_ams_list = sync_data->filament_list;
+    // elegoo-mcp: the sync itself is start/finish_mms_filament_sync, shared with the Remote
+    // API; the dialogs stay here, at the same points. The GUI always syncs presets and colours.
+    MmsFilamentSync sync = start_mms_filament_sync(*mms, false);
+
+    wxString detail;
+    for (const MmsSyncUnknownTray& uk : sync.unknowns)
+        detail += from_u8("\n- " + uk.tray_name + "(" + uk.filament_type + ") ") + _L(uk.reason);
+    if (sync.count == 0) {
+        MessageDialog dlg(&sidebar,
+            _L("There are no compatible filaments, and sync is not performed.") + detail,
+            _L("Sync filaments with MMS"), wxOK);
+        dlg.ShowModal();
+        return;
+    }
+
+    if (!sync.unknowns.empty()) {
+        MessageDialog dlg(&sidebar,
+            _L("There are some unknown filaments mapped to generic preset. Please update ElegooSlicer or restart ElegooSlicer to check if there is an update to system presets.") + detail,
+            _L("Sync filaments with MMS"), wxOK);
+        dlg.ShowModal();
+    }
+
+    finish_mms_filament_sync(sync);
+}
+
+// elegoo-mcp: the first half of the former sync_mms_filament body, unchanged except that the
+// unknown trays are handed back instead of being shown here.
+PlaterExt::MmsFilamentSync PlaterExt::start_mms_filament_sync(const PrinterMmsGroup& mms, bool color_only)
+{
+    MmsFilamentSync result;
+    Sidebar& sidebar = wxGetApp().plater()->sidebar();
+    MmsFilamentSyncData sync_data = make_mms_filament_sync_data(mms);
+
+    if (wxGetApp().preset_bundle->filament_ams_list != sync_data.filament_list) {
+        wxGetApp().preset_bundle->filament_ams_list = sync_data.filament_list;
         for (PlaterPresetComboBox* combo : sidebar.combos_filament())
             combo->update();
     }
 
     std::map<int, DynamicPrintConfig>& mms_filament_list = wxGetApp().preset_bundle->filament_ams_list;
-    std::string mms_filament_ids = wxGetApp().app_config->get("ams_filament_ids", sync_data->device_id);
+    std::string mms_filament_ids = wxGetApp().app_config->get("ams_filament_ids", sync_data.device_id);
     std::vector<std::string> synced_filament_ids;
     if (!mms_filament_ids.empty())
         boost::algorithm::split(synced_filament_ids, mms_filament_ids, boost::algorithm::is_any_of(","));
@@ -132,8 +171,8 @@ void PlaterExt::sync_mms_filament()
         synced_filament_ids[i] = filament_id;
     }
 
-    std::vector<std::string> color_before_sync;
-    std::vector<bool>        is_support_before;
+    std::vector<std::string>& color_before_sync = result.color_before_sync; // elegoo-mcp: kept for step 2
+    std::vector<bool>&        is_support_before = result.is_support_before; // elegoo-mcp: kept for step 2
     DynamicPrintConfig&      project_config = wxGetApp().preset_bundle->project_config;
     ConfigOptionStrings*     color_opt      = project_config.option<ConfigOptionStrings>("filament_colour");
     std::vector<PlaterPresetComboBox*>& combos = sidebar.combos_filament();
@@ -145,21 +184,15 @@ void PlaterExt::sync_mms_filament()
     std::vector<std::pair<DynamicPrintConfig*, std::string>> unknowns;
     std::map<int, AMSMapInfo>                                maps;
     MergeFilamentInfo                                        merge_info;
-    unsigned int n = wxGetApp().preset_bundle->sync_ams_list(unknowns, false, maps, false, merge_info, false);
+    // elegoo-mcp: color_only comes from the caller (the GUI passes false, as it always did)
+    unsigned int n = wxGetApp().preset_bundle->sync_ams_list(unknowns, false, maps, false, merge_info, color_only);
+    result.count   = n;
 
-    wxString detail;
-    for (std::pair<DynamicPrintConfig*, std::string>& uk : unknowns) {
-        std::string tray_name     = uk.first->opt_string("tray_name", 0u);
-        std::string filament_type = uk.first->opt_string("filament_type", 0u);
-        detail += from_u8("\n- " + tray_name + "(" + filament_type + ") ") + _L(uk.second);
-    }
-    if (n == 0) {
-        MessageDialog dlg(&sidebar,
-            _L("There are no compatible filaments, and sync is not performed.") + detail,
-            _L("Sync filaments with MMS"), wxOK);
-        dlg.ShowModal();
-        return;
-    }
+    // elegoo-mcp: the caller lists these (the GUI in its dialogs)
+    for (std::pair<DynamicPrintConfig*, std::string>& uk : unknowns)
+        result.unknowns.push_back({uk.first->opt_string("tray_name", 0u), uk.first->opt_string("filament_type", 0u), uk.second});
+    if (n == 0)
+        return result;
 
     PresetCollection&         filaments        = wxGetApp().preset_bundle->filaments;
     std::vector<std::string>& filament_presets = wxGetApp().preset_bundle->filament_presets;
@@ -174,14 +207,19 @@ void PlaterExt::sync_mms_filament()
         }
     }
     mms_filament_ids = boost::algorithm::join(synced_filament_ids, ",");
-    wxGetApp().app_config->set("ams_filament_ids", sync_data->device_id, mms_filament_ids);
+    wxGetApp().app_config->set("ams_filament_ids", sync_data.device_id, mms_filament_ids);
+    return result;
+}
 
-    if (!unknowns.empty()) {
-        MessageDialog dlg(&sidebar,
-            _L("There are some unknown filaments mapped to generic preset. Please update ElegooSlicer or restart ElegooSlicer to check if there is an update to system presets.") + detail,
-            _L("Sync filaments with MMS"), wxOK);
-        dlg.ShowModal();
-    }
+// elegoo-mcp: the second half of the former sync_mms_filament body, unchanged.
+void PlaterExt::finish_mms_filament_sync(const MmsFilamentSync& sync)
+{
+    Sidebar&                            sidebar           = wxGetApp().plater()->sidebar();
+    const unsigned int                  n                 = sync.count;
+    const std::vector<std::string>&     color_before_sync = sync.color_before_sync;
+    const std::vector<bool>&            is_support_before = sync.is_support_before;
+    ConfigOptionStrings*                color_opt         = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+    std::vector<PlaterPresetComboBox*>& combos            = sidebar.combos_filament();
 
     wxGetApp().plater()->on_filament_count_change(n);
     for (PlaterPresetComboBox* combo : combos)

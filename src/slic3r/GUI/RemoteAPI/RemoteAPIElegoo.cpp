@@ -1,9 +1,10 @@
 // src/slic3r/GUI/RemoteAPI/RemoteAPIElegoo.cpp
 //
 // elegoo-mcp: the Elegoo printers known to ElegooSlicer (Device tab) and their CANVAS
-// multi-material unit, read-only:
+// multi-material unit:
 //   GET /printers, /printers/{id}, /printers/{id}/status, /printers/{id}/tasks,
-//   /printers/{id}/files, /printers/{id}/canvas
+//   /printers/{id}/files, /printers/{id}/canvas (read-only)
+//   POST /printers/{id}/canvas/sync (the CANVAS trays become the project's filaments)
 //
 // Where the data comes from:
 // - PrinterManager keeps every printer in a cache (PrinterCache) that the printers' own
@@ -29,6 +30,9 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrinterNetworkInfo.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/PlaterExt.hpp"
 #include "slic3r/Utils/Elegoo/PrinterManager.hpp"
 #include "slic3r/Utils/Elegoo/PrinterMmsManager.hpp"
 
@@ -626,9 +630,9 @@ static const char *tray_status_name(TrayStatus status)
     }
 }
 
-// "#rrggbb", normalised as the CANVAS sync does it (normalize_color in PlaterExt.cpp),
-// or null when the printer sent no colour.
-static nlohmann::json tray_color(const std::string &color)
+// A colour as "#rrggbb", normalised as the CANVAS sync does it (normalize_color in
+// PlaterExt.cpp), or null when there is none.
+static nlohmann::json hex_color(const std::string &color)
 {
     std::string c;
     for (char ch : color)
@@ -665,7 +669,7 @@ static nlohmann::json canvas_json(const PrinterMmsGroup &group)
                 {"type", empty ? nlohmann::json() : string_or_null(tray.filamentType)},
                 {"name", empty ? nlohmann::json() : string_or_null(tray.filamentName)},
                 {"vendor", empty ? nlohmann::json() : string_or_null(tray.vendor)},
-                {"color", empty ? nlohmann::json() : tray_color(tray.filamentColor)},
+                {"color", empty ? nlohmann::json() : hex_color(tray.filamentColor)},
                 {"nozzle_temp", nozzle_temp},
                 {"bed_temp", nullptr},
                 // The filament preset the CANVAS dialog matched to this tray (empty when
@@ -695,36 +699,219 @@ static nlohmann::json canvas_json(const PrinterMmsGroup &group)
     };
 }
 
+// The checks every CANVAS route starts with. False, with the answer in `error`, when the
+// printer is unknown, not connected, or has no CANVAS to ask: the send dialog's own test
+// (PrintSendDialogEx::getPrinterMmsInfo) is the printer's multi-filament support.
+static bool find_canvas_printer(const std::string &api_id, PrinterNetworkInfo &p, Response &error)
+{
+    if (!find_printer(api_id, p)) {
+        error = { 404, {{"error", "printer_not_found"}} };
+        return false;
+    }
+    if (p.connectStatus != PRINTER_CONNECT_STATUS_CONNECTED) {
+        error = { 409, {{"error", "printer_offline"}} };
+        return false;
+    }
+    if (!p.systemCapabilities.supportsMultiFilament) {
+        error = { 409, {{"error", "canvas_unsupported"}} };
+        return false;
+    }
+    return true;
+}
+
+// The nozzle diameters of the project's printer preset: the tray matching only offers
+// filament presets made for them. That preset is GUI data: call this on the GUI thread
+// (run_on_ui) and hand the result to read_canvas.
+static nlohmann::json nozzle_diameters_json()
+{
+    nlohmann::json out = nlohmann::json::array();
+    const auto *opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (opt != nullptr)
+        for (double d : opt->values)
+            out.push_back(d);
+    return out;
+}
+
 // GET /printers/{id}/canvas
 Response Controller::handle_get_canvas(const std::string &api_id)
 {
     PrinterNetworkInfo p;
-    if (!find_printer(api_id, p))
-        return { 404, {{"error", "printer_not_found"}} };
-    if (p.connectStatus != PRINTER_CONNECT_STATUS_CONNECTED)
-        return { 409, {{"error", "printer_offline"}} };
-    // The send dialog's own test (PrintSendDialogEx::getPrinterMmsInfo): a printer without
-    // multi-filament support has no CANVAS to ask.
-    if (!p.systemCapabilities.supportsMultiFilament)
-        return { 409, {{"error", "canvas_unsupported"}} };
+    Response           error;
+    if (!find_canvas_printer(api_id, p, error))
+        return error;
 
-    // The tray matching only offers presets for the nozzle of the project's printer
-    // preset. That preset is GUI data: read it here, on the GUI thread, and hand it over.
-    nlohmann::json nozzles = run_on_ui([]() -> nlohmann::json {
-        nlohmann::json out = nlohmann::json::array();
-        const auto *opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
-        if (opt != nullptr)
-            for (double d : opt->values)
-                out.push_back(d);
-        return out;
-    });
-
-    const CanvasReply reply = read_canvas(p.printerId, nozzles.get<std::vector<double>>(), CANVAS_TIMEOUT_S);
+    const nlohmann::json nozzles = run_on_ui(nozzle_diameters_json);
+    const CanvasReply    reply   = read_canvas(p.printerId, nozzles.get<std::vector<double>>(), CANVAS_TIMEOUT_S);
     if (reply.code != PrinterNetworkErrorCode::SUCCESS)
         return printer_error(reply.code);
     nlohmann::json j = canvas_json(reply.group);
     j["age_s"] = reply.age_s;
     return { 200, j };
+}
+
+// --- CANVAS sync --------------------------------------------------------------------
+
+// Whether the sync takes a tray into the project: PresetBundle::sync_ams_list's test
+// ("has_filament") on the data the sync is built from, i.e. ElegooSlicer matched a filament
+// preset to the tray (matched_preset in GET /canvas). The sync leaves the other trays out
+// (empty, not ready, or nothing matched) and fills the slots from these, in tray order.
+static bool tray_is_synced(const PrinterMmsTray &tray)
+{
+    return !tray.filamentId.empty() || !tray.filamentPresetName.empty() || !tray.filamentPresetAlias.empty();
+}
+
+// The trays the sync did not take as they are, in tray order: left out ("empty", or
+// "not_matched" when no filament preset matches the tray's filament), or synced with a
+// fallback preset ("fallback_preset", the trays the GUI lists in its warning dialog; detail
+// is that dialog's line, in English).
+static nlohmann::json sync_unknown_json(const PrinterMmsGroup &group, const PlaterExt::MmsFilamentSync &sync)
+{
+    nlohmann::json out = nlohmann::json::array();
+    for (const PrinterMms &unit : group.mmsList)
+        for (const PrinterMmsTray &tray : unit.trayList) {
+            const bool     empty = tray.status == TRAY_STATUS_DISCONNECTED;
+            nlohmann::json item  = {{"tray", string_or_null(tray.trayName)},
+                                    {"type", empty ? nlohmann::json() : string_or_null(tray.filamentType)}};
+            if (!tray_is_synced(tray)) {
+                item["reason"] = empty ? "empty" : "not_matched";
+                out.push_back(item);
+                continue;
+            }
+            for (const PlaterExt::MmsSyncUnknownTray &unknown : sync.unknowns)
+                if (unknown.tray_name == tray.trayName) {
+                    item["reason"] = "fallback_preset";
+                    item["detail"] = unknown.reason;
+                    out.push_back(item);
+                    break;
+                }
+        }
+    return out;
+}
+
+// The project's filament slots after a sync, each with the tray it came from. The sync fills
+// slot i from the i-th tray it takes (tray_is_synced). With color_only the slots stay as they
+// were and only their colours change, so slots past the last such tray have no tray.
+// GUI thread.
+static nlohmann::json synced_slots_json(const PrinterMmsGroup &group)
+{
+    std::vector<std::string> trays;
+    for (const PrinterMms &unit : group.mmsList)
+        for (const PrinterMmsTray &tray : unit.trayList)
+            if (tray_is_synced(tray))
+                trays.push_back(tray.trayName);
+
+    PresetBundle              *bundle  = wxGetApp().preset_bundle;
+    const ConfigOptionStrings *colours = bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+    nlohmann::json             slots   = nlohmann::json::array();
+    for (size_t i = 0; i < bundle->filament_presets.size(); ++i) {
+        std::string type;
+        Preset     *preset = bundle->filaments.find_preset(bundle->filament_presets[i]);
+        if (preset != nullptr) {
+            std::string displayed_type; // unused: the type the sidebar shows
+            type = preset->config.get_filament_type(displayed_type);
+        }
+        slots.push_back({
+            {"slot", i + 1},
+            {"preset", bundle->filament_presets[i]},
+            {"type", string_or_null(type)},
+            {"color", colours != nullptr && i < colours->values.size() ? hex_color(colours->values[i]) : nlohmann::json()},
+            {"tray", i < trays.size() ? nlohmann::json(trays[i]) : nlohmann::json()},
+        });
+    }
+    return slots;
+}
+
+// POST /printers/{id}/canvas/sync {"mode"?: "filament_and_color" | "color_only",
+//                                  "discard_changes"?: bool}
+// The GUI's "Sync filaments with MMS" without its dialogs: the same CANVAS read, then the
+// same two steps (PlaterExt::start/finish_mms_filament_sync). The project's filament slots
+// become the synced trays' presets and colours (color_only: only the colours change).
+// The GUI always syncs presets and colours (it ignores the sync_ams_filament_mode
+// preference), so that is the default.
+Response Controller::handle_canvas_sync(const std::string &api_id, const std::string &body)
+{
+    bool color_only      = false;
+    bool discard_changes = false;
+    if (body.find_first_not_of(" \t\r\n") != std::string::npos) {
+        const nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in route_elegoo
+        if (!in.is_object())
+            return { 400, {{"error", "body_must_be_object"}} };
+        if (in.contains("mode")) {
+            if (!in["mode"].is_string())
+                return { 400, {{"error", "bad_mode"}, {"detail", "mode: \"filament_and_color\" | \"color_only\""}} };
+            const std::string mode = in["mode"].get<std::string>();
+            if (mode != "filament_and_color" && mode != "color_only")
+                return { 422, {{"error", "bad_mode"}, {"detail", "mode: \"filament_and_color\" | \"color_only\""}} };
+            color_only = mode == "color_only";
+        }
+        if (in.contains("discard_changes")) {
+            if (!in["discard_changes"].is_boolean())
+                return { 400, {{"error", "bad_discard_changes"}, {"detail", "discard_changes: true | false"}} };
+            discard_changes = in["discard_changes"].get<bool>();
+        }
+    }
+
+    PrinterNetworkInfo p;
+    Response           error;
+    if (!find_canvas_printer(api_id, p, error))
+        return error;
+    const nlohmann::json nozzles = run_on_ui(nozzle_diameters_json);
+    const CanvasReply    reply   = read_canvas(p.printerId, nozzles.get<std::vector<double>>(), CANVAS_TIMEOUT_S);
+    if (reply.code != PrinterNetworkErrorCode::SUCCESS)
+        return printer_error(reply.code);
+    // The sync dialog shows an error instead of the trays when the CANVAS is not connected
+    // (PrinterMmsSyncView::getPrinterFilamentInfo).
+    if (!reply.group.connected)
+        return { 409, {{"error", "canvas_disconnected"}} };
+
+    const PrinterMmsGroup group      = reply.group;
+    const std::string     printer_id = p.printerId;
+    nlohmann::json r = run_on_ui([group, printer_id, color_only, discard_changes]() -> nlohmann::json {
+        if (wxGetApp().plater() == nullptr)
+            return {{"error", "printers_unavailable"}};
+        PresetCollection &filaments = wxGetApp().preset_bundle->filaments;
+        // Step 2 selects the first synced preset in the Filament tab, which opens
+        // UnsavedChangesDialog when the tab's preset has unsaved edits. Refuse before
+        // changing anything, unless the client asked to drop the edits.
+        if (filaments.current_is_dirty() && !discard_changes)
+            return {{"error", "unsaved_filament_changes"},
+                    {"preset", filaments.get_edited_preset().name},
+                    {"hint", "save the filament preset (POST /preset/save), or sync with \"discard_changes\": true"}};
+
+        // The sync dialog remembers the printer as the one to preselect next time
+        // (PrinterMmsSyncView::syncMmsFilament), before the sync runs.
+        wxGetApp().app_config->set("recent", CONFIG_KEY_SELECTED_PRINTER_ID, printer_id);
+
+        const PlaterExt::MmsFilamentSync sync    = PlaterExt::start_mms_filament_sync(group, color_only);
+        const nlohmann::json             unknown = sync_unknown_json(group, sync);
+        if (sync.count == 0) // the GUI says "no compatible filaments"; the project is unchanged
+            return {{"error", "no_compatible_filaments"}, {"unknown", unknown}};
+
+        // Drop the edits where the dialog's "Discard" would (Tab::select_preset in step 2),
+        // so step 2 opens no dialog. The preset can only be dirty here with discard_changes
+        // (checked above), or if step 1 itself modified it.
+        if (filaments.current_is_dirty())
+            filaments.discard_current_changes();
+        PlaterExt::finish_mms_filament_sync(sync);
+        // Every plate prints with the new filaments: none of the slice results is valid now.
+        wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
+
+        nlohmann::json slots  = synced_slots_json(group);
+        int            synced = 0;
+        for (const nlohmann::json &slot : slots)
+            if (!slot["tray"].is_null())
+                ++synced;
+        return {{"synced", synced}, {"slots", slots}, {"unknown", unknown}};
+    }, 30);
+
+    if (r.contains("error")) {
+        if (r["error"] == "printers_unavailable")
+            return printers_unavailable();
+        return { 409, r }; // unsaved_filament_changes, no_compatible_filaments
+    }
+    api_notify("Synced " + std::to_string(r["synced"].get<int>()) + " filament slot(s) from the CANVAS of '" +
+               p.printerName + "'");
+    return { 200, r };
 }
 
 // --- route group --------------------------------------------------------------------
@@ -756,8 +943,12 @@ Response Controller::route_elegoo(const Request &req)
                 return handle_get_printer_history(id, action, query);
             if (req.method == "GET" && action == "canvas")
                 return handle_get_canvas(id);
+            if (req.method == "POST" && action == "canvas/sync")
+                return handle_canvas_sync(id, req.body);
         }
         return { 404, {{"error", "not_found"}} };
+    } catch (const nlohmann::json::parse_error &) {
+        return { 400, {{"error", "invalid_json"}} };
     } catch (const std::runtime_error &e) {
         if (std::string(e.what()) == "printer_timeout")
             return { 504, {{"error", "printer_timeout"}} };
