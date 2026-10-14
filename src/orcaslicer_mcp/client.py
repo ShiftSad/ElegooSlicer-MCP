@@ -195,7 +195,10 @@ class OrcaClient:
             body["volume_id"] = volume_id
         if not drop_to_bed:
             body["drop_to_bed"] = False
-        return await self._request("POST", f"/api/v1/objects/{obj_id}/split", json=body)
+        # A big mesh takes a while to split (the slicer allows 60 s); stay under Claude Desktop's
+        # ~60 s tool-call limit, as run_calibration does.
+        return await self._request("POST", f"/api/v1/objects/{obj_id}/split", json=body,
+                                   timeout=50.0)
 
     # Undo / redo of the window's history (ElegooSlicer MCP, capability "undo").
     async def undo(self) -> dict:

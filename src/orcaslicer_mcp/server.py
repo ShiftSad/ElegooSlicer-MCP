@@ -895,6 +895,11 @@ async def split_object(
     try:
         async with _client() as c:
             return await c.split_object(object_id, to, part_id, drop_to_bed)
+    except UiTimeout:
+        # The slicer keeps splitting after this wait ran out: the object may already be gone.
+        return {"error": "split_unconfirmed",
+                "hint": "ElegooSlicer may still finish the split: check list_objects (and "
+                        "list_parts) before calling split_object again."}
     except ApiError as e:
         return _elegoo_err(e, "split")
 
@@ -2355,6 +2360,8 @@ _PRINTER_ERRORS = {
                      "Call prepare_print, show the user the summary and ask."),
     "too_late": ("The file already reached the printer, which may be printing it.",
                  "To stop the print, use stop_print (it asks the user first)."),
+    "already_ended": ("The transfer had already ended without starting a print (message says "
+                      "why); there is nothing to cancel.", None),
     "not_printing": ("The printer isn't printing.", None),
     "not_paused": ("The print isn't paused, so there is nothing to resume.", None),
     "resume_unsupported": ("ElegooSlicer can't resume a print on this printer over the network "
@@ -2436,6 +2443,13 @@ def _printer_err(e: ApiError, capability: str) -> dict:
         return _elegoo_err(e, capability)
     out = {"error": token, **{k: v for k, v in e.body.items() if k != "error"}}
     message, hint = _PRINTER_ERRORS.get(token, (None, None))
+    if token == "upload_in_progress" and e.body.get("hint"):
+        # The slicer adds a hint only for a transfer cancelled less than a minute ago, which may
+        # still start its print: cancelling it again would not help.
+        message = ("A transfer to this printer was cancelled less than a minute ago and may still "
+                   "start its print (upload_id names it).")
+        hint = ("Do not cancel it again: wait about a minute, check get_upload_status and "
+                "get_printer_status, then prepare again.")
     if message:
         out["message"] = message
     if hint:
@@ -2598,10 +2612,10 @@ async def sync_canvas_to_project(
 
 
 _MAPPING_ISSUES = {
-    "no_tray": "no ready tray holds this filament, so the Print dialog would refuse to start",
-    "type_mismatch": "the tray holds another filament type",
-    "color_mismatch": "the tray's colour differs from the slot's",
-    "tray_not_ready": "the tray is not loaded",
+    "no_tray": "no ready tray holds this filament, so the print could not start",
+    "type_mismatch": "the tray holds another filament, so the print could not start",
+    "color_mismatch": "the tray's colour differs from the slot's (a warning only)",
+    "tray_not_ready": "the tray is not loaded, so the print could not start",
 }
 
 
@@ -2616,9 +2630,9 @@ async def preview_filament_mapping(
     Returns the slicer's reply ({plate, sliced, ok, filaments: [{slot, preset, type, color,
     weight_g, tray: {unit, tray, type, color} or null, issues}]}) plus table_markdown (slot ->
     tray, one row each) and summary, to relay as given (it numbers plates from 1, as the window
-    does; plate is the 0-based index). issues: no_tray (the print could not
-    start), type_mismatch, color_mismatch, tray_not_ready. ok is true when no filament has an
-    issue. The filaments come from the slice when the plate is sliced (weight_g then set), else
+    does; plate is the 0-based index). issues: no_tray, type_mismatch and tray_not_ready make
+    prepare_print refuse (mapping_incomplete); color_mismatch is only a warning (prepare_print
+    also refuses a tray that reports no colour). ok is true when no filament has an issue. The filaments come from the slice when the plate is sliced (weight_g then set), else
     from what the plate's objects use. Fix problems by loading the right filament on the
     printer, then get_canvas, or by changing slots (set_filament_slot, sync_canvas_to_project).
     Errors: canvas_disconnected, canvas_unsupported, printer_offline (409), printer_timeout
@@ -2939,11 +2953,14 @@ async def get_upload_status(
     upload_id: Annotated[str, Field(description="The upload_id start_print returned.")],
 ) -> dict:
     """How the transfer start_print began is going. Returns {"status", "progress", "bytes":
-    [sent, total], "message", "summary"}; status is exporting, uploading, success (the printer
-    has the file and starts printing it), failed (message says why) or cancelled. Read-only.
+    [sent, total], "message", "done", "summary"}; status is exporting, uploading, cancelling (a
+    cancel was asked; the printer may still start the print if the last bytes had already gone
+    out), success (the printer has the file and starts printing it), failed (message says why),
+    cancelled (final: nothing printed) or unknown (ElegooSlicer rebuilt its window during the
+    transfer: check get_printer_status). done is true once the status is final. Read-only.
 
-    Poll it every few seconds until success or failed. After success, follow the print with
-    get_printer_status or wait_for_printer('printing'). Needs ElegooSlicer MCP ('print_control'
+    Poll it every few seconds until done. After success, follow the print with
+    get_printer_status or wait_for_printer('printing'). Relay summary as given. Needs ElegooSlicer MCP ('print_control'
     in get_status capabilities)."""
     try:
         async with _client() as c:
@@ -2960,8 +2977,15 @@ async def get_upload_status(
                    "get_printer_status or wait_for_printer('printing').")
     elif status == "failed":
         summary = f"The transfer failed: {out.get('message') or 'no reason given'}. Nothing is printing."
+    elif status == "cancelling":
+        summary = ("Cancel requested. If the last bytes had already gone out, the printer may still "
+                   "start this print within about a minute: check get_upload_status and "
+                   "get_printer_status again before telling the user it is cancelled.")
     elif status == "cancelled":
         summary = "The transfer was cancelled. Nothing is printing."
+    elif status == "unknown":
+        summary = (f"{out.get('message') or 'ElegooSlicer lost track of the transfer.'} Check "
+                   "get_printer_status: the print may have started.")
     else:
         summary = f"Transfer status: {status}."
     return {**out, "summary": summary}
@@ -2972,14 +2996,21 @@ async def cancel_upload(
     upload_id: Annotated[str, Field(description="The upload_id start_print returned.")],
 ) -> dict:
     """Cancel a transfer start_print began, before the printer has the whole file. Returns
-    {"ok": true}. Once the file has arrived the printer may already be printing: the reply is
-    then too_late (409), and stopping the print takes stop_print. Needs ElegooSlicer MCP
-    ('print_control' in get_status capabilities)."""
+    {"ok": true, "status", "next"}. The cancel takes effect at the transfer's next step: if the
+    last bytes had already gone out, the printer still starts the print, so the transfer shows
+    cancelling for up to a minute and then cancelled (final) or success; check get_upload_status
+    before telling the user nothing will print. Once the file has arrived the reply is too_late
+    (409), and stopping the print takes stop_print; a transfer that had already failed answers
+    already_ended (409). Needs ElegooSlicer MCP ('print_control' in get_status capabilities)."""
     try:
         async with _client() as c:
-            return await c.cancel_upload(upload_id)
+            out = await c.cancel_upload(upload_id)
     except ApiError as e:
         return _printer_err(e, "print_control")
+    if out.get("ok") and out.get("status") != "cancelled":
+        out["next"] = ("Cancel requested. Poll get_upload_status until done: the printer may still "
+                       "start this print if the last bytes had already gone out.")
+    return out
 
 
 # The states the slicer sends a stop in (RemoteAPIElegoo.cpp can_stop_in): a print runs, is

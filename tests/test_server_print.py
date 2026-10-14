@@ -351,7 +351,11 @@ def test_a_url_only_client_cannot_show_the_form():
     ({"status": "uploading", "progress": 40, "bytes": [4, 10], "message": ""}, "Sending the file to the printer: 40%."),
     ({"status": "success", "progress": 100, "bytes": [10, 10], "message": ""}, "starts printing it"),
     ({"status": "failed", "progress": 10, "bytes": [1, 10], "message": "disk full"}, "failed: disk full"),
-    ({"status": "cancelled", "progress": 10, "bytes": [1, 10], "message": ""}, "cancelled"),
+    ({"status": "cancelled", "progress": 10, "bytes": [1, 10], "message": "", "done": True}, "Nothing is printing"),
+    # A pending cancel: the printer may still start the print, so the summary must not say it won't.
+    ({"status": "cancelling", "progress": 90, "bytes": [9, 10], "message": "", "done": False}, "may still"),
+    ({"status": "unknown", "progress": 90, "bytes": [9, 10], "message": "ElegooSlicer rebuilt its window.",
+      "done": True}, "get_printer_status"),
 ])
 @respx.mock
 async def test_upload_status_summaries(reply, text):
@@ -362,11 +366,34 @@ async def test_upload_status_summaries(reply, text):
 
 @respx.mock
 async def test_cancel_upload_and_too_late():
-    route = respx.delete(f"{F}/uploads/u-1").mock(return_value=httpx.Response(200, json={"ok": True}))
-    assert await srv.cancel_upload("u-1") == {"ok": True} and route.called
+    route = respx.delete(f"{F}/uploads/u-1").mock(return_value=httpx.Response(200, json={
+        "ok": True, "status": "cancelling"}))
+    out = await srv.cancel_upload("u-1")
+    assert out["ok"] is True and "may still start" in out["next"] and route.called
+    respx.delete(f"{F}/uploads/u-1").mock(return_value=httpx.Response(200, json={"ok": True, "status": "cancelled"}))
+    assert await srv.cancel_upload("u-1") == {"ok": True, "status": "cancelled"}
     respx.delete(f"{F}/uploads/u-1").mock(return_value=httpx.Response(409, json={"error": "too_late"}))
     out = await srv.cancel_upload("u-1")
     assert out["error"] == "too_late" and "stop_print" in out["hint"]
+    respx.delete(f"{F}/uploads/u-1").mock(return_value=httpx.Response(409, json={
+        "error": "already_ended", "status": "failed", "message": "sending the file failed: the printer is busy"}))
+    out = await srv.cancel_upload("u-1")
+    assert out["error"] == "already_ended" and "nothing to cancel" in out["message"]
+    assert "stop_print" not in json.dumps(out) and out["status"] == "failed"
+
+
+@respx.mock
+async def test_upload_in_progress_after_a_cancel_says_wait():
+    listing(printer("idle"))
+    respx.post(f"{F}/printers/p1/print/prepare").mock(return_value=httpx.Response(409, json={
+        "error": "upload_in_progress", "upload_id": "u-1",
+        "hint": "the transfer was cancelled but may still start its print for up to a minute"}))
+    out = await srv.prepare_print()
+    assert out["error"] == "upload_in_progress" and "Do not cancel it again" in out["hint"]
+    respx.post(f"{F}/printers/p1/print/prepare").mock(return_value=httpx.Response(409, json={
+        "error": "upload_in_progress", "upload_id": "u-2"}))
+    out = await srv.prepare_print()
+    assert "cancel it with cancel_upload" in out["hint"]
 
 
 # --- pause / resume ------------------------------------------------------------------------------

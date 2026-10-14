@@ -365,11 +365,11 @@
     },
     {
       "name": "get_upload_status",
-      "description": "How the transfer start_print began is going. Returns {\"status\", \"progress\", \"bytes\": [sent, total], \"message\", \"summary\"}; status is exporting, uploading, success (the printer has the file and starts printing it), failed (message says why) or cancelled. Read-only."
+      "description": "How the transfer start_print began is going."
     },
     {
       "name": "cancel_upload",
-      "description": "Cancel a transfer start_print began, before the printer has the whole file. Returns {\"ok\": true}. Once the file has arrived the printer may already be printing: the reply is then too_late (409), and stopping the print takes stop_print."
+      "description": "Cancel a transfer start_print began, before the printer has the whole file. Returns {\"ok\": true, \"status\", \"next\"}."
     },
     {
       "name": "pause_print",
