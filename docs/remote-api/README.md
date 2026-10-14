@@ -528,3 +528,138 @@ invalid_json`.
   shows "Remote API could not listen on port ..." (rebinding right after a restart
   still works). On Linux/macOS it sets `SO_REUSEADDR`, so a quick restart rebinds even
   if a prior socket is in `TIME_WAIT`.
+
+## Elegoo printers and CANVAS
+
+Read-only access to the printers of the Device tab and to the CANVAS multi-material
+unit of a Centauri Carbon 2 (capabilities `printers` and `canvas`). Nothing here opens a
+window or a dialog, and nothing is sent to the printer except status and CANVAS
+requests.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/printers` | Every printer, and the one the send dialog would pick |
+| GET | `/printers/{id}` | One printer |
+| GET | `/printers/{id}/status[?raw=1]` | One printer + its exception codes + the age of the data |
+| GET | `/printers/{id}/tasks?page=1&size=20` | Print history (cloud printers only) |
+| GET | `/printers/{id}/files?page=1&size=20` | Files stored on the printer (cloud printers only) |
+| GET | `/printers/{id}/canvas` | CANVAS units and trays, with the filament preset matched to each tray |
+
+- **Where the data comes from.** ElegooSlicer keeps every printer in a cache that the
+  printers' own status messages keep up to date; the printer routes read it. The
+  CANVAS state is not cached by ElegooSlicer: each read is a request to the printer.
+- **Printer ids** are opaque (`"p"` + 16 hex digits) and stay the same for a printer
+  across restarts. They are not ElegooSlicer's internal ids, which for a discovered CC2
+  or a cloud printer contain the serial number. Take them from `GET /printers`.
+- **No secrets.** Printers are written field by field: access codes, PINs, passwords,
+  tokens, user names, serial numbers, mainboard ids and web URLs never appear, and a
+  user name/password inside a host URL is cut off.
+- **Threads and timeouts.** Printer calls never run on the GUI thread. A call that does
+  not finish in 10 s (CANVAS: 20 s) answers `504 printer_timeout`.
+- **Errors** (every route): `404 printer_not_found`, `409 printer_offline`,
+  `504 printer_timeout`, `503 printers_unavailable` (ElegooSlicer is closing, rebuilding
+  its window, or a second ElegooSlicer window lost its link to the first one; retry),
+  `502 {"error": "printer_error", "code": n}` for any other failure of the printer layer
+  (`n` is ElegooSlicer's `PrinterNetworkErrorCode`).
+
+### GET /printers
+
+```json
+{
+  "printers": [{
+    "id": "p3f9c2a71d04e8b65", "name": "Centauri Carbon 2", "model": "Elegoo Centauri Carbon 2",
+    "vendor": "Elegoo", "host": "192.168.1.50", "port": null, "network": "lan",
+    "firmware": "1.0.2", "connected": true, "status": "printing", "status_code": 1,
+    "task": {"name": null, "file": "helmet.gcode", "progress": 42, "current_s": 3120,
+             "total_s": 7400, "estimated_s": 4280, "begin_ts": null},
+    "supports": {"canvas": true, "timelapse": true, "auto_leveling": true,
+                 "bed_switching": true, "auto_refill": true, "filament_mapping": true}
+  }],
+  "selected_id": "p3f9c2a71d04e8b65"
+}
+```
+(Values illustrative.) `selected_id` is the printer the Print dialog would preselect:
+the last printer a print was sent to if it is of the project's printer model, else the
+first printer of that model, else the last printer sent to, else the first printer
+(`null` when there are none).
+- `network`: `lan` (added by IP / discovered) or `wan` (cloud).
+- `status`: `offline` when ElegooSlicer is not connected to the printer, else one of
+  `idle, printing, paused, pausing, canceled, self_checking, auto_leveling,
+  pid_calibrating, resonance_testing, updating, file_copying, file_transferring, homing,
+  preheating, filament_operating, extruder_operating, print_completed,
+  rfid_recognizing, video_composing, emergency_stop, power_loss_recovery,
+  initializing, busy, error, id_not_match, auth_error, unknown`. `status_code` is the
+  matching ElegooSlicer `PrinterStatus` value (`-1` for offline).
+- `task`: the print in progress (`null` when idle or offline). `name` and `begin_ts`
+  are always `null`: ElegooSlicer does not keep them for the current print.
+- `supports.canvas`: the printer reports multi-filament support.
+
+### GET /printers/{id}
+
+One `Printer` as above.
+
+### GET /printers/{id}/status
+
+The `Printer` plus:
+- `exceptions`: `[{"code": "803", "level": null, "time": null}]`, the exception codes the
+  printer reports in its current status (only the code is kept by ElegooSlicer).
+- `age_s`: seconds since the cache last heard from (or about) the printer, `null` if
+  unknown.
+
+Each call also asks the printer to send its status again (at most once every 2 s per
+printer, without waiting): the answer updates the cache for the next call.
+`?raw=1` adds `raw` (the SDK's raw status JSON, with every secret-named key removed)
+and `raw_age_s`; it is read at most once every 2 s per printer. The SDK has it for
+cloud printers only: a LAN printer answers `501 unsupported_on_lan`.
+
+### GET /printers/{id}/tasks, GET /printers/{id}/files
+
+`{"items": [...], "total": n}`, one page (`page` from 1, `size` 1-100, default 1 and 20;
+else `400 bad_page | bad_size`). In the SDK both lists come from Elegoo's cloud only, so
+a LAN printer answers `501 unsupported_on_lan` without asking. Items:
+- tasks: `{id, name, begin_ts, end_ts, status_code}`;
+- files: `{name, size_bytes, print_time_s, layers, layer_height_mm, created_ts,
+  filament_g, filament_mm, print_count, last_print_ts}`.
+
+Thumbnails are left out (they are links into Elegoo's cloud storage).
+
+### GET /printers/{id}/canvas
+
+```json
+{
+  "connected": true, "auto_refill": false,
+  "active": {"unit": "0", "tray": "A1"},
+  "units": [{
+    "id": "0", "name": null, "model": null, "connected": true,
+    "temperature_c": null, "humidity": null,
+    "trays": [
+      {"id": "A1", "unit": "0", "index": 0, "status": "loaded", "type": "PLA",
+       "name": "PLA", "vendor": "Elegoo", "color": "#ffffff", "nozzle_temp": [190, 230],
+       "bed_temp": null, "matched_preset": "Elegoo PLA @ECC2", "matched_alias": "Elegoo PLA"},
+      {"id": "A2", "unit": "0", "index": 1, "status": "empty", "type": null, "name": null,
+       "vendor": null, "color": null, "nozzle_temp": null, "bed_temp": null,
+       "matched_preset": null, "matched_alias": null}
+    ]
+  }],
+  "external_spool": null,
+  "age_s": 0
+}
+```
+(Values illustrative.) The same read as the GUI's CANVAS sync and Print dialogs:
+- `units` and `trays` keep the printer's order. A tray's `id` is the name the GUI shows:
+  `A1`..`A4` for the first unit, `B1`.. for the second. `unit` is the unit's id, `index`
+  the tray's position in its unit (from 0).
+- `status`: `empty | preloaded | loaded | unknown_filament | error | unknown`. The
+  filament fields of an empty tray are `null`.
+- `matched_preset` / `matched_alias`: the system filament preset ElegooSlicer matched to
+  a loaded tray (by filament name and vendor, for the project printer's nozzle), the
+  one the CANVAS sync starts from; `null` when the tray is not ready or nothing matched.
+- `active`: the tray feeding the extruder, `null` when none.
+- `temperature_c`, `humidity`, `bed_temp` and `external_spool` are always `null`: the
+  printer layer does not provide them.
+
+A reply is reused for 5 s (`age_s` tells how old it is), and while one request is
+asking a printer, the other requests for that printer wait for its answer: the CC2
+silently ignores requests for a while when it gets 3 or more in a row. Errors:
+`409 canvas_unsupported` (the printer reports no multi-filament support),
+`409 printer_offline`, `504 printer_timeout`.

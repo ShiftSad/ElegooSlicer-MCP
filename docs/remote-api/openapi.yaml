@@ -964,6 +964,216 @@ paths:
                 clear_box: { value: { error: "clear_takes_no_box" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /printers:
+    get:
+      summary: List the Elegoo printers of the Device tab
+      operationId: getPrinters
+      description: |
+        Capability `printers`. Every printer of ElegooSlicer's printer manager, from its
+        cache (kept up to date by the printers' status messages), and the printer the
+        Print dialog would preselect. Fields are a whitelist: no access code, PIN,
+        password, token, user name, serial number, mainboard id or web URL.
+      responses:
+        "200":
+          description: The printers.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  printers:
+                    type: array
+                    items: { $ref: "#/components/schemas/Printer" }
+                  selected_id:
+                    type: string
+                    nullable: true
+                    description: |
+                      The printer the Print dialog would preselect (last printer sent to,
+                      if of the project's printer model; else the first of that model; else
+                      the last sent to; else the first). Null when there are no printers.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrinterTimeout" }
+  /printers/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: "Printer id as reported by GET /printers." }
+    get:
+      summary: One Elegoo printer
+      operationId: getPrinter
+      responses:
+        "200":
+          description: The printer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Printer" }
+        "404": { $ref: "#/components/responses/PrinterNotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrinterTimeout" }
+  /printers/{id}/status:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: One printer with its exception codes and the age of the data
+      operationId: getPrinterStatus
+      description: |
+        Also asks the printer to send its status again (at most once every 2 s per
+        printer, without waiting for it); the answer updates the cache for the next call.
+        `raw=1` adds the SDK's raw status JSON (secret-named keys removed), read at most
+        once every 2 s per printer; the SDK has it for cloud printers only.
+      parameters:
+        - { name: raw, in: query, required: false, schema: { type: string, enum: ["1", "true"] } }
+      responses:
+        "200":
+          description: The printer, its exceptions and age_s (plus raw and raw_age_s with raw=1).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Printer" }
+                  - type: object
+                    properties:
+                      exceptions:
+                        type: array
+                        description: Exception codes in the printer's current status (only the code is known).
+                        items:
+                          type: object
+                          properties:
+                            code: { type: string }
+                            level: { type: integer, nullable: true }
+                            time: { type: integer, nullable: true }
+                      age_s: { type: integer, nullable: true, description: "Seconds since the cache last heard from or about the printer." }
+                      raw: { type: object, description: "raw=1 only." }
+                      raw_age_s: { type: integer, description: "raw=1 only." }
+        "404": { $ref: "#/components/responses/PrinterNotFound" }
+        "409": { $ref: "#/components/responses/PrinterOffline" }
+        "501": { $ref: "#/components/responses/UnsupportedOnLan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrinterTimeout" }
+  /printers/{id}/tasks:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Print history of a cloud printer
+      operationId: getPrinterTasks
+      description: The SDK reads it from Elegoo's cloud only; a LAN printer answers 501 without asking.
+      parameters:
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: One page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        begin_ts: { type: integer }
+                        end_ts: { type: integer }
+                        status_code: { type: integer }
+        "400":
+          description: Bad page or size.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                page: { value: { error: "bad_page" } }
+                size: { value: { error: "bad_size" } }
+        "404": { $ref: "#/components/responses/PrinterNotFound" }
+        "409": { $ref: "#/components/responses/PrinterOffline" }
+        "501": { $ref: "#/components/responses/UnsupportedOnLan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrinterTimeout" }
+  /printers/{id}/files:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Files stored on a cloud printer
+      operationId: getPrinterFiles
+      description: The SDK reads it from Elegoo's cloud only; a LAN printer answers 501 without asking.
+      parameters:
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: One page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        size_bytes: { type: integer }
+                        print_time_s: { type: integer }
+                        layers: { type: integer }
+                        layer_height_mm: { type: number }
+                        created_ts: { type: integer }
+                        filament_g: { type: number }
+                        filament_mm: { type: number }
+                        print_count: { type: integer }
+                        last_print_ts: { type: integer }
+        "400":
+          description: Bad page or size.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/PrinterNotFound" }
+        "409": { $ref: "#/components/responses/PrinterOffline" }
+        "501": { $ref: "#/components/responses/UnsupportedOnLan" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrinterTimeout" }
+  /printers/{id}/canvas:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: CANVAS units and trays of a printer
+      operationId: getCanvas
+      description: |
+        Capability `canvas`. The read the GUI's CANVAS sync and Print dialogs make: a
+        request to the printer, trays named A1..A4, B1.. by unit order, each loaded tray
+        matched to a filament preset. A reply is reused for 5 s (`age_s`), and while one
+        request is asking a printer the others wait for its answer (the CC2 ignores
+        requests for a while when it gets 3 or more in a row).
+      responses:
+        "200":
+          description: The CANVAS state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Canvas" }
+        "404": { $ref: "#/components/responses/PrinterNotFound" }
+        "409":
+          description: The printer is offline or reports no multi-filament support.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                offline:     { value: { error: "printer_offline" } }
+                unsupported: { value: { error: "canvas_unsupported" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "502": { $ref: "#/components/responses/PrinterError" }
+        "503": { $ref: "#/components/responses/PrintersUnavailable" }
+        "504": { $ref: "#/components/responses/PrinterTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -983,6 +1193,46 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: "ui_timeout" }
+    PrinterNotFound:
+      description: No printer has this id.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "printer_not_found" }
+    PrinterOffline:
+      description: ElegooSlicer is not connected to the printer.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "printer_offline" }
+    UnsupportedOnLan:
+      description: The SDK has this data for cloud printers only; nothing was asked.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "unsupported_on_lan" }
+    PrinterError:
+      description: The printer layer failed; `code` is ElegooSlicer's PrinterNetworkErrorCode.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, enum: [printer_error] }
+              code: { type: integer }
+          example: { error: "printer_error", code: 8 }
+    PrintersUnavailable:
+      description: ElegooSlicer is closing or rebuilding its window, or a second window lost its link to the first one. Retry.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "printers_unavailable" }
+    PrinterTimeout:
+      description: The printer call did not finish in time (10 s, CANVAS 20 s).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "printer_timeout" }
   schemas:
     Error:
       type: object
@@ -1140,3 +1390,96 @@ components:
           items: { type: string, enum: [print, filament, printer, sla_print, sla_material, other] }
         project: { type: string, description: "project.opened: the opened project filename." }
       required: [event]
+    Printer:
+      type: object
+      description: A printer of the Device tab, written field by field (no secrets).
+      properties:
+        id: { type: string, example: p3f9c2a71d04e8b65, description: "Opaque, stable across restarts (not ElegooSlicer's internal id, which can contain the serial number)." }
+        name: { type: string }
+        model: { type: string, example: Elegoo Centauri Carbon 2 }
+        vendor: { type: string, example: Elegoo }
+        host: { type: string, description: "A user name/password in a host URL is cut off." }
+        port: { type: integer, nullable: true }
+        network: { type: string, enum: [lan, wan] }
+        firmware: { type: string, nullable: true }
+        connected: { type: boolean }
+        status:
+          type: string
+          description: "`offline` when not connected."
+          enum: [offline, idle, printing, paused, pausing, canceled, self_checking, auto_leveling, pid_calibrating,
+                 resonance_testing, updating, file_copying, file_transferring, homing, preheating, filament_operating,
+                 extruder_operating, print_completed, rfid_recognizing, video_composing, emergency_stop,
+                 power_loss_recovery, initializing, busy, error, id_not_match, auth_error, unknown]
+        status_code: { type: integer, description: "ElegooSlicer PrinterStatus value; -1 when offline." }
+        task:
+          type: object
+          nullable: true
+          description: The print in progress; null when idle or offline.
+          properties:
+            name: { type: string, nullable: true, description: "Always null (not kept for the current print)." }
+            file: { type: string, nullable: true }
+            progress: { type: integer, description: "0-100" }
+            current_s: { type: integer }
+            total_s: { type: integer }
+            estimated_s: { type: integer }
+            begin_ts: { type: integer, nullable: true, description: "Always null (not kept for the current print)." }
+        supports:
+          type: object
+          properties:
+            canvas: { type: boolean, description: "Multi-filament (CANVAS) support." }
+            timelapse: { type: boolean }
+            auto_leveling: { type: boolean }
+            bed_switching: { type: boolean }
+            auto_refill: { type: boolean }
+            filament_mapping: { type: boolean }
+    Canvas:
+      type: object
+      properties:
+        connected: { type: boolean, description: "At least one unit is connected." }
+        auto_refill: { type: boolean }
+        active:
+          type: object
+          nullable: true
+          description: The tray feeding the extruder.
+          properties:
+            unit: { type: string }
+            tray: { type: string, example: A1 }
+        units:
+          type: array
+          items: { $ref: "#/components/schemas/CanvasUnit" }
+        external_spool: { type: object, nullable: true, description: "Always null (not provided by the printer layer)." }
+        age_s: { type: integer, description: "Seconds since the printer sent this reply (replies are reused for 5 s)." }
+    CanvasUnit:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string, nullable: true }
+        model: { type: string, nullable: true }
+        connected: { type: boolean }
+        temperature_c: { type: number, nullable: true, description: "Always null (not provided by the printer layer)." }
+        humidity: { type: number, nullable: true, description: "Always null (not provided by the printer layer)." }
+        trays:
+          type: array
+          items: { $ref: "#/components/schemas/CanvasTray" }
+    CanvasTray:
+      type: object
+      description: Filament fields are null for an empty tray.
+      properties:
+        id: { type: string, example: A1, description: "Name the GUI shows: A1..A4 for the first unit, B1.. for the second." }
+        unit: { type: string, description: "The unit's id." }
+        index: { type: integer, description: "Position in the unit, from 0." }
+        status: { type: string, enum: [empty, preloaded, loaded, unknown_filament, error, unknown] }
+        type: { type: string, nullable: true, example: PLA }
+        name: { type: string, nullable: true }
+        vendor: { type: string, nullable: true }
+        color: { type: string, nullable: true, example: "#ffffff" }
+        nozzle_temp:
+          type: array
+          nullable: true
+          items: { type: integer }
+          minItems: 2
+          maxItems: 2
+          description: "[min, max] in degrees C."
+        bed_temp: { type: array, nullable: true, items: { type: integer }, description: "Always null (not provided by the printer layer)." }
+        matched_preset: { type: string, nullable: true, example: "Elegoo PLA @ECC2", description: "System filament preset matched to the loaded tray; the CANVAS sync starts from it." }
+        matched_alias: { type: string, nullable: true, example: Elegoo PLA }
