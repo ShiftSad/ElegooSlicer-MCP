@@ -860,6 +860,89 @@ async def paint_region(
         return _elegoo_err(e, "paint")
 
 
+# --- Filament slots (ElegooSlicer MCP, capability "filaments") -----------------
+# The project's filament list in the window's sidebar: slots 1, 2, ... each holding a filament
+# preset and a colour. Objects, parts and painted regions print with a slot number.
+
+_SLOT = Field(description="1-based filament slot, as the window's filament list numbers it "
+                          "(see list_filament_slots).")
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+@mcp.tool()
+async def list_filament_slots() -> dict:
+    """List the project's filament slots as the sidebar's filament list shows them. Returns
+    {"count", "max", "slots": [{slot, preset, type, color, used_on_current_plate}]}: how many
+    slots there are, the most this printer allows, and per slot its number (1-based), filament
+    preset, filament type (PLA, PETG, ...), colour ('#rrggbb') and whether something on the
+    current plate prints with it. Read-only.
+
+    Call it to pick a slot for set_part_filament, paint_region(layer='color') or
+    add_layer_change, and before set_filament_count to see which slots are in use. Needs
+    ElegooSlicer MCP ('filaments' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.get_filaments()
+    except ApiError as e:
+        return _elegoo_err(e, "filaments")
+
+
+@mcp.tool()
+async def set_filament_slot(
+    slot: Annotated[int, _SLOT],
+    preset: Annotated[str | None, Field(description=(
+        "Exact name of the filament preset to load into the slot, as "
+        "list_presets(type='filament', include_system=True) shows it. It must suit the selected "
+        "printer (incompatible_preset otherwise)."))] = None,
+    color: Annotated[str | None, Field(description=(
+        "The slot's colour as '#rrggbb', e.g. '#1e90ff'. It is the colour the preview shows and "
+        "the printer's filament mapping compares; it does not change the preset."))] = None,
+) -> dict:
+    """Change one filament slot: load another filament preset into it, as picking one in the
+    sidebar's filament list does, and/or set its colour. Returns the slot as
+    list_filament_slots shows it.
+
+    Give preset, color or both. Every plate is left unsliced, so re-slice afterwards. When the
+    preference to auto-calculate flushing volumes is on, the slicer recalculates the flushing
+    between slots, as the window does. Errors: unknown_slot (404); unknown_preset,
+    incompatible_preset or bad_color (422). Needs ElegooSlicer MCP ('filaments' in get_status
+    capabilities)."""
+    if preset is None and color is None:
+        return {"error": "nothing_to_change", "hint": "Pass preset, color or both."}
+    if color is not None and not _HEX_COLOR.match(color):
+        return {"error": "bad_color", "hint": "Pass the colour as '#rrggbb', e.g. '#1e90ff'."}
+    try:
+        async with _client() as c:
+            return await c.set_filament_slot(slot, preset, color)
+    except ApiError as e:
+        return _elegoo_err(e, "filaments")
+
+
+@mcp.tool()
+async def set_filament_count(
+    count: Annotated[int, Field(description=(
+        "How many filament slots the project should have: from 1 up to the max that "
+        "list_filament_slots reports."))],
+    force: Annotated[bool, Field(description=(
+        "Remove slots even when objects or parts print with them. Those then fall back as in "
+        "the window: an object to slot 1, a part to its object's slot. Leave it false to get "
+        "slot_in_use and the list of what uses them instead."))] = False,
+) -> dict:
+    """Set how many filament slots the project has, as the plus and minus buttons of the
+    sidebar's filament list do: new slots are added at the end, and removing takes slots off the
+    end (the highest numbers). Returns the slots as list_filament_slots does.
+
+    Removing a slot that an object or part uses is refused with slot_in_use (409) and used_by,
+    the objects and parts that use it, unless force=True. A count outside 1..max is bad_count
+    (422). New slots start with the slicer's default filament; set them with set_filament_slot.
+    Needs ElegooSlicer MCP ('filaments' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.set_filament_count(count, force)
+    except ApiError as e:
+        return _elegoo_err(e, "filaments")
+
+
 @mcp.tool()
 async def list_plates() -> dict:
     """List the plates in the project: each one's 0-based index, name, whether it is the
@@ -1993,6 +2076,10 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "save_project": ("Save project as .3mf (can replace a file)", False, True),
     # Painting replaces whatever paint was there, including the user's own brush work.
     "paint_region": ("Paint support, seam or color on a region", False, True),
+    "list_filament_slots": ("List filament slots", True, False),
+    "set_filament_slot": ("Set a filament slot's preset or colour", False, False),
+    # Removing slots (with force) moves objects and parts that used them to another filament.
+    "set_filament_count": ("Set the number of filament slots", False, True),
     "remember": ("Save a note", False, False),
     "load_model": ("Load a model file", False, False),
     "select_preset": ("Select preset", False, False),

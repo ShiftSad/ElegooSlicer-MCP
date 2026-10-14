@@ -84,6 +84,7 @@ These tools need the ElegooSlicer MCP build, a port of the same API to ElegooSli
 - `save_project` saves the project as a `.3mf` without a dialog, to its current file or a new path; an existing file is replaced only with `overwrite=True` (`project_save`).
 - `paint_region` paints support, seam or a filament color onto the faces whose centre lies in a box, or on the whole object, optionally only faces pointing down at least `max_overhang_deg` below horizontal (`paint`).
 - `get_slice_breakdown` and `describe_plate` report a multi-filament print's filament changes, their time and the flushed filament, which are in the totals but in no feature role (`breakdown_purge`).
+- `list_filament_slots`, `set_filament_slot` and `set_filament_count` show and change the project's filament slots as the sidebar's filament list does: preset and colour per slot, and how many slots there are (`filaments`).
 
 ### Plate renders
 

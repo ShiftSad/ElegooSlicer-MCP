@@ -165,6 +165,26 @@ class OrcaClient:
     async def job_status(self) -> dict:
         return await self._request("GET", "/api/v1/jobs/status")
 
+    # Filament slots (ElegooSlicer MCP, capability "filaments"). Slots are 1-based, as the
+    # window numbers them.
+    async def get_filaments(self) -> dict:
+        return await self._request("GET", "/api/v1/filaments")
+
+    async def set_filament_count(self, count: int, force: bool = False) -> dict:
+        body: dict = {"count": count}
+        if force:
+            body["force"] = True
+        return await self._request("PUT", "/api/v1/filaments", json=body)
+
+    async def set_filament_slot(self, slot: int, preset: str | None = None,
+                                color: str | None = None) -> dict:
+        body: dict = {}
+        if preset is not None:
+            body["preset"] = preset
+        if color is not None:
+            body["color"] = color
+        return await self._request("PUT", f"/api/v1/filaments/{slot}", json=body)
+
     # Plates (fork v2.4.2-mcp.13 and later).
     async def get_plates(self) -> dict:
         return await self._request("GET", "/api/v1/plates")
