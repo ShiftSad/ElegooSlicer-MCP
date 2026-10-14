@@ -104,10 +104,13 @@ curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 ```
 Applied through the GUI's own edit path (dirty markers + live refresh + slice
 invalidation). **All-or-nothing:** if any key is unknown or invalid, nothing is
-applied and you get `422` with per-key reasons:
+applied and you get `422` with the error token `config_rejected` and per-key reasons:
 ```json
-{ "applied": [], "errors": { "layer_height": "value out of range", "nope": "unknown_key" } }
+{ "error": "config_rejected", "applied": [],
+  "errors": { "layer_height": "value out of range", "nope": "unknown_key" } }
 ```
+`PUT /objects/{id}/config` and `PUT /objects/{id}/volumes/{vid}/config` answer a
+refused key the same way.
 Other errors: `400 body_must_be_object`, `400 invalid_json`, `504 ui_timeout`.
 
 #### Per-filament keys
@@ -124,7 +127,7 @@ tab. Those two shapes are not interchangeable, so **writing a merged value back 
 rejected**:
 
 ```json
-{ "applied": [], "errors": { "hot_plate_temp": "per_filament_length_mismatch: the filament preset open in the Filament tab holds 1 value(s), got 5. ..." } }
+{ "error": "config_rejected", "applied": [], "errors": { "hot_plate_temp": "per_filament_length_mismatch: the filament preset open in the Filament tab holds 1 value(s), got 5. ..." } }
 ```
 
 Pass only that preset's own value (`{"hot_plate_temp": 70}`), and change the other
@@ -441,7 +444,7 @@ and adds nothing. Errors: `422 bad_type | bad_shape | bad_size | bad_position`
 ### PUT /objects/{id}/volumes/{vid}/config
 
 Same body, atomic semantics and key policy as `PUT /objects/{id}/config`
-(`422` with `errors` and nothing applied if any key is refused; sensitive keys need
+(`422 config_rejected` with `errors` and nothing applied if any key is refused; sensitive keys need
 the Preferences switch, read-only keys are refused). `"extruder": n` picks the
 volume's filament slot (0 = the object's) and updates the object list's filament
 column. Reply: `{"applied": [...], "errors": {}, "object": "<name>", "volume": {...}}`.

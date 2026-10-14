@@ -71,7 +71,9 @@ paths:
         live panel refresh + slice invalidation), exactly as if typed in the UI.
 
         **Atomic:** if ANY key is unknown or fails validation, NOTHING is applied
-        and the response is `422` with per-key reasons. On full success the
+        and the response is `422` with `error: config_rejected` and per-key
+        reasons (PUT /objects/{id}/config and PUT /objects/{id}/volumes/{vid}/config
+        answer a refused key the same way). On full success the
         response is `200` with every applied key.
 
         Values may be JSON strings, numbers, or booleans; they are coerced to the
@@ -96,7 +98,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ConfigApplyResult" }
-              example: { applied: [], errors: { layer_height: "value out of range", bogus_key: "unknown_key" } }
+              example: { error: "config_rejected", applied: [], errors: { layer_height: "value out of range", bogus_key: "unknown_key" } }
         "400":
           description: Malformed body.
           content:
@@ -1091,6 +1093,7 @@ components:
     ConfigApplyResult:
       type: object
       properties:
+        error: { type: string, enum: [config_rejected], description: "Present on 422 only: a key was refused and nothing was applied." }
         applied: { type: array, items: { type: string } }
         errors:
           type: object

@@ -953,8 +953,13 @@ Response Controller::handle_put_config(const std::string &body)
         return {{"applied", applied}, {"errors", errors}};
     });
 
-    int status = result["errors"].empty() ? 200 : 422;
-    return { status, result };
+    // elegoo-mcp: a 422 carries an "error" token like every other error reply, so a
+    // client can branch on it; "errors" keeps the per-key reasons.
+    if (!result["errors"].empty()) {
+        result["error"] = "config_rejected";
+        return { 422, result };
+    }
+    return { 200, result };
 }
 
 void Controller::set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name)
@@ -2098,7 +2103,11 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         return {{"applied", applied}, {"errors", errors}, {"object", mo->name}};
     });
     if (r.contains("error")) return { 404, r };
-    return { r["errors"].empty() ? 200 : 422, r };
+    if (!r["errors"].empty()) {
+        r["error"] = "config_rejected"; // elegoo-mcp: see handle_put_config
+        return { 422, r };
+    }
+    return { 200, r };
 }
 
 Response Controller::handle_arrange()
