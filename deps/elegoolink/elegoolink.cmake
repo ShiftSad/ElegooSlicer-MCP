@@ -37,7 +37,9 @@ endif()
 orcaslicer_add_cmake_project(elegoolink
 
     GIT_REPOSITORY      ${ELEGOOLINK_GIT_REPOSITORY}
-    GIT_TAG             origin/main
+    # elegoo-mcp: pinned for reproducible builds (was origin/main). 46c7b81 is the
+    # elegoo-link main commit that ElegooSlicer v1.5.3.5 was released against.
+    GIT_TAG             46c7b814e055cf9675d58482d79f43d0bd2280da
     
     DEPENDS 
         dep_ixwebsocket 
