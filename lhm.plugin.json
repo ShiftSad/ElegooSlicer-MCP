@@ -202,6 +202,10 @@
       "description": "Remove the change set at height z on a plate, as deleting a mark on the preview's layer slider does. Returns the plate's remaining list, as list_layer_changes."
     },
     {
+      "name": "run_calibration",
+      "description": "Set up a calibration print, as the window's Calibration menu does: the open project is replaced by a new one holding the test objects, with the settings the test needs. It does not slice. Returns {\"type\", \"objects\": [{id, name}]}."
+    },
+    {
       "name": "list_plates",
       "description": "List the plates in the project: each one's 0-based index, name, whether it is the current plate (the one slice, get_gcode, render_plate and get_job_status act on), lock state, build volume and the objects it holds."
     },

@@ -1100,6 +1100,48 @@ async def remove_layer_change(
         return _elegoo_err(e, "layer_changes")
 
 
+# --- Calibration (ElegooSlicer MCP, capability "calibration") ------------------
+
+
+@mcp.tool()
+async def run_calibration(
+    type: Annotated[Literal["flow_rate", "pressure_advance", "temperature", "retraction",
+                            "max_volumetric_speed", "vfa"], Field(description=(
+        "Which calibration from the window's Calibration menu: 'flow_rate' (flow ratio), "
+        "'pressure_advance', 'temperature' (temperature tower), 'retraction' (retraction "
+        "tower), 'max_volumetric_speed', or 'vfa' (vertical fine artifacts, a speed tower)."))],
+    params: Annotated[dict | None, Field(description=(
+        "The fields of that calibration's dialog in the window, by name; see the tool "
+        "description. A missing or wrong field is answered bad_params naming it."))] = None,
+    discard_project: Annotated[bool, Field(description=(
+        "The calibration replaces the open project with a new one. With unsaved changes it is "
+        "refused (unsaved_project) unless this is True, which throws those changes away. To "
+        "keep them, save_project first."))] = False,
+) -> dict:
+    """Set up a calibration print, as the window's Calibration menu does: the open project is
+    replaced by a new one holding the test objects, with the settings the test needs. It does
+    not slice. Returns {"type", "objects": [{id, name}]}.
+
+    The params mirror the calibration dialogs' fields: a range to sweep for the towers
+    (temperature, retraction, max_volumetric_speed, vfa, pressure_advance), typically start,
+    end and step, in the dialog's units (C, mm, mm3/s, mm/s, PA value); which pass for
+    flow_rate. Afterwards slice_and_wait, look at the result with render_plate, and print it.
+    Uses the selected printer, filament and print presets, so pick those first. Errors:
+    unsaved_project (409), bad_type or bad_params (422, detail names the field). Needs
+    ElegooSlicer MCP ('calibration' in get_status capabilities)."""
+    try:
+        async with _client() as c:
+            return await c.run_calibration(type, params, discard_project)
+    except UiTimeout:
+        # The slicer stopped waiting for its window, but the new project may still be built
+        # there: look before trying again, or a second calibration replaces the first.
+        return {"error": "calibration_still_running",
+                "hint": "The slicer did not finish setting up the calibration in time. Check "
+                        "list_objects in a moment before calling run_calibration again."}
+    except ApiError as e:
+        return _elegoo_err(e, "calibration")
+
+
 @mcp.tool()
 async def list_plates() -> dict:
     """List the plates in the project: each one's 0-based index, name, whether it is the
@@ -2243,6 +2285,8 @@ _TOOL_ANNOTATIONS: dict[str, tuple[str, bool, bool]] = {
     "list_layer_changes": ("List filament changes and pauses by height", True, False),
     "add_layer_change": ("Add a filament change or pause at a height", False, False),
     "remove_layer_change": ("Remove a filament change or pause", False, True),
+    # A calibration replaces the open project (refused with unsaved changes unless discarded).
+    "run_calibration": ("Set up a calibration print (replaces the project)", False, True),
     "remember": ("Save a note", False, False),
     "load_model": ("Load a model file", False, False),
     "select_preset": ("Select preset", False, False),

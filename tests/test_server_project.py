@@ -281,3 +281,52 @@ def test_layer_change_hints():
     assert _hints("list_layer_changes").read_only_hint is True
     assert _hints("add_layer_change").destructive_hint is False
     assert _hints("remove_layer_change").destructive_hint is True
+
+
+# --- calibration ------------------------------------------------------------------
+
+
+@respx.mock
+async def test_run_calibration(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/calibration").mock(return_value=httpx.Response(200, json={
+        "type": "temperature", "objects": [{"id": 1, "name": "temperature_tower"}]}))
+    out = await srv.run_calibration("temperature", {"start": 230, "end": 190, "step": 5})
+    assert out["objects"][0]["name"] == "temperature_tower"
+    assert _sent(route) == {"type": "temperature", "params": {"start": 230, "end": 190, "step": 5}}
+
+
+@respx.mock
+async def test_run_calibration_discard_project(monkeypatch):
+    _env(monkeypatch)
+    route = respx.post(f"{BASE}/calibration").mock(return_value=httpx.Response(200, json={
+        "type": "flow_rate", "objects": []}))
+    await srv.run_calibration("flow_rate", discard_project=True)
+    assert _sent(route) == {"type": "flow_rate", "params": {}, "discard_project": True}
+
+
+@respx.mock
+async def test_run_calibration_errors_pass_through(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/calibration").mock(side_effect=[
+        httpx.Response(409, json={"error": "unsaved_project"}),
+        httpx.Response(422, json={"error": "bad_params", "detail": "step must be above 0"}),
+        _route_missing(),
+    ])
+    assert (await srv.run_calibration("retraction", {"step": 1}))["error"] == "unsaved_project"
+    out = await srv.run_calibration("retraction", {"step": 0})
+    assert out["error"] == "bad_params" and out["detail"] == "step must be above 0"
+    _needs(await srv.run_calibration("retraction"), "calibration")
+
+
+@respx.mock
+async def test_run_calibration_timeout_says_to_look_first(monkeypatch):
+    _env(monkeypatch)
+    respx.post(f"{BASE}/calibration").mock(side_effect=httpx.ReadTimeout("slow"))
+    out = await srv.run_calibration("vfa")
+    assert out["error"] == "calibration_still_running"
+
+
+def test_run_calibration_hints():
+    # It replaces the open project.
+    assert _hints("run_calibration").destructive_hint is True

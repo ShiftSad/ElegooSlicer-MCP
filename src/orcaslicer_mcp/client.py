@@ -208,6 +208,15 @@ class OrcaClient:
         return await self._request("DELETE", f"/api/v1/plates/{plate}/layer_changes",
                                    params={"z": z})
 
+    async def run_calibration(self, ctype: str, params: dict | None = None,
+                              discard_project: bool = False) -> dict:
+        # ElegooSlicer MCP, capability "calibration". It builds a new project with the test
+        # objects, which can take a while: stay under Claude Desktop's ~60 s tool-call limit.
+        body: dict = {"type": ctype, "params": params or {}}
+        if discard_project:
+            body["discard_project"] = True
+        return await self._request("POST", "/api/v1/calibration", json=body, timeout=50.0)
+
     # Plates (fork v2.4.2-mcp.13 and later).
     async def get_plates(self) -> dict:
         return await self._request("GET", "/api/v1/plates")
