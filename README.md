@@ -1,3 +1,17 @@
+> [!IMPORTANT]
+> **ElegooSlicer MCP: an unofficial fork, not an official Elegoo build.**
+> This repository is ElegooSlicer plus a built-in Remote API, ported from the OrcaSlicer
+> MCP fork ([MaxEllis/OrcaSlicer](https://github.com/MaxEllis/OrcaSlicer)), so that an
+> MCP server can let an AI assistant load models, change settings, slice and inspect the
+> result in the running app. The API is off by default, listens on `127.0.0.1` and needs a
+> token. The app shows its version as `<ElegooSlicer version>-mcp.N`.
+>
+> - API, privacy and network notes: [`docs/remote-api/README.md`](docs/remote-api/README.md)
+> - The MCP server will be added to this repository under `mcp/` (not there yet).
+> - Keeping up with new ElegooSlicer versions: [`UPSTREAM_SYNC.md`](UPSTREAM_SYNC.md)
+>
+> Please do not report problems with this build to Elegoo. Everything below this box is
+> Elegoo's original README.
 
 <p align="center">
     <a href="https://discord.com/invite/NkFzP96cMt">
