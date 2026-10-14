@@ -1,0 +1,292 @@
+# Windows build of ElegooSlicer MCP (ElegooSlicer + the Remote API).
+#
+# What it does, in order:
+#   1. Sets up the same toolchain as the local build wrapper (tools\remote-api\build.cmd):
+#      VS 2022 (v143) x64 environment, CMake 3.31.x (Elegoo needs < 4.0 on
+#      Windows) and Strawberry Perl (needed by the OpenSSL dependency).
+#   2. Restores the dependencies from the Actions cache, or builds them with
+#      `build_release_windows.bat onlydeps` and saves them for the next run.
+#   3. Builds the slicer with `build_release_windows.bat dlweb slicer`. This is the only
+#      Elegoo script that passes -DELEGOO_INTERNAL_TESTING=0; build_release_vs*.bat do
+#      not and fail with MSVC C1017.
+#   4. Packs the install tree (build\ElegooSlicer) as a portable .zip that has its own
+#      settings folder, writes SHA256SUMS and uploads both as a workflow artifact.
+#
+# No releases, no tags, no secrets: the result is only a downloadable artifact.
+# Expected time on a GitHub-hosted 4-core runner (estimated from the OrcaSlicer MCP
+# fork's CI): dependencies about 40-75 min (only when the cache misses), slicer about
+# 45-70 min. If a cold build ever gets close to the 6 h job limit, move the
+# dependencies into a separate job that runs before this one.
+
+name: Build ElegooSlicer MCP (Windows)
+
+on:
+  push:
+    branches:
+      - ci
+      - 'ci-*'
+      - remote-api
+    # A docs-only push does not need a 1-2 h build, nor does one that only changes the
+    # Python MCP server in mcp/ (it is installed from git, not packed into the zip) or the
+    # local test tools in tools/remote-api/.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'mcp/**'
+      - 'tools/remote-api/**'
+  workflow_dispatch:
+
+# One build per branch at a time. A newer push waits for the running build instead of
+# cancelling it, so a dependency build that is already running still finishes and fills
+# the cache. Only the newest waiting run is kept.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Must stay below 4.0 (Elegoo README). Same version as the local build.
+  CMAKE_VERSION: '3.31.6'
+  # Where build_release_windows.bat installs the dependencies and where its slicer
+  # stage reads them from (-DCMAKE_PREFIX_PATH=<this>/usr/local).
+  DEPS_PREFIX: deps/build/ElegooSlicer_dep
+  # The only other dependency file the slicer reads: elegoolink's installed CMake config
+  # (lib/cmake/elegoolink/elegoolink_targets.cmake) links the Agora import library by its
+  # absolute path inside the elegoolink source tree, not from the prefix. The runner's
+  # workspace path never changes, so caching this folder next to the prefix is enough.
+  AGORA_LIB_DIR: deps/build/dep_elegoolink-prefix/src/dep_elegoolink/thirdparty/agora/windows/lib/x86_64
+  # Part of the dependency cache key. Bump it after changing how the dependencies are
+  # built or what is cached; other edits to this file keep the cache.
+  DEPS_CACHE_VERSION: '2'
+
+jobs:
+  build:
+    name: Windows x64
+    runs-on: windows-2022
+    # GitHub stops any job at 6 h; stop a bit earlier so the log upload still runs.
+    timeout-minutes: 345
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: false        # the repository has no LFS files
+          fetch-depth: 1    # CMake only needs HEAD (git rev-parse --short HEAD)
+
+      # The key must be computed before anything is built: hashFiles() does not honour
+      # .gitignore, so files written into deps\build later would change it.
+      # Any edit to deps/ or cmake/modules/ (passed to some dependency builds), or a new
+      # DEPS_CACHE_VERSION, starts a new dependency build. The repository cache limit is
+      # 10 GB; the cached files are about 1.1 GB before compression.
+      - name: Compute the dependency cache key
+        id: key
+        shell: pwsh
+        run: |
+          $hash = '${{ hashFiles('deps/**', 'cmake/modules/**') }}'
+          "key=elegoo-mcp-deps-windows-2022-x64-v$env:DEPS_CACHE_VERSION-$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Show free disk space
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem |
+            Format-Table Name, Root,
+              @{ n = 'UsedGB'; e = { [math]::Round($_.Used / 1GB, 1) } },
+              @{ n = 'FreeGB'; e = { [math]::Round($_.Free / 1GB, 1) } }
+
+      - name: Set up the toolchain (VS 2022, CMake, Perl)
+        shell: pwsh
+        run: |
+          # Visual Studio 2022 with the x64 C++ tools. The build step calls its vcvars64.bat,
+          # like the README's "x64 Native Tools Command Prompt for VS 2022" (OpenSSL is built
+          # with nmake, which needs that environment).
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -version '[17.0,18.0)' `
+                  -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                  -property installationPath
+          if (-not $vs) { throw 'Visual Studio 2022 with the C++ x64 tools was not found' }
+          "VS_PATH=$vs" >> $env:GITHUB_ENV
+          Write-Host "Visual Studio: $vs"
+
+          # CMake: download the pinned version instead of trusting whatever the runner image
+          # ships (images can move to CMake 4.x). Checked against Kitware's SHA-256 list.
+          $ver  = $env:CMAKE_VERSION
+          $name = "cmake-$ver-windows-x86_64"
+          $base = "https://github.com/Kitware/CMake/releases/download/v$ver"
+          Invoke-WebRequest "$base/$name.zip" -OutFile "$env:RUNNER_TEMP\$name.zip"
+          Invoke-WebRequest "$base/cmake-$ver-SHA-256.txt" -OutFile "$env:RUNNER_TEMP\cmake-SHA-256.txt"
+          $line = Select-String -Path "$env:RUNNER_TEMP\cmake-SHA-256.txt" -SimpleMatch "$name.zip" |
+                    Select-Object -First 1
+          if (-not $line) { throw "$name.zip is not listed in cmake-$ver-SHA-256.txt" }
+          $expected = $line.Line.Split(' ')[0]
+          $actual = (Get-FileHash "$env:RUNNER_TEMP\$name.zip" -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "CMake download checksum mismatch: $actual vs $expected" }
+          Expand-Archive "$env:RUNNER_TEMP\$name.zip" -DestinationPath "$env:RUNNER_TEMP\cmake"
+          "CMAKE_BIN=$env:RUNNER_TEMP\cmake\$name\bin" >> $env:GITHUB_ENV
+
+          # Strawberry Perl: preinstalled on windows-2022 (C:\Strawberry); install it if a
+          # future image drops it. Only perl\bin goes on PATH in the build steps, never
+          # Strawberry's c\bin (it has its own cmake/gcc).
+          $perl = 'C:\Strawberry\perl\bin'
+          if (-not (Test-Path "$perl\perl.exe")) {
+            choco install strawberryperl -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Strawberry Perl install failed' }
+          }
+          if (-not (Test-Path "$perl\perl.exe")) { throw "perl.exe not found in $perl" }
+          "PERL_BIN=$perl" >> $env:GITHUB_ENV
+
+          # Some dependencies are git clones with deep paths.
+          git config --global core.longpaths true
+
+      - name: Restore the dependencies from the cache
+        id: deps-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ env.DEPS_PREFIX }}
+            ${{ env.AGORA_LIB_DIR }}
+          key: ${{ steps.key.outputs.key }}
+
+      # Same steps as tools\remote-api\build.cmd: VS environment, then CMake and Perl first
+      # on PATH, then the Elegoo script. The output is shown live and also kept in
+      # build-logs\ for the failure artifact (pwsh's Tee-Object; cmd has no tee).
+      - name: Build the dependencies (cache miss only)
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 200
+        shell: cmd
+        run: |
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" >nul
+          if errorlevel 1 (
+              echo vcvars64.bat failed
+              exit /b 1
+          )
+          set "PATH=%CMAKE_BIN%;%PERL_BIN%;%PATH%"
+          cmake --version
+          perl -e "print qq{perl $^V\n}"
+          where cl
+          if not exist build-logs mkdir build-logs
+          pwsh -NoProfile -Command "cmd /d /c 'build_release_windows.bat onlydeps 2>&1' | Tee-Object -FilePath build-logs\deps.log; exit $LASTEXITCODE"
+
+      # Saved right away, so a later slicer failure does not throw the dependencies away.
+      - name: Save the dependencies to the cache
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ${{ env.DEPS_PREFIX }}
+            ${{ env.AGORA_LIB_DIR }}
+          key: ${{ steps.key.outputs.key }}
+
+      # dlweb downloads the CC2 Device-tab web UI (an Elegoo GitHub release asset) into
+      # resources\; without it the Device tab is empty. `slicer` skips the deps stage.
+      - name: Build the slicer
+        timeout-minutes: 120
+        shell: cmd
+        run: |
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" >nul
+          if errorlevel 1 (
+              echo vcvars64.bat failed
+              exit /b 1
+          )
+          rem Fail now instead of at the final link, about 40 minutes later.
+          if not exist "%AGORA_LIB_DIR:/=\%\agora_rtm_sdk.dll.lib" (
+              echo agora_rtm_sdk.dll.lib is missing from %AGORA_LIB_DIR%
+              exit /b 1
+          )
+          set "PATH=%CMAKE_BIN%;%PERL_BIN%;%PATH%"
+          cmake --version
+          if not exist build-logs mkdir build-logs
+          pwsh -NoProfile -Command "cmd /d /c 'build_release_windows.bat dlweb slicer 2>&1' | Tee-Object -FilePath build-logs\slicer.log; exit $LASTEXITCODE"
+
+      # Portable zip. The app already uses a folder called "data_dir" next to
+      # elegoo-slicer.exe as its data directory when that folder exists (GUI_App.cpp,
+      # inherited from OrcaSlicer), so shipping one keeps this build's settings, profiles,
+      # logs and saved printers apart from an official ElegooSlicer in %APPDATA%.
+      # No launcher script is needed.
+      - name: Package the portable zip and SHA256SUMS
+        id: package
+        shell: pwsh
+        run: |
+          # Version as shown in About: <ELEGOOSLICER_VERSION>-mcp.<ELEGOO_MCP_RELEASE>.
+          $inc = Get-Content version.inc -Raw
+          function Get-IncValue([string] $name) {
+            $m = [regex]::Match($inc, "set\($name `"([^`"]+)`"\)")
+            if (-not $m.Success) { throw "$name not found in version.inc" }
+            return $m.Groups[1].Value
+          }
+          $version = '{0}.{1}-mcp.{2}' -f (Get-IncValue 'ELEGOOSLICER_SHORT_VERSION'),
+                       (Get-IncValue 'BUILD_NUMBER'), (Get-IncValue 'ELEGOO_MCP_RELEASE')
+          $sha = $env:GITHUB_SHA.Substring(0, 7)
+          $zipName = "ElegooSlicer-MCP_v${version}_Windows_x64_portable.zip"
+
+          if (-not (Test-Path build\ElegooSlicer\elegoo-slicer.exe)) {
+            throw 'build\ElegooSlicer\elegoo-slicer.exe is missing: the install step did not run'
+          }
+          if (-not (Test-Path build\ElegooSlicer\resources\plugins\elegoolink\web\lan_service_web)) {
+            Write-Warning 'The Device-tab web UI (lan_service_web) is missing from the install tree'
+          }
+
+          # The zip's top folder is ElegooSlicer-MCP\, so it never mixes with an extracted
+          # official portable ElegooSlicer.
+          New-Item -ItemType Directory -Force package, dist | Out-Null
+          Move-Item build\ElegooSlicer package\ElegooSlicer-MCP
+          New-Item -ItemType Directory package\ElegooSlicer-MCP\data_dir | Out-Null
+          Set-Content -Encoding utf8 -Path package\ElegooSlicer-MCP\data_dir\README.txt -Value @(
+            'ElegooSlicer MCP keeps its settings, presets, logs and saved printers in this folder,'
+            'because a folder named data_dir exists next to elegoo-slicer.exe.'
+            'Saved printers include their access codes in plain text (user\printer_list.json):'
+            'do not share this folder.'
+            'If you delete or rename this folder, the app uses %APPDATA%\ElegooSlicer instead,'
+            'which is shared with an official ElegooSlicer installation.'
+          )
+
+          $sevenZip = 'C:\Program Files\7-Zip\7z.exe'
+          if (-not (Test-Path $sevenZip)) { throw '7-Zip not found' }
+          Push-Location package
+          & $sevenZip a -tzip -mx=7 "..\dist\$zipName" ElegooSlicer-MCP | Out-Host
+          $rc = $LASTEXITCODE
+          Pop-Location
+          if ($rc -ne 0) { throw "7-Zip failed ($rc)" }
+
+          # GNU coreutils format ("<hash>  <file>", LF), so `sha256sum -c SHA256SUMS` works.
+          $hash = (Get-FileHash "dist\$zipName" -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD\dist\SHA256SUMS", "$hash  $zipName`n")
+          Get-Content dist\SHA256SUMS
+          Get-ChildItem dist | Format-Table Name, Length
+
+          "artifact=ElegooSlicer-MCP_v${version}_Windows_x64_$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Upload the portable zip
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.artifact }}
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0   # the zip is already compressed
+          retention-days: 30
+
+      - name: Show free disk space (end)
+        if: always()
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem |
+            Format-Table Name, @{ n = 'FreeGB'; e = { [math]::Round($_.Free / 1GB, 1) } }
+
+      # Console logs of both stages plus CMake's own configure logs.
+      - name: Upload the build logs (on failure)
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build-logs/
+            deps/build/CMakeFiles/CMakeConfigureLog.yaml
+            deps/build/CMakeFiles/CMakeError.log
+            deps/build/dep_*-prefix/src/dep_*-stamp/*.log
+            build/CMakeFiles/CMakeConfigureLog.yaml
+            build/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore
+          retention-days: 14
