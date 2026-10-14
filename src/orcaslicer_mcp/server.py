@@ -512,7 +512,13 @@ async def transform_object(object_id: int, translate: list[float] | None = None,
 
     On fork v2.4.2-mcp.13 and later the object then belongs to whichever plate it sits on,
     as after a drag in the window; list_objects shows the plate. To send an object to
-    another plate, move_object_to_plate is simpler than working out coordinates."""
+    another plate, move_object_to_plate is simpler than working out coordinates.
+
+    On ElegooSlicer MCP (mcp_build >= 1 in get_status) rotate turns the object from where
+    it is about the world axes, X then Y then Z, like the rotate gizmo: rotate=[0,-90,0]
+    followed by rotate=[0,90,0] returns to the start. After a rotate or scale the part is
+    dropped back onto the bed (also after a move that left it floating), as the window
+    does, so the returned offset Z can change."""
     try:
         async with _client() as c:
             return await c.transform_object(object_id, translate, rotate, scale)
