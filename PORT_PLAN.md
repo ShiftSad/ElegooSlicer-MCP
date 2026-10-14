@@ -173,7 +173,19 @@ Endpoints da seção 6.2: slots de filamento, volumes/partes, split, sync do CAN
 - Refatore o núcleo de `PlaterExt::sync_mms_filament` numa função sem UI que devolve um relatório (sincronizados, desconhecidos). A versão da GUI passa a chamar essa função e continua mostrando os diálogos dela. Comportamento idêntico na GUI.
 - Mesma coisa para a montagem do mapeamento de `PrintSendDialogEx::preparePrintTask`: extraia para um helper compartilhado. Não copie.
 
+- Orientar uma peça só: `POST /orient {"object_id"}` (sem corpo continua orientando tudo).
+- Adicionar e remover volumes: `POST /objects/{id}/volumes` (modificador, volume negativo, bloqueador/reforçador de suporte; caixa, cilindro ou esfera) e `DELETE /objects/{id}/volumes/{vid}`.
+
 **Aceite:** o sync via API produz o mesmo `filament_presets`/`filament_colour` que o botão da GUI para o mesmo estado do CANVAS; volumes mostram e aceitam `extruder`, e a coluna de filamento da lista de objetos atualiza.
+
+> Adiantado em 2026-10-14 (pedido do Victor): orientar uma peça, listar/adicionar/remover/configurar volumes, `POST /view` e `POST /project/save` (da Fase 5). Ver `PORT_NOTES.md` §11.2.
+
+### Fase 3B: Pintura por região (C++ + MCP)
+Endpoint da seção 6.5 e ferramenta `paint_region` (seção 7.2). Pinta suporte (reforçar/bloquear), costura ou cor nos triângulos de uma caixa, nos mesmos dados que as ferramentas de pintura da GUI editam, para o resultado aparecer e poder ser retocado na janela.
+
+**Aceite:** pintar reforço de suporte sob os balanços de uma região e ver o suporte só ali no fatiamento; pintar uma cor numa região e ver a troca de filamento no preview; tudo desfazível na janela.
+
+> Implementado em 2026-10-14, junto com a Fase 3 adiantada. Falta o teste no app.
 
 ### Fase 4: Envio e controle de impressão (C++, protegido)
 Endpoints da seção 6.3.
@@ -254,6 +266,9 @@ Convenções do fork:
 | PUT | `/filaments/{slot}` | `{"preset"?: str, "color"?: "#rrggbb"}`. Preset pelo mesmo caminho do combo da sidebar; cor via `filament_colour`; recalcula flush se `auto_calculate_flush` estiver ativo. `422 unknown_preset` / `incompatible_preset`. |
 | GET | `/objects/{id}/volumes` | `[{"id", "index", "name", "type": "part\|modifier\|negative\|support_enforcer\|support_blocker\|text", "extruder": int (0 = herda), "size_mm", "config": {...}}]` |
 | PUT | `/objects/{id}/volumes/{vid}/config` | Mesma semântica atômica e política de chaves de `PUT /objects/{id}/config`. Atualiza a coluna de filamento da lista de objetos (o fork já faz isso para objetos; replique). |
+| POST | `/objects/{id}/volumes` | `{"type": "modifier\|negative\|support_enforcer\|support_blocker", "shape": "box\|cylinder\|sphere", "size_mm", "position_mm", "name"?, "config"?}` → `201 {"volume"}`. Mesmo caminho do menu de contexto da lista de objetos, sem diálogo. |
+| DELETE | `/objects/{id}/volumes/{vid}` | `{"ok": true}`. `409 last_part` (última parte sólida) e `409 cut_object` (onde a GUI abriria pergunta). |
+| POST | `/orient` | `{"object_id"?}`: com id, orienta só esse objeto. `409 object_not_printable`. |
 | POST | `/objects/{id}/split` | `{"to": "objects"\|"parts"}` via `Plater::split_object`/`split_volume`, sem diálogos. Devolve os ids novos. `422 not_splittable`. |
 | POST | `/printers/{id}/canvas/sync` | `{"mode"?: "filament_and_color"\|"color_only"}` (default = preferência `sync_ams_filament_mode`). Devolve `{"synced": n, "slots": [...], "unknown": [{tray, type, reason}]}`. Sem `MessageDialog`. |
 | GET | `/printers/{id}/canvas/mapping[?plate=i]` | `{"plate", "sliced", "ok", "filaments": [{"slot", "preset", "type", "color", "weight_g", "tray": {unit, tray, type, color}\|null, "issues": ["no_tray"\|"type_mismatch"\|"color_mismatch"\|"tray_not_ready"]}]}`. Usa o helper extraído de `preparePrintTask` + `getFilamentMmsMapping`, para ser idêntico à GUI. |
@@ -278,6 +293,13 @@ Todas as rotas desta seção geram notificação in-app com o nome da impressora
 | POST | `/undo` · `/redo` | `{"ok", "can_undo", "can_redo"}` |
 | GET / POST / DELETE | `/plates/{i}/layer_changes` | Itens de `plates_custom_gcodes[i]`: `{"z", "type": "tool_change\|color_change\|pause", "slot"?, "message"?}`. Valida `z` dentro da altura do objeto e o slot existente. |
 | POST | `/calibration` | `{"type": "flow_rate\|pressure_advance\|temperature\|retraction\|max_volumetric_speed\|vfa", "params": {...}, "discard_project"?: bool}`. Usa `Plater::calib_*`, sem fatiar. Devolve os objetos criados. |
+| POST | `/view` | `{"view": "prepare\|preview"}`. `GET /status` ganha `view`. |
+
+### 6.5 Pintura por região
+
+| Método | Rota | Corpo → resposta |
+|---|---|---|
+| POST | `/objects/{id}/paint` | `{"layer": "support\|seam\|color", "state"?: "enforce\|block\|none", "slot"?: n, "box_mm"?: [[x0,y0,z0],[x1,y1,z1]], "max_overhang_deg"?: 0..90, "clear"?: bool}` → `{"painted_triangles", "layer", "cleared"}`. Triângulo pintado quando o centroide está na caixa e, com `max_overhang_deg`, a normal aponta para baixo pelo menos esse ângulo abaixo da horizontal. `clear` não aceita caixa. |
 
 ## 7. Ferramentas MCP novas
 
@@ -297,6 +319,8 @@ Siga o estilo do servidor:
 ### 7.2 Projeto
 - `list_filament_slots()`, `set_filament_slot(slot, preset=None, color=None)`, `set_filament_count(n, force=False)`
 - `list_parts(object_id)`, `set_part_filament(object_id, part_id, slot)`, `split_object(object_id, to)`
+- `add_part(...)`, `remove_part(...)`, `set_part_config(...)`, `auto_orient(object_id=None)`, `set_view(view)`
+- `paint_region(object_id, layer, ...)` (Fase 3B)
 - `add_layer_change(z, type, slot=None)`, `list_layer_changes()`, `remove_layer_change(z)`
 - `save_project(path=None, overwrite=False)`, `undo()`, `redo()`
 - `run_calibration(type, params, discard_project=False)`

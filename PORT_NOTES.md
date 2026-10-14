@@ -10,7 +10,8 @@ Line numbers refer to ElegooSlicer **v1.5.3.5 (`3f1042e`)** unless prefixed (`fo
 | 0 — Recon | **Done, waiting for Victor's review** | 2026-10-13 | No code changed. This file + `PORT_PLAN.md` are untracked in the checkout. |
 | 1 — prerequisites | **Done** | 2026-10-13 | GitHub fork, Perl, toolchain, deps build (~20 min) and **baseline build of unmodified v1.5.3.5** (~18 min, 0 errors, app starts) — see section 7. |
 | 1 — 1:1 port | **Done, waiting for Victor's test** | 2026-10-13 | Branch `remote-api` (see section 11): port + adaptations + review fixes, built, runtime-check 16/16, MCP 0.1.17 smoke 12/12 on the CC2 profile. |
-| 2–7 | Not started | | |
+| 3 (part) + 3B | **Pulled forward, built and tested, waiting for Victor's test** | 2026-10-14 | Victor's request after the Claude Desktop sessions: orient one object, view switch, part volumes, project save, region painting, stale-slice fix (section 11.2). |
+| 2, rest of 3, 4–7 | Not started | | |
 
 ## 2. Workspace
 
@@ -312,3 +313,44 @@ Tests (build `tools\build.cmd slicer`, ~17 min, 0 errors; app run with `--datadi
 Still open after Phase 1:
 - Orca-inherited modal dialogs reachable via the API (section 5.1: ConfigManipulation on PUT /config with edge values, model-load info boxes, Temperature Safety Check, async error dialogs). Planned as a separate generic commit (D8, second half).
 - D9/D10 (telemetry, not LAN-only) to be documented in the README in Phase 6; D11, D13–D15, D17 as listed in section 9.
+
+### 11.1 Feedback from Victor's first Claude Desktop session (2026-10-13 22:40)
+- `load_model` → "not available on this OrcaSlicer build (needs M4a)": NOT a missing route. `POST /model` answers `404 {"error":"not_found"}` when the file path does not exist (`boost::filesystem::exists`), and MCP 0.1.17 `errors.py` treats a 404 `not_found` as "route missing". Verified working with a real path (smoke 12/12). Proposed fix (response-format change → needs Victor's OK, rule 9): return `{"error":"file_not_found","path":...}` so the MCP reports the real cause. Bundled models are mostly `.drc`; the `.stl` ones are `ElegooToleranceTest.stl` and `elegoo_cube.stl`.
+- `check_profile_physics` blocks the stock CC2 profile (generic PLA melt estimate ~12.5 mm³/s vs 18.9 asked; the Elegoo preset caps at 21). MCP-side (Python), phase 6: use the preset's `filament_max_volumetric_speed` or downgrade to a warning.
+- No Elegoo printer/CANVAS capabilities yet: expected (phases 2–6).
+- Second Claude Desktop session (helmet test, 2026-10-13 ~23:20) — triage:
+  - C++ (fork bugs carried over, generic): `POST /objects/{id}/transform` adds Euler angles (`set_rotation(get_rotation() + rotate)`), so after Y -90 the decomposed angles hit gimbal lock and +90 gave 180°; fix = compose rotation matrices like the GUI rotate gizmo. It also never drops the object back onto the bed after a rotation (one part ended 4 mm below the bed); fix = `ensure_on_bed()` as the GUI's do_rotate does.
+  - MCP Python (phase 6): `check_placement` ignores other plates and per-object brim; `save_gcode` names the file after the first object of the project, not the saved plate; `slice_and_wait` can exceed the ~60 s Claude Desktop tool-call limit on big plates (workaround: `slice_and_wait(timeout=50)` or `slice` + `get_slice_status`; fix = return before the bridge limit).
+  - Deleted at Victor's request: `%USERPROFILE%\.orcaslicer-mcp\gcode\capacete_placa6_viseira.gcode` (107 MB).
+- Fixed ("arruma tudo ai"), C++ on `remote-api`: `9f1c0fcee` (`POST /model` missing file → `404 {"error":"file_not_found","path"}`; Victor approved the format change with "arruma tudo"), `c16b7ad15` (transform composes world-axis rotations), `d8485e8f7` + `9a457d844` (drop onto the bed after any transform, as the GUI's `do_move/do_rotate/do_scale`). MCP Python on `elegoo`: `253cde4`, `bfbab3e`, `f60f654`, `930fa45`, `0a56e86`, `9be76c2`, `d3f5f2b`, `f985825`.
+
+### 11.2 Pulled-forward features (2026-10-14, "implementa tudo isso")
+Victor asked for: the stale-slice bug (other plates kept `slice_result_valid` after a config change), orient one object, view switch, part volumes, project save, region painting; plus `PORT_PLAN.md` updates (Phase 3 gets orient-one/add-volume, painting is its own Phase 3B; done).
+
+C++ (`remote-api`, new file `src/slic3r/GUI/RemoteAPI/RemoteAPIModelOps.cpp`, dispatch hooks in `RemoteAPIController.cpp`):
+
+| Commit | What |
+|---|---|
+| `042fca99f` | Global config/preset writes mark **every** plate unsliced when `full_config` changed; per-object writes mark the object's plates. |
+| `53f85f5e9`, `4824bb69a`, `5f83e8943` | `POST /orient {"object_id"}` (select + window's OrientJob); `409 object_not_printable` (OrientJob would otherwise orient every *other* object), `409 select_failed`; plates marked unsliced when the job starts. No body clears the window selection first. |
+| `fd62d6d95` | `POST /view {"view":"prepare|preview"}`, `/status.view`; `prepare` → `409 preview_only` while a G-code file is open. |
+| `03ff16011` | `GET/POST /objects/{id}/volumes`, `PUT …/volumes/{vid}/config`, `DELETE …/volumes/{vid}` (`409 last_part`, `409 cut_object`). Shared `stage_object_config` key policy. |
+| `d2d3af124`, `fc0dce6bd` | `POST /project/save {path?, overwrite?}` with Plater's save steps minus dialogs (120 s UI timeout); `409 preview_only` with a G-code / `.gcode.3mf` open, `409 gizmo_editing`. |
+| `b188e02df`, `5d760d6ed`, `27b22d309` | `POST /objects/{id}/paint` (support/seam/color via `TriangleSelector`, whole triangles by centroid on the first instance; `max_overhang_deg`: `n.z < 0 && -n.z >= sin(a)`, 0..90; `clear` + box → `422 clear_takes_no_box`). |
+| `d9384916f` | capabilities `orient_object, view, volumes, project_save, paint`; README + openapi. |
+
+MCP (`orcaslicer-mcp`, branch `elegoo`): `ecd1b94` `auto_orient(object_id)` (checks `orient_object` capability first: older builds ignore the id and orient everything), `be4d47b` `set_view`, `09a3d1e` `list_parts/add_part/set_part_config/set_part_filament/remove_part`, `e917b64` + `af1c879` `save_project` (50 s, `save_still_running`), `2e755bd` + `4251bf4` + `f5c812f` `paint_region`, `8958422`, `593320b`, `bef4641` (README). pytest: 15 failed (same baseline), 1247 passed.
+
+Review: one implement → review → fix round per side; all findings fixed (5 C++, 6 Python). C++ checked with `cl /Zs` only.
+
+Tests (build `tools\build.cmd slicer` with `BUILD_AFFINITY=0xFFFFFFFF`, 02:14→02:29, 0 errors; app run with `--datadir tools\test-datadir`; `/status` lists the five new capabilities):
+- `tools\phase1_rotation_check.py` (ElegooToleranceTest.stl): **8/8**: missing file → `404 file_not_found` + path; Y −90 swaps the X/Z extents and Y +90 returns to rotation `[0,0,0]`; min z = 0 after each rotate; a 5 mm upward translate drops back onto the bed.
+- `tools\phase1b_features_check.py` (two `elegoo_cube.stl` on two plates): **39/39**: both plates sliced → global `PUT /config` → `[False, False]`; re-slice both → `PUT /objects/{A}/config` → `[False, True]`; view switch + `/status.view`; orient of A alone lays A flat and leaves B tilted; volumes add (modifier box at the exact size/centre, support blocker cylinder), config (200, and 422 with nothing applied), `409 last_part`, delete, `404 unknown_volume`; paint support/seam/color, `bad_slot`, `bad_overhang`, `clear_takes_no_box`, clear; project save (`not_3mf`, `bad_path`, new path, `409 file_exists`, overwrite, no body = current file). The saved 3MF holds `paint_seam` (3834 triangles), `paint_color` (26713), no `paint_supports` (cleared), the `support_blocker` volume and the object's `wall_loops`.
+- `tools\phase1b_mcp_smoke.py` over MCP stdio: **all 22 calls as expected**, incl. the local `blocked_by_local_policy` refusal for `post_process` on a part and `clear_takes_no_box`.
+- Phase 1 smoke (`tools\phase1_smoke.py`) re-run on the new build and the updated MCP: **12/12**.
+- Note: the startup "Projeto não salvo anterior detectado" prompt (crash-recovery after force-killed test runs) stays open while the API works behind it: API calls are not blocked by it.
+
+Open:
+- The 422 replies of the config writes have no `"error"` token (`{"applied":[],"errors":{…}}`); adding one changes an existing response format → ask Victor (rule 9).
+- The MCP keeps only `error`/`errors` from slicer error bodies, so extra fields (e.g. `path` on `file_exists`) do not reach the model.
+- Paint is triangle-granular (big triangles crossing the box edge are all-or-nothing); colour has no in-box erase, only `clear`.
