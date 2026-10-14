@@ -1241,7 +1241,7 @@ struct UploadJob
     int         code { 0 };             // PrinterNetworkErrorCode of a failure
     std::string task_id;                // PrinterUploadManager's transfer, once it started
     bool        cancel_requested { false };
-    bool        app_closing { false };  // ended because ElegooSlicer closed
+    bool        app_closing { false };  // ended because ElegooSlicer closed or rebuilt its window
     std::chrono::steady_clock::time_point cancel_requested_at;
     std::chrono::steady_clock::time_point done_at;
 };
@@ -1701,7 +1701,12 @@ Response Controller::handle_print_prepare(const std::string &api_id, const std::
             f.mappedMmsFilament = sent;
             // A filament without a tray, on a tray that is not ready, or on a tray of another
             // filament type is refused; another colour only warned about.
-            nlohmann::json item     = mapped_filament_json(f, group, /*sliced=*/true);
+            nlohmann::json item = mapped_filament_json(f, group, /*sliced=*/true);
+            // The Print dialog also refuses a tray that reports no colour (PrintSendDialogEx::onPrint).
+            const nlohmann::json &issues = item["issues"];
+            if (!item["tray"].is_null() && is_blank(sent.filamentColor) &&
+                std::find(issues.begin(), issues.end(), "tray_not_ready") == issues.end())
+                item["issues"].push_back("tray_not_ready");
             nlohmann::json blocking = nlohmann::json::array();
             for (const nlohmann::json &issue : item["issues"]) {
                 if (issue == "color_mismatch")
@@ -1822,8 +1827,9 @@ static void refresh_job(UploadJob &job)
         return;
     const PrinterNetworkResult<UploadTaskInfo> read = PrinterUploadManager::getInstance()->getUploadTask(job.task_id);
     if (!read.isSuccess() || !read.hasData()) {
-        // The manager forgets a transfer unread only when it closes with ElegooSlicer.
-        finish_job(job, "cancelled", "ElegooSlicer closed before the transfer finished");
+        // The manager forgets a transfer unread only when it closes: ElegooSlicer is closing or
+        // rebuilding its window (a language change), which cancels every transfer.
+        finish_job(job, "cancelled", "ElegooSlicer stopped the transfer: it was closing or rebuilding its window");
         job.app_closing = true;
         return;
     }
@@ -1842,8 +1848,8 @@ static void refresh_job(UploadJob &job)
         break;
     case UploadTaskStatus::CANCELLED:
         if (!job.cancel_requested) {
-            // Not cancelled by the API: the manager cancels every transfer when it closes.
-            finish_job(job, "cancelled", "ElegooSlicer closed before the transfer finished");
+            // Not cancelled by the API: the manager cancels every transfer when it closes (see above).
+            finish_job(job, "cancelled", "ElegooSlicer stopped the transfer: it was closing or rebuilding its window");
             job.app_closing = true;
         } else if (std::chrono::steady_clock::now() - job.cancel_requested_at > std::chrono::seconds(CANCEL_SETTLE_S)) {
             // Cancelled by DELETE /uploads/{id}. The manager reports that at once, but its transfer
@@ -1953,7 +1959,7 @@ static void run_upload(std::shared_ptr<UploadJob> job, std::shared_ptr<const Pri
     if (!copy.empty())
         remove_upload_copy(copy);
 
-    // 5. Tell the user how it ended. Not while ElegooSlicer is closing (its window is going away),
+    // 5. Tell the user how it ended. Not when ElegooSlicer stopped it (its window is going away),
     //    and not for a cancel: DELETE /uploads/{id} told it already.
     std::string status, message;
     bool        closing = false;
