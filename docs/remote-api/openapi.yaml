@@ -1096,6 +1096,76 @@ paths:
                 color:        { value: { error: "bad_color" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /objects/{id}/split:
+    post:
+      summary: Split an object into objects, or a part into parts
+      operationId: splitObject
+      description: |
+        Right-click > Split > To objects / To parts, without dialogs. `objects`: one
+        object per solid part of a multi-part object, or per shell of a single part;
+        `ids` are the new object ids (the original is gone). The window would ask about
+        floating pieces; instead `drop_to_bed` (default true) puts every piece on the
+        bed, false keeps their heights. `parts`: one part (the only one, or
+        `volume_id`) is cut into its shells; `ids` are the object's volume ids
+        afterwards. Undoable in the window; the plates holding the result are marked
+        unsliced.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, enum: [objects, parts] }
+                volume_id: { type: integer, description: "parts: the part to split, when the object has several." }
+                drop_to_bed: { type: boolean, default: true, description: "objects: put every piece on the bed." }
+            example: { to: objects }
+      responses:
+        "200":
+          description: Split.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ids: { type: array, items: { type: integer } }
+                  object_id: { type: integer, description: "parts only." }
+              example: { ids: [901, 905, 909] }
+        "400":
+          description: Malformed body or id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown object or volume, or an object without a copy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                object: { value: { error: "unknown_object" } }
+                volume: { value: { error: "unknown_volume" } }
+        "409":
+          description: An arrange/orient job is running, an editing tool is open in the 3D view, or the selection failed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                job:     { value: { error: "job_running" } }
+                gizmo:   { value: { error: "gizmo_editing" } }
+                select:  { value: { error: "select_failed" } }
+        "422":
+          description: A single solid piece (or several parts and no volume_id), or a bad `to`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                single: { value: { error: "not_splittable", detail: "the object is a single solid piece" } }
+                to:     { value: { error: "bad_to" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -1169,7 +1239,7 @@ components:
             object_id), `view` (POST /view and GET /status view), `volumes`
             (/objects/{id}/volumes), `project_save` (POST /project/save) and `paint`
             (POST /objects/{id}/paint).
-            Also `filaments` (/filaments).
+            Also `filaments` (/filaments), `split` (POST /objects/{id}/split).
         plates:
           type: object
           description: How many plates the project has and which one is current.

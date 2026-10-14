@@ -12,10 +12,15 @@
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/libslic3r.h"          // MAXIMUM_EXTRUDER_NUMBER
+#include "libslic3r/TriangleMesh.hpp"
+#include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/ObjectDataViewModel.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PresetComboBoxes.hpp"
+#include "slic3r/GUI/Selection.hpp"
 #include "slic3r/GUI/Tab.hpp"
 
 #include <algorithm>
@@ -31,6 +36,18 @@ static bool preview_only()
 {
     Plater *plater = wxGetApp().plater();
     return plater->only_gcode_mode() || plater->using_exported_file();
+}
+
+// True while a tool of the 3D view that keeps its own copy of the model data is open
+// (paint, cut, text, measure...): it would write that copy back over an API edit or
+// lose track of the model. Move, rotate and scale only act on the selection.
+// GUI thread only.
+static bool editing_gizmo_open()
+{
+    const GLGizmosManager      &gizmos = wxGetApp().plater()->get_view3D_canvas3D()->get_gizmos_manager();
+    const GLGizmosManager::EType type  = gizmos.get_current_type();
+    return gizmos.is_running() && type != GLGizmosManager::Move && type != GLGizmosManager::Rotate &&
+           type != GLGizmosManager::Scale;
 }
 
 // Parses a 1-based index from a path segment ("3"); -1 when it is not a plain number.
@@ -59,6 +76,24 @@ std::optional<Response> Controller::route_project(const Request &req)
             const int slot = parse_index(path.substr(filaments.size() + 1));
             if (slot < 0) return Response{ 400, {{"error", "bad_slot_index"}} };
             if (req.method == "PUT") return handle_put_filament_slot(slot, req.body);
+            return Response{ 404, {{"error", "not_found"}} };
+        }
+        // /api/v1/objects/<id>/split; the other object routes stay in dispatch.
+        static const std::string objects = "/api/v1/objects/";
+        static const std::string split   = "/split";
+        if (path.size() > objects.size() + split.size() && path.rfind(objects, 0) == 0 &&
+            path.compare(path.size() - split.size(), split.size(), split) == 0 &&
+            path.find('/', objects.size()) == path.size() - split.size()) {
+            const std::string id_str = path.substr(objects.size(), path.size() - objects.size() - split.size());
+            uint64_t id = 0;
+            try {
+                size_t used = 0;
+                id = std::stoull(id_str, &used);
+                if (used != id_str.size()) throw std::invalid_argument("trailing characters");
+            } catch (const std::exception &) {
+                return Response{ 400, {{"error", "bad_object_id"}} };
+            }
+            if (req.method == "POST") return handle_split_object(id, req.body);
             return Response{ 404, {{"error", "not_found"}} };
         }
     } catch (const nlohmann::json::parse_error &) {
@@ -399,6 +434,145 @@ Response Controller::handle_put_filament_slot(int slot, const std::string &body)
         if (e == "unknown_slot") return { 404, r };
         if (e == "unknown_preset" || e == "incompatible_preset") return { 422, r };
         return { 409, r }; // preview_only, unsaved_filament_changes
+    }
+    return { 200, r };
+}
+
+// --- POST /objects/{id}/split ------------------------------------------------------
+//   {"to": "objects" | "parts", "volume_id"?: vid, "drop_to_bed"?: bool}
+// Right-click > Split > To objects / To parts, without the dialogs those can open.
+
+// How many objects ModelObject::split would make: one per solid part of an object
+// with several volumes, one per separate shell of a single part, skipping pieces with
+// fewer than 3 triangles as it does. Fewer than 2 means the window would show "The
+// selected object couldn't be split." (Plater::priv::split_object).
+static size_t split_object_count(const ModelObject &mo)
+{
+    size_t count = 0;
+    if (mo.volumes.size() > 1) {
+        for (const ModelVolume *mv : mo.volumes)
+            if (mv->is_model_part() && mv->mesh().facets_count() >= 3)
+                ++count;
+        return count;
+    }
+    if (mo.volumes.empty() || !mo.volumes.front()->is_splittable())
+        return mo.volumes.size();
+    for (const TriangleMesh &piece : mo.volumes.front()->mesh().split())
+        if (piece.facets_count() >= 3)
+            ++count;
+    return count;
+}
+
+Response Controller::handle_split_object(uint64_t id, const std::string &body)
+{
+    nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in route_project
+    if (!in.is_object())
+        return { 400, {{"error", "body_must_be_object"}} };
+    const std::string to = in.contains("to") && in["to"].is_string() ? in["to"].get<std::string>() : "";
+    if (to != "objects" && to != "parts")
+        return { 422, {{"error", "bad_to"}, {"detail", "\"to\": \"objects\" | \"parts\""}} };
+    if (in.contains("volume_id") && !in["volume_id"].is_number_unsigned())
+        return { 400, {{"error", "bad_volume_id"}} };
+    if (in.contains("drop_to_bed") && !in["drop_to_bed"].is_boolean())
+        return { 400, {{"error", "drop_to_bed_must_be_boolean"}} };
+    const bool     has_vid     = in.contains("volume_id");
+    const uint64_t vid         = has_vid ? in["volume_id"].get<uint64_t>() : 0;
+    const bool     drop_to_bed = in.value("drop_to_bed", true);
+
+    // Splitting a big mesh takes a while (the shells are found twice: here, then by the
+    // GUI's own split): allow 60 s.
+    nlohmann::json r = run_on_ui([id, to, has_vid, vid, drop_to_bed]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        Model  &model  = plater->model();
+        const int idx = find_object_index(model, id);
+        if (idx < 0) return {{"error", "unknown_object"}};
+        ModelObject *mo = model.objects[idx];
+        if (mo->instances.empty()) return {{"error", "no_instance"}};
+        if (!plater->get_ui_job_worker().is_idle()) return {{"error", "job_running"}};
+        if (editing_gizmo_open()) return {{"error", "gizmo_editing"}};
+        const std::string name = mo->name;
+
+        if (to == "objects") {
+            if (split_object_count(*mo) < 2)
+                return {{"error", "not_splittable"}, {"detail", "the object is a single solid piece"}};
+            // The toolbar's split works on the 3D selection: select the object as a click
+            // on it does, and let the object list follow.
+            GLCanvas3D *canvas = plater->get_view3D_canvas3D();
+            canvas->get_selection().add_object((unsigned int) idx, /*as_single_selection=*/true);
+            wxGetApp().obj_list()->update_selections();
+            if (plater->get_selected_object_idx() != idx) return {{"error", "select_failed"}};
+
+            // When a piece would float above the bed, the split asks "Disable Auto-Drop
+            // to preserve Z positioning?", but only for an object that auto-drops. So
+            // switch that off on the original (it is replaced by the pieces anyway) and
+            // split keeping every piece's height, which is the question's "Yes". Then, for
+            // drop_to_bed, give the pieces the original's auto-drop back and put them on
+            // the bed, which is what the "No" answer, or no question, ends with.
+            const bool auto_drop = mo->instances.front()->auto_drop;
+            mo->instances.front()->auto_drop = false;
+            const size_t before = model.objects.size();
+            plater->split_object(/*auto_drop=*/false);
+            if (model.objects.size() <= before) { // nothing was split: never expected after the check above
+                mo->instances.front()->auto_drop = auto_drop;
+                return {{"error", "not_splittable"}};
+            }
+            // The original object was removed and the pieces appended at the end.
+            std::vector<size_t> new_idxs;
+            nlohmann::json      ids = nlohmann::json::array();
+            for (size_t i = before - 1; i < model.objects.size(); ++i) {
+                ModelObject *piece = model.objects[i];
+                if (drop_to_bed) {
+                    for (ModelInstance *inst : piece->instances)
+                        inst->auto_drop = auto_drop;
+                    piece->ensure_on_bed();
+                }
+                new_idxs.push_back(i);
+                ids.push_back((uint64_t) piece->id().id);
+            }
+            if (drop_to_bed)
+                plater->changed_objects(new_idxs); // reload the scene after the drops
+            for (size_t i : new_idxs)
+                invalidate_object_plates(int(i));
+            api_notify("Split '" + name + "' into " + std::to_string(ids.size()) + " objects");
+            return {{"ids", ids}};
+        }
+
+        // To parts: the object list splits the part it has selected (ObjectList::split).
+        int vi = 0;
+        if (has_vid) {
+            vi = -1;
+            for (size_t i = 0; i < mo->volumes.size(); ++i)
+                if ((uint64_t) mo->volumes[i]->id().id == vid) vi = int(i);
+            if (vi < 0) return {{"error", "unknown_volume"}};
+        } else if (mo->volumes.size() > 1) {
+            return {{"error", "not_splittable"},
+                    {"detail", "the object has several parts: give \"volume_id\" (GET /objects/{id}/volumes)"}};
+        }
+        // ObjectList::split shows "The target object contains only one part and can not
+        // be split." when the part is a single shell.
+        if (!mo->volumes[vi]->is_splittable())
+            return {{"error", "not_splittable"}, {"detail", "the part is a single solid piece"}};
+        // An object with one part has no part rows in the list: its own row stands for it.
+        ObjectList          *list  = wxGetApp().obj_list();
+        ObjectDataViewModel *model_view = list->GetModel();
+        const wxDataViewItem item = mo->volumes.size() > 1 ? model_view->GetItemByVolumeId(idx, vi) : model_view->GetItemById(idx);
+        if (!item.IsOk()) return {{"error", "select_failed"}};
+        list->select_item(item);
+        list->update_selections_on_canvas(); // the 3D view follows, as after a click in the list
+        if (list->get_selected_obj_idx() != idx || !list->is_splittable(false)) return {{"error", "select_failed"}};
+        list->split();
+        invalidate_object_plates(idx);
+        nlohmann::json ids = nlohmann::json::array();
+        for (const ModelVolume *mv : mo->volumes)
+            ids.push_back((uint64_t) mv->id().id);
+        api_notify("Split a part of '" + name + "': it has " + std::to_string(ids.size()) + " parts now");
+        return {{"ids", ids}, {"object_id", id}};
+    }, 60);
+    if (r.contains("error")) {
+        const std::string e = r["error"].get<std::string>();
+        if (e == "unknown_object" || e == "unknown_volume" || e == "no_instance") return { 404, r };
+        if (e == "not_splittable") return { 422, r };
+        return { 409, r }; // job_running, gizmo_editing, select_failed
     }
     return { 200, r };
 }

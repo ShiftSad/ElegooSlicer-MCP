@@ -60,6 +60,7 @@ Base URL: `http://<host>:13130/api/v1`
 | GET | `/filaments` | List the filament slots: preset, type, colour, used on the current plate |
 | PUT | `/filaments` | Set the number of filament slots (the sidebar's + / - buttons) |
 | PUT | `/filaments/{slot}` | Set one slot's filament preset and/or colour |
+| POST | `/objects/{id}/split` | Split an object into objects, or a part into parts |
 
 ### GET /status
 
@@ -588,6 +589,39 @@ then `409 unsaved_filament_changes`. Errors: `404 unknown_slot` (with `count`),
 `422 unknown_preset | incompatible_preset | bad_color`, `409 preview_only |
 unsaved_filament_changes`, `400 missing_fields | preset_must_be_string |
 bad_slot_index | invalid_json`.
+
+## Split
+
+### POST /objects/{id}/split
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"to": "objects"}' http://localhost:13130/api/v1/objects/832/split
+```
+```json
+{ "ids": [901, 905, 909] }
+```
+Right-click > Split > To objects / To parts, without the dialogs they can open
+(capability `split`). The split can be undone in the window.
+- `"to": "objects"`: an object with several parts becomes one object per solid part
+  (modifiers and other non-solid volumes are left out, as in the window); a single part
+  is cut into its separate shells. `ids` are the new object ids; the original object is
+  gone. When a piece would float, the window asks whether to keep the pieces' heights;
+  the API does not ask: with `"drop_to_bed": true` (default) every piece is put on the
+  bed, with `false` every piece keeps its height and stops auto-dropping (the
+  question's "Yes"). The new objects are left selected, as in the window.
+- `"to": "parts"`: one part is cut into its separate shells, which stay parts of the
+  object. An object with a single part needs nothing else; with several parts, give
+  `"volume_id"` (from `GET /objects/{id}/volumes`). `ids` are the object's volume ids
+  afterwards, and `object_id` is echoed. The part (or object) is left selected.
+
+The plates holding the result are marked unsliced. Errors: `422 not_splittable`
+(a single solid piece; `detail` says why, also when an object with several parts gets
+`"to": "parts"` without `volume_id`) `| bad_to`, `404 unknown_object | unknown_volume
+| no_instance`, `409 job_running` (an arrange/orient job is running) `| gizmo_editing`
+(a paint, cut or other editing tool is open in the 3D view) `| select_failed`,
+`400 body_must_be_object | bad_volume_id | drop_to_bed_must_be_boolean | bad_object_id |
+invalid_json`.
 
 ## Notes & limits
 
