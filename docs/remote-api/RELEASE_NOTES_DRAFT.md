@@ -35,6 +35,28 @@ version as `1.5.3.5-mcp.1` and its window title ends in "- ElegooSlicer MCP".
   overhangs: `POST /objects/{id}/paint`.
 - `/status` identifies the build: `app` = ElegooSlicer, `app_version`,
   `orca_compatible_version`, `mcp_build`.
+- Multi-material project: list the filament slots, set their number, preset and colour
+  (`/filaments`); split an object into objects or parts; undo and redo; filament changes
+  and pauses at a height (`/plates/{i}/layer_changes`); the slice breakdown reports the
+  filament changes, their time and the flush (`purge`).
+- Calibration tests from the Calibration menu without their dialogs (`POST /calibration`).
+- Elegoo printers (capability `printers`): list them, read their status and, for a
+  Centauri Carbon 2, the CANVAS trays with the filament preset matched to each; sync the
+  CANVAS into the project like the Sync button; preview which tray each filament prints
+  from. Printer ids are opaque and no access code, serial number or other secret ever
+  appears in a reply.
+- Sending and controlling prints (capability `print_control`), **off by default** behind
+  Preferences > Remote API > *Allow sending and controlling prints*: a two-step
+  prepare/print that only sends the G-code ElegooSlicer sliced for the current plate,
+  upload status and cancel, pause and stop (resume is not possible over the LAN with
+  Elegoo's SDK: use the printer's screen). LAN printers only. Every action shows a
+  notification in the window.
+- No modal dialog during API calls: error and info boxes, settings questions and
+  model-load questions become notifications (and `skipped_dialogs` in the reply).
+- Config writes refused as a whole now carry `"error": "config_rejected"`.
+- The MCP server with the ElegooSlicer tools ships in this repository's `mcp/` folder
+  (printers, CANVAS, two-step printing with a confirmation the user must give, camera
+  snapshot, filament slots, split, undo/redo, layer changes, calibration).
 
 ### Fixes and safety changes compared with the OrcaSlicer MCP fork
 
@@ -54,12 +76,12 @@ version as `1.5.3.5-mcp.1` and its window title ends in "- ElegooSlicer MCP".
 - Reproducible builds: the elegoo-link printer SDK is pinned to `46c7b81`; includes
   Elegoo's later ADMesh STL-reader overflow fix.
 
-### Not in this release yet
+### Not tested on a real printer yet
 
-- Elegoo printer and CANVAS endpoints (status, trays, filament mapping, sync).
-- Sending and controlling prints (will be off by default, behind its own preference).
-- The MCP server with the ElegooSlicer tools, which will ship from this repository's
-  `mcp/` folder.
+The printer, CANVAS and print routes were tested against an emulated Centauri Carbon 2
+built from the elegoo-link SDK's protocol (`tools/fakecc2` in the workspace), not yet on
+the real printer. Field values the SDK leaves to the firmware (the printer model string,
+the camera address, tray numbering) are confirmed only once a real CC2 is connected.
 
 ## Install (Windows x64)
 
@@ -76,11 +98,10 @@ version as `1.5.3.5-mcp.1` and its window title ends in "- ElegooSlicer MCP".
    saved printers apart from an official ElegooSlicer (`%APPDATA%\ElegooSlicer`). Do not
    share that folder: saved printers include their access codes.
 5. Enable the API: Preferences > Remote API > Enable, and copy the token.
-6. Connect an MCP client. Until the ElegooSlicer MCP server is in `mcp/`, the stock server
-   works for the tools listed above:
-   `uvx --from orcaslicer-mcp==0.1.17 orcaslicer-mcp`, with the environment variable
-   `ORCA_API_TOKEN` set to the token (`ORCA_API_URL` defaults to
-   `http://127.0.0.1:13130`).
+6. Connect an MCP client to the server in `mcp/`:
+   `uvx --from "git+https://github.com/ShiftSad/ElegooSlicer-MCP@v1.5.3.5-mcp.1#subdirectory=mcp" orcaslicer-mcp`,
+   with the environment variable `ORCA_API_TOKEN` set to the token (`ORCA_API_URL`
+   defaults to `http://127.0.0.1:13130`). See `mcp/README.md` for Claude Desktop.
 
 Read [Privacy and network](README.md#privacy-and-network) before logging in to an Elegoo
 account in this build (telemetry, cloud, data directory).
