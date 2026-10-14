@@ -375,7 +375,10 @@ Starts the window's auto-orient job and answers `202` at once; poll
 it is selected in the 3D view, as a click on it does, and the job orients the
 selection (the object stays selected afterwards). Without a body, or with `{}`, every
 object is oriented and any selection in the window is cleared first. Objects on a
-locked plate are left alone. Errors: `404 unknown_object`, `409 job_running`,
+locked plate and unprintable objects are left alone; asking for an unprintable object
+by id answers `409 object_not_printable` (the job would orient every other object
+instead), and `409 select_failed` when the 3D view could not select it. Errors:
+`404 unknown_object`, `409 job_running | object_not_printable | select_failed`,
 `422 empty` (no objects), `400 bad_object_id | body_must_be_object | invalid_json`.
 
 ### POST /view

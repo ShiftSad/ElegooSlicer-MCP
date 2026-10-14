@@ -547,7 +547,8 @@ paths:
         `idle`). With `object_id` only that object is oriented: it is selected in the 3D
         view and the job orients the selection (it stays selected). Without a body, or
         with `{}`, every object is oriented and the window's selection is cleared first.
-        Objects on a locked plate are left alone.
+        Objects on a locked plate and unprintable objects are left alone; an
+        unprintable `object_id` is refused (the job would orient every other object).
       requestBody:
         required: false
         content:
@@ -584,11 +585,16 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
               example: { error: "unknown_object" }
         "409":
-          description: Another arrange/orient job is running.
+          description: |
+            Another arrange/orient job is running, the object is unprintable, or the
+            3D view could not select it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-              example: { error: "job_running" }
+              examples:
+                busy:         { value: { error: "job_running" } }
+                unprintable:  { value: { error: "object_not_printable" } }
+                not_selected: { value: { error: "select_failed" } }
         "422":
           description: No objects to orient.
           content:

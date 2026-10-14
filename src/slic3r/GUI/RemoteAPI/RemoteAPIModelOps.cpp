@@ -46,11 +46,17 @@ Response Controller::handle_orient_object(const std::string &body)
         const int idx = find_object_index(plater->model(), id);
         if (idx < 0) return {{"error", "unknown_object"}};
         if (!plater->get_ui_job_worker().is_idle()) return {{"error", "job_running"}};
+        // The job orients printable objects only, and when the selection holds nothing
+        // it can orient it orients every OTHER object instead
+        // (OrientJob::prepare_selection). So an unprintable object, or a selection that
+        // did not take, must not start it.
+        if (!plater->model().objects[idx]->printable) return {{"error", "object_not_printable"}};
 
         // Select only this object, the way Plater::priv::load_files selects new objects,
         // and let the object list follow the 3D scene.
         GLCanvas3D *canvas = plater->get_view3D_canvas3D();
         canvas->get_selection().add_object((unsigned int) idx, /*as_single_selection=*/true);
+        if (canvas->get_selection().get_object_idx() != idx) return {{"error", "select_failed"}};
         wxGetApp().obj_list()->update_selections();
         if (canvas->get_gizmos_manager().is_enabled())
             canvas->update_gizmos_on_off_state();
@@ -63,7 +69,7 @@ Response Controller::handle_orient_object(const std::string &body)
     });
     if (r.contains("error")) {
         if (r["error"] == "unknown_object") return { 404, r };
-        return { 409, r }; // job_running
+        return { 409, r }; // job_running, object_not_printable, select_failed
     }
     return { 202, r };
 }
