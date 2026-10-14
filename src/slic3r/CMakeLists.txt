@@ -305,6 +305,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/RemoteAPI/RemoteAPIController.hpp
     GUI/RemoteAPI/RemoteAPIModelOps.cpp
     GUI/RemoteAPI/RemoteAPIProject.cpp
+    GUI/RemoteAPI/RemoteAPICalibration.cpp
     GUI/I18N.cpp
     GUI/I18N.hpp
     GUI/DragDropPanel.cpp

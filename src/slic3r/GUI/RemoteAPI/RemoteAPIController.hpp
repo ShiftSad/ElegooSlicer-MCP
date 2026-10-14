@@ -118,6 +118,7 @@ private:
     Response handle_get_layer_changes(int plate);                         // GET /plates/{i}/layer_changes
     Response handle_add_layer_change(int plate, const std::string &body); // POST /plates/{i}/layer_changes
     Response handle_delete_layer_change(int plate, const std::string &target); // DELETE ...?z=<mm>
+    Response handle_calibration(const std::string &body);                // POST /calibration (RemoteAPICalibration.cpp)
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);

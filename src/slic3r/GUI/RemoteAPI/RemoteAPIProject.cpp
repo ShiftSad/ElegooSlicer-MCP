@@ -102,6 +102,7 @@ std::optional<Response> Controller::route_project(const Request &req)
         }
         if (path == "/api/v1/undo" && req.method == "POST") return handle_undo_redo(true);
         if (path == "/api/v1/redo" && req.method == "POST") return handle_undo_redo(false);
+        if (path == "/api/v1/calibration" && req.method == "POST") return handle_calibration(req.body);
         // /api/v1/plates/<i>/layer_changes; the other plate routes stay in dispatch.
         static const std::string plates        = "/api/v1/plates/";
         static const std::string layer_changes = "/layer_changes";

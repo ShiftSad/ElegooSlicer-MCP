@@ -66,6 +66,7 @@ Base URL: `http://<host>:13130/api/v1`
 | GET | `/plates/{i}/layer_changes` | List a plate's changes at a height (filament change, pause, custom G-code) |
 | POST | `/plates/{i}/layer_changes` | Add a filament change or a pause at a height |
 | DELETE | `/plates/{i}/layer_changes?z=<mm>` | Remove the change at a height |
+| POST | `/calibration` | Replace the project with a calibration test (the Calibration menu) |
 
 ### GET /status
 
@@ -721,6 +722,51 @@ list `breakdown_purge` in `capabilities` add what changing filament costs:
 All four are 0 when nothing loads or changes filament. On the Centauri Carbon 2 the
 start G-code loads the first filament with an `M6211` that purges about 200 mm, so even
 a single-filament print reports that load's time and purge, with `filament_changes` 0.
+
+## Calibration
+
+### POST /calibration
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"type": "pressure_advance", "params": {"method": "line", "end": 0.08}}' \
+  http://localhost:13130/api/v1/calibration
+```
+```json
+{ "type": "pressure_advance", "objects": [ { "id": 812, "name": "pressure_advance_test.drc" } ] }
+```
+The window's Calibration menu without its dialogs (capability `calibration`): the
+current project is replaced by a new one holding the test model, and the print,
+filament and printer settings are changed the way the test needs (unsaved preset
+edits, as in the window; `GET /status` lists them under `modified`). Nothing is
+sliced: slice it as usual. `objects` are the new project's objects.
+
+Replacing the project would make the window ask about unsaved work. When the project
+has unsaved changes, or the print/filament/printer settings have unsaved edits, the
+reply is `409 {"error":"unsaved_project","project_unsaved":true,"presets_unsaved":["print"]}`
+unless the body has `"discard_project": true`; then those changes are dropped and the
+reply lists them in `discarded_changes` (`"project"`, `"print"`, `"filament"`,
+`"printer"`). A calibration itself leaves the settings edited and the project unsaved,
+so a second calibration in a row needs `discard_project` too.
+
+`params` holds the dialog's fields; everything is optional and defaults to the
+dialog's own default. An unknown name, a wrong type or a value the dialog would refuse
+gives `422 bad_params` with a `detail` that names the parameter.
+
+| `type` | `params` (default) | Checks (as the dialog) |
+|---|---|---|
+| `pressure_advance` | `method`: `tower` \| `line` \| `pattern` (`tower`); `extruder`: `dde` \| `bowden` (`dde`, only picks the defaults below); `start` (0); `end` (tower/line 0.1, pattern 0.08; bowden 1.0); `step` (tower/line 0.002, pattern 0.005; bowden 0.02, pattern 0.05); `print_numbers`: bool, line only (true; pattern always prints numbers, the tower never); `accelerations`, `speeds`: lists of positive whole numbers in mm/s² and mm/s, pattern only (none: the outer wall acceleration and an optimal speed; the pattern prints one test per acceleration × speed) | `start` >= 0, `step` >= 0.001, `end` >= `start` + `step`; every acceleration > every speed |
+| `flow_rate` | `test`: `yolo` \| `yolo_perfectionist` \| `pass1` \| `pass2` (`yolo`); `pattern`: top surface `archimedean_chords` \| `monotonic` (`archimedean_chords`) | — |
+| `temperature` | `start` (230), `end` (190), °C; the tower goes from `start` at the bottom down to `end`, 5 °C per block. The dialog's presets: PLA 230/190, ABS/ASA 270/230, PETG 250/230, PCTG 280/240, TPU 240/210, PA-CF and PET-CF 320/280 | multiples of 5 between 155 and 500, `start` >= `end` + 5 |
+| `max_volumetric_speed` | `start` (5), `end` (20), `step` (0.5), mm³/s | `start` > 0, `step` > 0, `end` >= `start` + `step` |
+| `vfa` | `start` (40), `end` (200), `step` (10), mm/s | `start` > 10, `step` > 0, `end` >= `start` + `step` |
+| `retraction` | `start` (0), `end` (2), `step` (0.1), mm of retraction length | `start` >= 0, `step` > 0, `end` >= `start` + `step` |
+
+Other errors: `422 bad_type`, `409 job_running` (an arrange/orient job is running) `|
+slicing`,
+`500 calibration_failed` (the test model did not load), `400 body_must_be_object |
+discard_project_must_be_boolean | invalid_json`. Allow up to 60 s: the test model is
+loaded and cut to height.
 
 ## Notes & limits
 

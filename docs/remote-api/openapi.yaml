@@ -1322,6 +1322,86 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /calibration:
+    post:
+      summary: Replace the project with a calibration test
+      operationId: runCalibration
+      description: |
+        The window's Calibration menu without its dialogs (capability `calibration`). A
+        new project holds the test model; the print, filament and printer settings are
+        edited for the test (unsaved). Nothing is sliced. `params` are the dialog's
+        fields, all optional with the dialog's defaults (see README.md for each type).
+        A project with unsaved changes, or unsaved preset edits, gives
+        `409 unsaved_project` unless `discard_project` is true. Allow up to 60 s.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [flow_rate, pressure_advance, temperature, retraction, max_volumetric_speed, vfa] }
+                params:
+                  type: object
+                  description: |
+                    pressure_advance: method (tower|line|pattern), extruder (dde|bowden), start, end, step,
+                    print_numbers (line), accelerations and speeds (pattern; positive whole numbers).
+                    flow_rate: test (yolo|yolo_perfectionist|pass1|pass2), pattern (archimedean_chords|monotonic).
+                    temperature: start, end (degrees C, multiples of 5, 155..500, start >= end + 5).
+                    max_volumetric_speed (mm3/s), vfa (mm/s), retraction (mm): start, end, step.
+                discard_project: { type: boolean, default: false, description: "Drop unsaved project changes and preset edits." }
+            example: { type: pressure_advance, params: { method: line, end: 0.08 } }
+      responses:
+        "200":
+          description: The test project was created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type: { type: string }
+                  objects:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                  discarded_changes:
+                    type: array
+                    items: { type: string, enum: [project, print, filament, printer] }
+                    description: Present when discard_project dropped something.
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Unsaved work, an arrange/orient job, or a slice is running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                unsaved: { value: { error: "unsaved_project", project_unsaved: true, presets_unsaved: ["print"] } }
+                job:     { value: { error: "job_running" } }
+                slicing: { value: { error: "slicing" } }
+        "422":
+          description: Unknown type, or a parameter the dialog would refuse (`detail` names it).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                type:   { value: { error: "bad_type" } }
+                params: { value: { error: "bad_params", detail: "end: must be >= start + step (0.002)" } }
+        "500":
+          description: The test model did not load.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "calibration_failed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -1417,6 +1497,7 @@ components:
             Also `filaments` (/filaments), `split` (POST /objects/{id}/split), `undo`
             (POST /undo, /redo), `layer_changes` (/plates/{i}/layer_changes),
             `breakdown_purge` (stats.breakdown.purge of GET /slice/status).
+            Also `calibration` (POST /calibration).
         plates:
           type: object
           description: How many plates the project has and which one is current.
